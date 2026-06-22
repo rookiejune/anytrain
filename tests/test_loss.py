@@ -1,0 +1,337 @@
+import unittest
+
+import torch
+from torch import nn
+
+from anytrain.loss import (
+    FixedWeightLossBalancer,
+    LossABC,
+    LossBalancerABC,
+    LossGroup,
+    UncertaintyLossBalancer,
+)
+from anytrain.loss.spectral import (
+    CompressedSpectrogramLoss,
+    LogMagnitudeLoss,
+    MelLoss,
+    MelSpectrogramTransform,
+    MultiScaleMelLoss,
+    MultiScaleSTFTLoss,
+    SpectralRMSELoss,
+    STFTLoss,
+    STFTTransform,
+)
+from anytrain.loss.task import CodecLoss, CodecLossPreset
+from anytrain.loss.temporal import SDRLoss
+
+
+class DetailLoss(LossABC):
+    def compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
+        loss = (prediction - target).abs().mean()
+        return loss, {"raw": loss}
+
+
+class VectorLoss(LossABC):
+    def compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
+        return (prediction - target).abs()
+
+
+class InvalidDetailLoss(LossABC):
+    def compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
+        loss = (prediction - target).abs().mean()
+        return loss, {"count": 1}
+
+
+class SumLossBalancer(LossBalancerABC):
+    def forward(self, losses):
+        return sum(losses.values())
+
+
+class DetailLossBalancer(LossBalancerABC):
+    def forward(self, losses):
+        total = sum(losses.values())
+        return total, {"scale": torch.tensor(float(len(losses)), device=total.device)}
+
+
+class LossTest(unittest.TestCase):
+    def test_loss_group(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss = LossGroup({"l1": nn.L1Loss(), "l2": nn.MSELoss()})
+
+        total, details = loss(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(2.0)))
+        self.assertTrue(total.requires_grad)
+        self.assertEqual(set(details), {"l1", "l2"})
+        self.assertFalse(details["l1"].requires_grad)
+        self.assertIsInstance(loss.losses, nn.ModuleDict)
+
+    def test_loss_group_accepts_custom_balancer(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss = LossGroup({"l1": nn.L1Loss(), "l2": nn.MSELoss()}, balancer=SumLossBalancer())
+
+        total, _ = loss(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(4.0)))
+
+    def test_fixed_weight_loss_balancer(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss = LossGroup(
+            {"l1": nn.L1Loss(), "l2": nn.MSELoss()},
+            balancer=FixedWeightLossBalancer({"l1": 1.0, "l2": 0.5}),
+        )
+
+        total, details = loss(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(2.75)))
+        self.assertIn("balancer/l1_weight", details)
+        self.assertIn("balancer/l2_weight", details)
+
+    def test_loss_group_flattens_balancer_details(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss = LossGroup({"l1": nn.L1Loss(), "l2": nn.MSELoss()}, balancer=DetailLossBalancer())
+
+        _, details = loss(pred, target)
+
+        self.assertIn("balancer/scale", details)
+        self.assertFalse(details["balancer/scale"].requires_grad)
+
+    def test_uncertainty_loss_balancer(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss = LossGroup(
+            {"l1": nn.L1Loss(), "l2": nn.MSELoss()},
+            balancer=UncertaintyLossBalancer(["l1", "l2"]),
+        )
+
+        total, details = loss(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(2.0)))
+        self.assertTrue(total.requires_grad)
+        self.assertIn("balancer/l1_uncertainty_weight", details)
+        self.assertIn("balancer/l2_uncertainty_weight", details)
+
+    def test_uncertainty_loss_balancer_rejects_name_mismatch(self):
+        balancer = UncertaintyLossBalancer(["l1"])
+
+        with self.assertRaisesRegex(ValueError, "missing"):
+            balancer({})
+
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            balancer({"l1": torch.tensor(1.0), "l2": torch.tensor(2.0)})
+
+    def test_loss_abc_accepts_scalar_loss_with_optional_details(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss_fn = DetailLoss()
+
+        loss, details = loss_fn(pred, target)
+
+        self.assertTrue(torch.isclose(loss, torch.tensor(1.5)))
+        self.assertTrue(loss.requires_grad)
+        self.assertEqual(set(details), {"raw"})
+        self.assertFalse(details["raw"].requires_grad)
+
+    def test_loss_abc_rejects_non_scalar_main_loss(self):
+        loss_fn = VectorLoss()
+
+        with self.assertRaisesRegex(ValueError, "scalar tensor"):
+            loss_fn(torch.tensor([1.0, 3.0]), torch.tensor([0.0, 1.0]))
+
+    def test_loss_abc_rejects_non_scalar_detail_values(self):
+        loss_fn = InvalidDetailLoss()
+
+        with self.assertRaisesRegex(TypeError, "float or 0-d tensor"):
+            loss_fn(torch.tensor([1.0, 3.0]), torch.tensor([0.0, 1.0]))
+
+    def test_loss_group_flattens_child_details(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss_fn = LossGroup({"detail": DetailLoss()})
+
+        total, details = loss_fn(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(1.5)))
+        self.assertIn("detail/raw", details)
+        self.assertFalse(details["detail/raw"].requires_grad)
+
+    def test_loss_group_allows_total_as_loss_name(self):
+        pred = torch.tensor([1.0, 3.0], requires_grad=True)
+        target = torch.tensor([0.0, 1.0])
+        loss_fn = LossGroup({"total": nn.L1Loss()})
+
+        total, details = loss_fn(pred, target)
+
+        self.assertTrue(torch.isclose(total, torch.tensor(1.5)))
+        self.assertEqual(set(details), {"total"})
+
+    def test_loss_group_rejects_ambiguous_names(self):
+
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            LossGroup({"balancer": nn.L1Loss()})
+
+        with self.assertRaisesRegex(TypeError, "LossBalancerABC"):
+            LossGroup({"loss": nn.L1Loss()}, balancer=nn.Identity())
+
+        with self.assertRaisesRegex(TypeError, "mapping"):
+            LossGroup([nn.L1Loss()])
+
+    def test_sdr_loss_is_near_zero_for_identical_audio(self):
+        audio = torch.randn(2, 1, 64)
+
+        loss = SDRLoss()(audio, audio)
+
+        self.assertLess(float(loss), 0.0)
+
+    def test_spectral_single_losses(self):
+        estimate = torch.randn(2, 8, 4, dtype=torch.complex64)
+        reference = estimate + 0.1 * torch.randn(2, 8, 4, dtype=torch.complex64)
+
+        self.assertEqual(LogMagnitudeLoss()(estimate, reference).ndim, 0)
+        self.assertEqual(CompressedSpectrogramLoss()(estimate, reference).ndim, 0)
+        self.assertEqual(SpectralRMSELoss()(estimate, reference).ndim, 0)
+
+    def test_stft_and_mel_losses(self):
+        estimate = torch.randn(2, 1, 64, requires_grad=True)
+        reference = estimate.detach() + 0.01 * torch.randn(2, 1, 64)
+
+        stft_loss, stft_details = STFTLoss(n_fft=16)(estimate, reference)
+        mel_loss, mel_details = MelLoss(sample_rate=16000, n_fft=32, n_mels=8)(estimate, reference)
+
+        self.assertEqual(stft_loss.ndim, 0)
+        self.assertEqual(mel_loss.ndim, 0)
+        self.assertIn("log_magnitude", stft_details)
+        self.assertIn("log_magnitude", mel_details)
+
+    def test_spectral_transform_backend_selection(self):
+        auto_stft = STFTTransform(n_fft=16)
+        auto_mel = MelSpectrogramTransform(sample_rate=16000)
+        torch_stft = STFTTransform(n_fft=16, backend="torch")
+        torch_mel = MelSpectrogramTransform(
+            sample_rate=16000,
+            n_fft=16,
+            backend="torch",
+        )
+
+        self.assertIn(auto_stft.backend, {"torchaudio", "torch"})
+        self.assertIn(auto_mel.backend, {"torchaudio", "torch"})
+        self.assertEqual(torch_stft.backend, "torch")
+        self.assertEqual(torch_mel.backend, "torch")
+
+    def test_mel_transform_supports_mel_scale(self):
+        htk_mel = MelSpectrogramTransform(
+            sample_rate=16000,
+            n_fft=32,
+            n_mels=8,
+            mel_scale="htk",
+            backend="torch",
+        )
+        slaney_mel = MelSpectrogramTransform(
+            sample_rate=16000,
+            n_fft=32,
+            n_mels=8,
+            mel_scale="slaney",
+            backend="torch",
+        )
+
+        self.assertEqual(htk_mel.mel_scale, "htk")
+        self.assertEqual(slaney_mel.mel_scale, "slaney")
+        self.assertFalse(torch.allclose(htk_mel.mel_filter, slaney_mel.mel_filter))
+
+    def test_mel_loss_forwards_mel_scale(self):
+        mel_loss = MelLoss(sample_rate=16000, n_fft=32, n_mels=8, mel_scale="slaney")
+        multi_mel_loss = MultiScaleMelLoss(
+            sample_rate=16000,
+            n_fft_list=(32,),
+            n_mels_list=(8,),
+            mel_scale="slaney",
+        )
+
+        self.assertEqual(mel_loss.transform.mel_scale, "slaney")
+        self.assertEqual(multi_mel_loss.losses["mel_32_8"].transform.mel_scale, "slaney")
+
+    def test_mel_transform_rejects_unknown_mel_scale(self):
+        with self.assertRaisesRegex(ValueError, "mel_scale"):
+            MelSpectrogramTransform(sample_rate=16000, mel_scale="unknown")
+
+    def test_spectral_loss_torch_backend_fallback(self):
+        estimate = torch.randn(2, 1, 64, requires_grad=True)
+        reference = estimate.detach() + 0.01 * torch.randn(2, 1, 64)
+
+        stft_loss, _ = STFTLoss(n_fft=16, backend="torch")(estimate, reference)
+        mel_loss, _ = MelLoss(
+            sample_rate=16000,
+            n_fft=32,
+            n_mels=8,
+            backend="torch",
+        )(estimate, reference)
+
+        self.assertEqual(stft_loss.ndim, 0)
+        self.assertEqual(mel_loss.ndim, 0)
+
+    def test_multi_scale_spectral_losses(self):
+        estimate = torch.randn(2, 1, 64, requires_grad=True)
+        reference = estimate.detach() + 0.01 * torch.randn(2, 1, 64)
+
+        stft_loss, stft_details = MultiScaleSTFTLoss(n_fft_list=(16, 8))(estimate, reference)
+        mel_loss, mel_details = MultiScaleMelLoss(
+            sample_rate=16000,
+            n_fft_list=(32, 16),
+            n_mels_list=(8, 4),
+        )(estimate, reference)
+
+        self.assertEqual(stft_loss.ndim, 0)
+        self.assertEqual(mel_loss.ndim, 0)
+        self.assertTrue(any(key.startswith("stft_16") for key in stft_details))
+        self.assertTrue(any(key.startswith("mel_32_8") for key in mel_details))
+
+    def test_codec_loss_presets(self):
+        dac_loss = CodecLoss.from_preset(CodecLossPreset.DAC, backend="torch")
+        dynacodec_loss = CodecLoss.from_preset("dynacodec", backend="torch")
+
+        self.assertEqual(set(dac_loss.losses), {"multi_mel"})
+        self.assertEqual(set(dynacodec_loss.losses), {"si_sdr", "multi_mel", "multi_stft"})
+        self.assertIn("si_sdr", dynacodec_loss.balancer.loss_names)
+
+    def test_codec_loss_supports_lengths(self):
+        estimate = torch.tensor(
+            [
+                [[1.0, 2.0, 100.0, 100.0]],
+                [[1.0, 2.0, 3.0, 4.0]],
+            ],
+            requires_grad=True,
+        )
+        reference = torch.zeros_like(estimate)
+        loss = CodecLoss({"l1": nn.L1Loss()})
+
+        total, details = loss(estimate, reference, lengths=torch.tensor([2, 4]))
+
+        self.assertTrue(torch.isclose(total, torch.tensor(2.0)))
+        self.assertTrue(torch.isclose(details["l1"], torch.tensor(2.0)))
+        total.backward()
+        self.assertEqual(float(estimate.grad[0, 0, 2]), 0.0)
+
+    def test_codec_loss_rejects_invalid_lengths(self):
+        loss = CodecLoss({"l1": nn.L1Loss()})
+        audio = torch.zeros(2, 1, 4)
+
+        with self.assertRaisesRegex(ValueError, "one value per batch"):
+            loss(audio, audio, lengths=[4])
+
+        with self.assertRaisesRegex(ValueError, "positive"):
+            loss(audio, audio, lengths=[4, 0])
+
+        with self.assertRaisesRegex(ValueError, "exceed"):
+            loss(audio, audio, lengths=[4, 5])
+
+    def test_codec_loss_rejects_unknown_preset(self):
+        with self.assertRaisesRegex(ValueError, "Unknown codec loss preset"):
+            CodecLoss.from_preset("unknown")
+
+
+if __name__ == "__main__":
+    unittest.main()

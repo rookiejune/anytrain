@@ -1,0 +1,24 @@
+# Module Design Index
+
+这个目录记录 `src/anytrain` 顶层模块的设计约定。模块文档描述当前实现、稳定接口、边界和后续演进方向；如果代码行为发生变化，应同步更新对应文档。
+
+## 模块列表
+
+- [`anytrain` package root](package-root.md)：轻量公开导出和 import 边界。
+- [`anytrain.hydra`](hydra.md)：Hydra 入口、环境配置、Trainer 装配和 `fit()` 调用。
+- [`anytrain.lightning`](lightning.md)：LightningModule logging mixin 和调试 callback。
+- [`anytrain.loss`](loss.md)：通用 loss 组件和组合器。
+- [`anytrain.evaluator`](evaluator.md)：训练期 evaluator 接口和组合器边界。
+- [`anytrain.module`](module.md)：task-agnostic `torch.nn.Module` 积木。
+- [`anytrain.plotter`](plotter.md)：可视化组件边界和 optional plot 依赖约定。
+- [`anytrain.framework`](framework.md)：可选研究框架层。
+- [`anytrain.registry`](registry.md)：轻量 registry 支撑层。
+- [`anytrain.types`](types.md)：通用基础类型。
+- [`anytrain.utils`](utils.md)：跨模块小工具边界。
+
+## 关联文档
+
+- [`docs/architecture.md`](../architecture.md)：总体分层、运行链路和包边界。
+- [`docs/components.md`](../components.md)：训练组件的 core/optional 分层。
+- [`docs/lightning.md`](../lightning.md)：Lightning 层的更完整设计。
+- [`docs/quantization-migration.md`](../quantization-migration.md)：从 `deepaudio` 迁入量化组件的设计计划。

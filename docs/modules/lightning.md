@@ -1,0 +1,92 @@
+# `anytrain.lightning` Design
+
+## 定位
+
+`anytrain.lightning` 是 core runtime 层，服务下游普通 LightningModule。`anytrain` 的框架感集中在 Hydra app 层；这个模块只提供任务无关的 logging mixin 和训练调试 callback。
+
+Lightning 是 core 依赖，不作为 optional integration。
+
+## 当前结构
+
+源码结构：
+
+```text
+src/anytrain/lightning/
+  __init__.py
+  callback/
+    __init__.py
+    debug.py
+  mixin/
+    __init__.py
+    log.py
+```
+
+当前公开导出：
+
+- `LightningLogMixin`
+- `StopOnNonfiniteLossCallback`
+- `prefixed_log_dict`
+
+`anytrain.lightning` 不导出自定义 LightningModule 基类，也不通过继承改变训练行为。下游项目直接继承 `lightning.pytorch.LightningModule`。
+
+## Logging Mixin
+
+`LightningLogMixin` 是无状态 mixin，不持有 LightningModule 或 logger。它在调用时通过当前 module 的 `trainer.loggers` 使用后端能力。
+
+当前方法：
+
+- `log_prefixed_dict(prefix, values, **kwargs)`：给 dict key 加前缀后调用 `LightningModule.log_dict()`。
+- `log_audio(tag, audio, sample_rate=..., step=None, rank_mode="zero")`：写入 audio，当前支持 `TensorBoardLogger`。
+- `log_figure(tag, figure, step=None, rank_mode="zero")`：写入 figure，当前支持 `TensorBoardLogger`。
+
+如果当前 Trainer 没有 logger，或 logger backend 不支持对应媒体日志能力，方法会直接抛错。
+
+媒体日志默认只在 global rank 0 写入。需要排查分布式 rank 差异时，可以传 `rank_mode="all"`；此时所有 rank 都会写入，且分布式场景下 tag 会自动加上 `rank={global_rank}/` 前缀。
+
+下游项目继续自己实现：
+
+- `forward()`
+- `training_step()`
+- `validation_step()`
+- `test_step()`
+- `configure_optimizers()`
+
+## Callback
+
+`StopOnNonfiniteLossCallback` 在 `on_before_backward()` 检查 loss 是否 finite。遇到 NaN 或 Inf 时直接抛错，错误信息包含当前 epoch、global step 和 loss 值。
+
+Hydra 配置示例：
+
+```yaml
+trainer:
+  callbacks:
+    - _target_: anytrain.lightning.StopOnNonfiniteLossCallback
+```
+
+## Root 约定
+
+`anytrain.hydra.create_trainer()` 使用 experiment 字段设置 `default_root_dir`。logger backend 不再由 `anytrain.lightning` 自动创建；需要 logger 时，直接通过 Lightning 原生 `trainer.logger` 配置或 Python 代码传入。
+
+第三方 logger backend 属于 optional backend，不放在 core `lightning` 默认导入路径里。
+
+## 边界
+
+`lightning` 不做：
+
+- 不替用户实现任务 step。
+- 不解释 batch。
+- 不决定 optimizer / scheduler。
+- 不内置模型 zoo。
+- 不隐式加载 optional domain component。
+- 不把 callback registry 做成额外抽象层。
+- 不提供 `AnyTrainModule` 这类魔法基类。
+
+## 测试策略
+
+当前覆盖：
+
+- `LightningLogMixin` 的 prefixed dict、媒体 logger 错误路径和 rank logging 策略。
+- `StopOnNonfiniteLossCallback` 的异常路径。
+- `anytrain.hydra.create_trainer()` 对 callback config 的实例化。
+
+后续新增 logger backend 或 callback 时，需要补充与 Lightning logger backend 的集成测试，并确保没有引入 optional 依赖到 core import。

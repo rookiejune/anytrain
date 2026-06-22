@@ -1,0 +1,42 @@
+defaults:
+  - _self_
+
+environment:
+  seed: 0
+  seed_workers: true
+  torch_matmul_precision: medium
+
+experiment:
+  save_dir: outputs
+  name: anytrain
+  version: tiny_regression
+
+pl_module:
+  _target_: examples.tiny_regression.TinyRegressionModule
+  model:
+    _target_: torch.nn.Linear
+    in_features: 4
+    out_features: 1
+  optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
+    lr: 0.01
+
+data_module:
+  _target_: examples.tiny_regression.TinyRegressionDataModule
+  num_samples: 64
+  input_dim: 4
+  batch_size: 16
+
+trainer:
+  max_epochs: 1
+  accelerator: cpu
+  logger: false
+  enable_checkpointing: false
+  enable_model_summary: false
+  enable_progress_bar: true
+
+fit:
+  ckpt_path: null
+
+print_config: true

@@ -1,0 +1,255 @@
+# Lightning
+
+## 定位
+
+`anytrain.lightning` 是面向普通 LightningModule 的核心运行时层。`anytrain` 的默认训练入口是 Hydra app，但 LightningModule 本身保持 Lightning 原生写法；这个子包只提供 task-agnostic 的 runtime helper、logging mixin 和调试 callback。
+
+这个包就是服务 Lightning 的，所以 `torch`、`lightning` 和 Hydra 相关依赖属于默认测试环境，不再把 Lightning 当成可跳过依赖。
+
+它负责：
+
+- LightningModule 侧的轻量 logging helper。
+- non-finite loss 检查等训练调试 callback。
+
+它不负责：
+
+- 替用户实现具体 `training_step`、`validation_step`、`test_step`。
+- 替用户决定 batch schema。
+- 替用户决定 optimizer / scheduler。
+- 内置模型 zoo、组件加载协议或单模型快捷封装。
+
+下游项目定义自己的 `pl_module`，直接继承 Lightning 原生 `LightningModule`，并按需组合 `anytrain` 提供的 loss、evaluator、plotter 或 framework 组件。
+
+## Core 与 Optional
+
+`anytrain` 可以提供训练组件，但按依赖层级拆分：
+
+- core：`hydra`、`lightning`、通用 loss/evaluator 接口、轻量 registry/types。
+- optional general：plotter、通用 torchmetrics evaluator、第三方 logger backend。
+- optional domain：audio/text/speech/gan 等领域 loss、evaluator、plotter。
+- optional framework：flow matching、MAE、GAN 训练辅助等研究框架。
+
+core import 只依赖默认依赖；optional 子模块可以要求额外依赖，但错误信息应明确提示安装对应 extra。
+
+## 接口原则
+
+- 用户配置自己的 `pl_module`、`data_module` 和 `trainer`。
+- Hydra app 负责装配和启动训练；LightningModule 负责训练语义。
+- 模型和其他子组件作为下游 `pl_module` 的普通字段，由下游类的 `__init__` 明确接收。
+- `anytrain` 提供可选训练积木，但不接管组件注入。
+- optimizer / scheduler 由下游 `configure_optimizers()` 创建；配置可以作为 `pl_module` 的显式参数传入，也可以直接在代码里手写。
+- logger backend 由下游或 Lightning 原生机制配置；`anytrain.lightning` 只提供不持有状态的 logging mixin。
+
+## 类层次
+
+`anytrain.lightning` 不提供自己的 LightningModule 基类，也不通过继承改变训练行为。下游模块直接继承 Lightning：
+
+```python
+from lightning import pytorch as pl
+
+
+class MyPLModule(pl.LightningModule):
+    ...
+```
+
+会改变训练行为或文件系统状态的能力通过显式 callback、helper 或组件暴露；non-finite loss 检查等调试规则通过 callback 配置。
+
+Hydra 框架层可以约定配置形状和运行目录，但不能把这些约定藏进 `LightningModule` 继承链里。
+
+## 下游用法
+
+用户仍然手写训练逻辑，但可以直接使用 `anytrain` 提供的组件：
+
+```python
+import torch
+from lightning import pytorch as pl
+
+from anytrain.evaluator import EvaluatorGroup
+from anytrain.loss import LossABC
+
+
+class MyPLModule(pl.LightningModule):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        loss_fn: LossABC,
+        evaluator: EvaluatorGroup | None = None,
+        *,
+        lr: float = 0.0003,
+    ):
+        super().__init__()
+        self.model = model
+        self.loss_fn = loss_fn
+        self.evaluator = evaluator
+        self.lr = lr
+
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss_result = self.loss_fn(y_hat, y)
+        if isinstance(loss_result, tuple):
+            loss, loss_details = loss_result
+            self.log_dict({f"train/loss/{key}": value for key, value in loss_details.items()})
+        else:
+            loss = loss_result
+        self.log("train/loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        if self.evaluator is None:
+            return
+        x, y = batch
+        y_hat = self(x)
+        metrics = self.evaluator(y_hat, y)
+        self.log_dict({f"val/metric/{key}": value for key, value in metrics.items()}, sync_dist=True)
+
+    def configure_optimizers(self):
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
+```
+
+对应 Hydra 配置推荐使用 `pl_module`，不要叫 `task`：
+
+```yaml
+pl_module:
+  _target_: my_project.pl_modules.MyPLModule
+  model:
+    _target_: my_project.models.MyModel
+    hidden_dim: 256
+  loss_fn:
+    _target_: anytrain.loss.LossGroup
+    losses:
+      reconstruction:
+        _target_: torch.nn.L1Loss
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+    lr: 0.0003
+  evaluator:
+    _target_: anytrain.evaluator.EvaluatorGroup
+    metrics:
+      error:
+        _target_: anytrain.evaluator.MeanAbsoluteError
+  lr: 0.0003
+```
+
+如果下游使用领域组件，也还是挂在 `pl_module` 里：
+
+```yaml
+pl_module:
+  _target_: my_project.audio.AudioPLModule
+  loss_fn:
+    _target_: anytrain.loss.spectral.MultiScaleSTFTLoss
+  evaluator:
+    _target_: anytrain.evaluator.audio.CodecEvaluator
+```
+
+这些领域组件属于 optional dependency，不应影响 core import。
+
+## Optimizer / Scheduler
+
+如果 optimizer 作为 `pl_module` 依赖传入，推荐用 Hydra `_partial_: true` 传入优化器工厂：
+
+```python
+class MyPLModule(pl.LightningModule):
+    def __init__(self, model, optimizer):
+        super().__init__()
+        self.model = model
+        self.optimizer = optimizer
+
+    def configure_optimizers(self):
+        return self.optimizer(self.parameters())
+```
+
+也可以完全不配置 optimizer，直接在下游 `configure_optimizers()` 返回 Lightning 接受的原生结构：
+
+```python
+optimizer = torch.optim.AdamW(self.encoder.parameters(), lr=3e-4)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100)
+return {
+    "optimizer": optimizer,
+    "lr_scheduler": {
+        "scheduler": scheduler,
+        "interval": "step",
+    },
+}
+```
+
+如果有多组 optimizer、多模块参数组、手动优化或更复杂的 scheduler 配置，下游 `configure_optimizers()` 直接返回 Lightning 原生结构即可。
+
+## Logging Mixin
+
+`LightningLogMixin` 提供几个适合在下游 `LightningModule` 里直接调用的小工具：
+
+```python
+from anytrain.lightning import LightningLogMixin
+
+
+class MyPLModule(LightningLogMixin, pl.LightningModule):
+    def training_step(self, batch, batch_idx):
+        ...
+        self.log_prefixed_dict("train/loss", loss_details, on_step=True)
+        return loss
+```
+
+当前能力：
+
+- `log_prefixed_dict(prefix, values, **kwargs)`：给 dict key 统一加前缀后调用 Lightning 原生 `log_dict()`。
+- `log_audio(tag, audio, sample_rate=..., step=None, rank_mode="zero")`：通过当前 `trainer.loggers` 写入 audio。
+- `log_figure(tag, figure, step=None, rank_mode="zero")`：通过当前 `trainer.loggers` 写入 figure。
+
+`audio` 和 `figure` 目前支持 `TensorBoardLogger`。如果当前 Trainer 没有 logger，或 logger backend 不支持对应能力，会直接抛出明确错误。
+
+媒体日志默认只在 global rank 0 写入。调试分布式 rank 差异时，可以传 `rank_mode="all"`；此时所有 rank 都会写入，且分布式场景下 tag 会自动加上 `rank={global_rank}/` 前缀。
+
+## Root
+
+`anytrain.hydra` 在创建 Trainer 时会根据 experiment 字段设置 `default_root_dir`：
+
+```text
+${experiment.save_dir}/${experiment.name}/${experiment.version}
+```
+
+logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 logger 时，直接通过 Lightning 原生 `trainer.logger` 配置或 Python 代码传入。
+
+## 调试能力
+
+`StopOnNonfiniteLossCallback` 会在 backward 前检查 loss 是否 finite。
+
+如果 loss 中出现 NaN 或 Inf，直接抛错，避免继续写坏 checkpoint 或污染日志。
+
+Hydra 配置示例：
+
+```yaml
+trainer:
+  callbacks:
+    - _target_: anytrain.lightning.StopOnNonfiniteLossCallback
+```
+
+固定单个 batch 训练属于 dataloader / data module 的采样策略，不放在 `anytrain.lightning` 里。
+
+## Batch 边界
+
+`anytrain.lightning` 不解释 batch。
+
+batch 可以来自：
+
+- 下游 LightningDataModule。
+- 普通 PyTorch DataLoader。
+- `anydataset` 产生的 dataclass batch。
+- 下游自定义对象。
+
+`training_step` 中如何读取 batch 完全由下游 pl module 决定。
+
+## 不做的事
+
+`anytrain.lightning` 不做：
+
+- 组件注入封装或组件加载协议。
+- callback registry。
+- 替用户写 task-level 训练 step。
+- 替用户选择 optimizer / scheduler。
+- model zoo。
+- 自定义 `LightningModule` 魔法基类。

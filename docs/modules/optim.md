@@ -53,7 +53,7 @@ src/anytrain/optim/
 - decay：非 embedding / norm / 显式排除 module 中，名称为 `weight` 且维度不小于 2 的参数。
 - no-decay：bias、norm、embedding，以及用户显式排除的 module / module type。
 
-LLM 预设会显式使用 `decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE`，让 AdamW decay 规则和 Muon 参数语义一致：只 decay 适合放进 Muon 的 hidden 2D weight。为了方便 Hydra/YAML 配置，`decay_policy` 也接受字符串 `"standard"` 和 `"muon_eligible"`。
+LLM 预设会显式使用 `decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE`，让 AdamW decay 规则和 Muon 参数语义一致：只 decay 适合放进 Muon 的 hidden 2D weight。为了方便 YAML/JSON 配置，`decay_policy` 也接受字符串 `"standard"` 和 `"muon_eligible"`。
 
 `optim` 不按名字猜 output head。需要排除 head 时，显式传 module 对象：
 
@@ -92,7 +92,7 @@ optimizer = create_muon_adamw_optimizer(
 - `"muon"` 子 optimizer 处理 Muon 参数。
 - `"adamw"` 子 optimizer 处理其余参数，并全部使用 `weight_decay=0.0`。
 
-`MuonConfig.adjust_lr_fn` 默认是 `MuonAdjustLRFn.MATCH_RMS_ADAMW`，用于和 AdamW 常用 lr/wd 配置对齐。PyTorch 原生 `torch.optim.Muon` 默认不设置 `adjust_lr_fn`；这里显式改成 LLM 训练更常用的对齐口径。为了方便 Hydra/YAML 配置，`adjust_lr_fn` 也接受字符串 `"original"` 和 `"match_rms_adamw"`。
+`MuonConfig.adjust_lr_fn` 默认是 `MuonAdjustLRFn.MATCH_RMS_ADAMW`，用于和 AdamW 常用 lr/wd 配置对齐。PyTorch 原生 `torch.optim.Muon` 默认不设置 `adjust_lr_fn`；这里显式改成 LLM 训练更常用的对齐口径。为了方便 YAML/JSON 配置，`adjust_lr_fn` 也接受字符串 `"original"` 和 `"match_rms_adamw"`。
 
 ## Scheduler
 
@@ -212,6 +212,6 @@ return create_llm_lightning_optimizers(
 
 - 不解释 batch schema。
 - 不替下游选择模型结构。
-- 不作为 Hydra 顶层硬字段自动注入。
+- 不作为顶层硬字段自动注入。
 - 不提供要求继承的 LightningModule 基类。
 - 不隐藏多 optimizer 或 scheduler 的返回结构；下游仍可直接按 Lightning 原生写法返回。

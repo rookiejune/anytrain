@@ -7,7 +7,7 @@
 1. [x] `LossABC`：返回 scalar tensor，可选返回 details。
 2. [x] `LossGroup`：组合多个 loss，返回 `(total, details)`。
 3. [x] `LossBalancerABC` / `MeanLossBalancer` / `FixedWeightLossBalancer` / `UncertaintyLossBalancer`：将多个 loss 合成为一个 scalar total。
-4. `TaskLoss`：Hydra 友好的组合容器，不绑定具体任务语义。
+4. `TaskLoss`：plain-config 友好的组合容器，不绑定具体任务语义。
 5. [x] 支持子 loss 返回 `Tensor` 或 `(Tensor, dict)`，自动 flatten/prefix details。
 6. 更多 balancer 策略，例如 deviation。
 

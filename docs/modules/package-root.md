@@ -20,8 +20,8 @@ from anytrain import AutoNameEnum, Registry
 
 ## 设计原则
 
-- 根包 import 应保持轻量，不隐式导入 Lightning、Hydra、torchmetrics、plot/audio/text 等重依赖。
-- 用户需要训练入口时显式使用 `anytrain.hydra`。
+- 根包 import 应保持轻量，不隐式导入 Lightning、torchmetrics、plot/audio/text 等重依赖。
+- 训练入口由下游项目自己维护，根包不提供快捷启动函数。
 - 用户需要 Lightning helper 时显式使用 `anytrain.lightning`。
 - 用户需要 loss/evaluator/plotter/framework 时显式使用对应子模块。
 
@@ -31,7 +31,7 @@ from anytrain import AutoNameEnum, Registry
 
 - 不自动注册项目组件。
 - 不暴露全量子模块对象。
-- 不提供 `run_train` 快捷别名，避免 `import anytrain` 触发 Hydra/Lightning 相关依赖路径。
+- 不提供 `run_train` 快捷别名，避免 `import anytrain` 触发 Lightning 相关依赖路径或暗示默认 app 层。
 - 不承诺 optional 子模块在默认安装下可导入。
 
 ## 后续演进

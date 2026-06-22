@@ -141,27 +141,20 @@ class LightningTest(unittest.TestCase):
         self.assertEqual(logger.experiment.audio[0][2:], (3, 16000))
         self.assertEqual(logger.experiment.figures, [("rank=2/figure", figure, 3)])
 
-    def test_create_trainer_instantiates_callback_config(self):
-        from omegaconf import OmegaConf
+    def test_stop_on_nonfinite_loss_callback_can_be_passed_to_trainer(self):
+        from lightning import pytorch as pl
 
-        from anytrain.hydra import create_trainer
         from anytrain.lightning import StopOnNonfiniteLossCallback
 
-        cfg = OmegaConf.create(
-            {
-                "logger": False,
-                "enable_checkpointing": False,
-                "enable_progress_bar": False,
-                "callbacks": [
-                    {"_target_": "anytrain.lightning.StopOnNonfiniteLossCallback"},
-                ],
-            }
+        callback = StopOnNonfiniteLossCallback()
+        trainer = pl.Trainer(
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            callbacks=[callback],
         )
-        trainer = create_trainer(cfg, experiment={"save_dir": "outputs"})
 
-        self.assertTrue(
-            any(isinstance(callback, StopOnNonfiniteLossCallback) for callback in trainer.callbacks)
-        )
+        self.assertTrue(any(item is callback for item in trainer.callbacks))
 
 
 if __name__ == "__main__":

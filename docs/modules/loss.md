@@ -172,7 +172,7 @@ loss, details = loss_fn(reconstruction, target, lengths=batch.lengths)
 
 当前 core 已有最小可用实现，但还没有：
 
-- `TaskLoss` Hydra 友好组合容器。
+- `TaskLoss` plain-config 友好组合容器。
 - deviation 等更多 balancer 策略。
 
 这些属于后续演进，不应在下游文档里假设已经存在。

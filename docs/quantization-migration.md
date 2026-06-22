@@ -12,7 +12,7 @@
 - 量化输出 dataclass 和轻量 protocol。
 - 最小线性投影能力，用于 input dim 和 codebook dim 不一致的情况。
 
-迁移后的模块应保持 task-agnostic，不解释 batch schema，不依赖 codec/audio/zoo，不接管训练 step。Hydra 只负责按 `_target_` 实例化这些组件。
+迁移后的模块应保持 task-agnostic，不解释 batch schema，不依赖 codec/audio/zoo，不接管训练 step。对象实例化由下游项目自己的入口或配置系统负责。
 
 ## 非目标
 
@@ -313,13 +313,11 @@ FSQ 的 basis、levels、half levels、offsets，VQ EMA 的 counter/sum 都用 `
 - `python -m pytest tests/test_module_quantization*.py` 通过。
 - `ruff check src/anytrain tests` 通过。
 
-Hydra 配置示例：
+YAML 配置示例：
 
 ```yaml
 quantizer:
-  _target_: anytrain.module.quantization.FiniteScalarQuantizer
   config:
-    _target_: anytrain.module.quantization.FSQConfig
     input_dim: 128
     levels: [9, 7, 7, 7, 7, 3]
     bound_scale: 1.0
@@ -337,7 +335,7 @@ tests/test_module_quantization_rvq.py
 
 核心用例：
 
-- Hydra-friendly config dataclass 字段稳定，无函数对象默认值。
+- plain-config friendly dataclass 字段稳定，无函数对象默认值。
 - invalid config 早失败，例如非正 codebook size、空 levels、dim 不匹配。
 - forward 支持 `(..., input_dim)`，至少覆盖 2D 和 3D latent。
 - round-trip helper 在 CPU 上可稳定运行。

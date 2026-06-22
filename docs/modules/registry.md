@@ -2,7 +2,7 @@
 
 ## 定位
 
-`anytrain.registry` 提供轻量、类型友好的 registry。它用于显式注册和创建对象，不替代 Hydra，也不作为项目级模型 zoo 的隐藏入口。
+`anytrain.registry` 提供轻量、类型友好的 registry。它用于显式注册和创建对象，不替代下游配置系统，也不作为项目级模型 zoo 的隐藏入口。
 
 ## 当前实现
 
@@ -59,7 +59,7 @@ class CustomModule:
 
 - 不扫描文件系统。
 - 不自动 import 插件。
-- 不处理 Hydra config。
+- 不处理配置文件或对象装配协议。
 - 不承担模型 zoo、checkpoint 下载或版本选择。
 - 不静默覆盖已存在 key。
 
@@ -71,4 +71,3 @@ class CustomModule:
 - 重复 key 抛错。
 
 后续如果 registry 用于更多组件，应补充 decorator 注册、`replace=True`、未知 key 错误信息和不可调用值的 `create()` 错误测试。
-

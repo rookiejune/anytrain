@@ -32,7 +32,7 @@ assert Mode.TRAIN.value == "train"
 
 - 只放没有领域语义的基础类型。
 - 不放 batch schema、sample schema 或任务配置 schema。
-- 不引入 torch、Lightning、Hydra 之外的额外依赖。
+- 不引入 torch、Lightning 之外的额外依赖。
 - 类型行为应简单透明，避免大量兼容逻辑。
 
 ## 边界
@@ -47,4 +47,3 @@ assert Mode.TRAIN.value == "train"
 ## 测试策略
 
 当前覆盖显式字符串值保留。后续应补充 `enum.auto()` 自动小写值的测试，确保 `AutoNameEnum` 的核心行为被直接验证。
-

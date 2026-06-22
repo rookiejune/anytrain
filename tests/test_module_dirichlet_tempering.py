@@ -12,7 +12,7 @@ from anytrain.module.dirichlet_tempering import (
 
 
 class AdaptiveDirichletTemperingTest(unittest.TestCase):
-    def test_config_is_hydra_friendly_plain_data(self):
+    def test_config_is_plain_data(self):
         config = ADTConfig(num_experts=4)
 
         field_names = {field.name for field in fields(config)}

@@ -2,39 +2,23 @@
 
 ## 目标设计
 
-`anytrain` 的核心不是一个大而泛的 task framework，也不是只做启动脚本，而是：
+`anytrain` 的核心不是一个大而泛的 task framework，也不是统一训练启动脚本，而是用户写 PyTorch/Lightning 训练代码，尤其是写普通 `LightningModule` 时会用到的组件库：
 
-- `anytrain.hydra`：Hydra 配置驱动的训练装配入口。
 - `anytrain.lightning`：可复用的 LightningModule logging mixin 和训练调试 callback。
-- `anytrain.loss` / `anytrain.evaluator` / `anytrain.optim` / `anytrain.plotter` / `anytrain.framework`：用户写 LightningModule 时可选使用的训练组件层。
+- `anytrain.loss` / `anytrain.evaluator` / `anytrain.optim` / `anytrain.module` / `anytrain.plotter` / `anytrain.framework`：用户写 LightningModule 时可选组合的组件。
+- `anytrain.registry` / `anytrain.types`：轻量支撑层。
 
 下游用户的主要工作流应该是：
 
-1. 在自己的项目里定义 `configs/`。
-2. 写自己的 pl module、data module；模型、loss、evaluator、plotter 等子组件尽量挂在 `pl_module` 配置里。
-3. 通过 `anytrain.hydra` 的训练入口读取 Hydra 配置并启动训练。
+1. 在自己的项目里定义配置系统和训练入口。
+2. 写自己的 pl module、data module；模型、loss、evaluator、plotter 等子组件通过构造函数显式传入或在模块内创建。
+3. 在自己的入口里创建 `Trainer` 并调用 `fit()`。
 
 `anydataset` 负责数据集、canonical sample 和 batch dataclass；`anytrain` 不解释 batch schema，不内置具体任务 step。
 
-Lightning 是核心依赖，测试默认要求安装 `torch`、`lightning`、Hydra 相关依赖。
+Lightning 是核心依赖，测试默认要求安装 `torch` 和 `lightning`。Hydra、OmegaConf、pydantic、argparse 等配置工具由下游项目按需选择，不作为默认依赖。
 
 ## 期望使用方式
-
-命令行入口保持 Hydra 风格：
-
-```bash
-python -m anytrain.hydra --config-dir configs --config-name train
-```
-
-Python 入口：
-
-```python
-from omegaconf import OmegaConf
-from anytrain.hydra import run_train
-
-cfg = OmegaConf.load("configs/train.yaml")
-run_train(cfg)
-```
 
 下游 pl module 直接继承 Lightning 原生基类：
 
@@ -58,68 +42,32 @@ class MyPLModule(pl.LightningModule):
         return loss
 ```
 
-`anytrain.hydra` 装配时直接实例化 `cfg.pl_module`，Hydra 会递归装配它内部的模型或其他组件。
+训练入口由下游项目自己维护：
 
-## 配置约定
+```python
+from lightning import pytorch as pl
 
-推荐下游配置树：
+from anytrain.lightning import StopOnNonfiniteLossCallback
 
-```text
-configs/
-  train.yaml
-  environment/
-    default.yaml
-  pl_module/
-    default.yaml
-  trainer/
-    default.yaml
+
+def train():
+    module = MyPLModule(model=MyModel(), loss=MyLoss())
+    data_module = MyDataModule()
+    trainer = pl.Trainer(
+        default_root_dir="outputs/my_project/debug",
+        callbacks=[StopOnNonfiniteLossCallback()],
+    )
+    trainer.fit(module, datamodule=data_module)
 ```
 
-最小 `train.yaml` 形状：
+## 配置边界
 
-```yaml
-defaults:
-  - environment: default
-  - pl_module: default
-  - trainer: default
-  - _self_
+`anytrain` 不定义顶层配置形状。推荐原则：
 
-experiment:
-  save_dir: outputs
-  name: debug
-  version: v0
-
-fit:
-  ckpt_path: null
-
-print_config: true
-```
-
-关键 group 约定：
-
-- `pl_module`：必须指向下游 Lightning module；它可以在自己的 config 里显式接收一个或多个模型/loss/evaluator/plotter/framework 组件。
-- `data_module`：由下游提供，可以是 LightningDataModule，也可以是可被 Trainer 接收的 datamodule。
-- optimizer / scheduler：由下游 `pl_module` 自己配置和创建；直接返回 Lightning 原生结构。
-- `trainer`：直接透传给 `lightning.pytorch.Trainer`；logger backend 由下游配置或 Lightning 原生机制决定；关闭日志使用 `trainer.logger: false`。
-
-## Hydra 边界
-
-`anytrain.hydra` 负责：
-
-- 打印/解析配置。
-- 设置环境，例如 seed、matmul precision。
-- 实例化顶层 `pl_module`，并递归装配它内部需要的组件。
-- 通过 Hydra 直连实例化可选的 `data_module`。
-- 实例化 Trainer。
-- 调用 `trainer.fit(...)`。
-
-`anytrain.hydra` 不负责：
-
-- 写具体任务语义或 `training_step`。
-- 解释 batch 内容。
-- 注册或加载项目特定模型 zoo。
-- 写数据集适配规则。
-- 把 audio codec、source separation、text-to-audio 等任务 step 写进 core。
+- 配置系统属于下游项目，可以用普通 Python、Hydra、pydantic、argparse 或其它项目内约定。
+- `pl_module` 是训练语义入口；模型、loss、optimizer、scheduler、evaluator、plotter、framework 等组件通过下游 `pl_module.__init__` 显式接收，或由下游模块自己创建。
+- optimizer / scheduler 由下游 `configure_optimizers()` 创建；直接返回 Lightning 原生结构。
+- `Trainer`、logger、checkpoint resume 和运行目录由下游入口显式设置。
 
 ## Lightning 边界
 
@@ -133,6 +81,7 @@ print_config: true
 - 具体任务 step。
 - 具体 data schema。
 - 具体模型 registry。
+- 配置装配或对象实例化。
 - optional 领域组件的重依赖。
 
 ## 目标包结构
@@ -140,14 +89,6 @@ print_config: true
 ```text
 src/anytrain/
   __init__.py
-  hydra/
-    __init__.py
-    __main__.py
-    app.py
-    environment.py
-    instantiate.py
-    paths.py
-    trainer.py
   lightning/
     __init__.py
     callback/
@@ -157,52 +98,40 @@ src/anytrain/
   optim/
   plotter/
   framework/
+  module/
   registry.py
   types.py
 examples/
   tiny_regression.py
-  configs/
 ```
 
 说明：
 
-- `hydra/` 放 `run_train`、运行时 helper 和 Hydra 命令行入口。
 - 仓库级 smoke/example 放在根目录 `examples/`。
 - 下游项目自己的 `configs/` 不应该放进 `anytrain` 包里。
+- `anytrain` 不提供 `python -m anytrain.*` 训练入口。
 
 ## 迁移清单
 
-1. 文档先行：用本文件和 `docs/architecture.md` 固定 `hydra + lightning` 设计。
-2. 将训练入口整理到 `src/anytrain/hydra/`。
-3. 把 `run_train` 和有额外运行时语义的 helper 拆到 `hydra/` 子模块。
-4. 把 Hydra CLI 入口改为：
-
-   ```bash
-   python -m anytrain.hydra
-   ```
-
-5. 更新测试，统一从 `anytrain.hydra` 进入。
-6. 更新 README / AGENTS / architecture，统一 `hydra + lightning` 作为正式接口。
-7. tiny regression smoke 示例放在仓库根目录的 `examples/`，不放进 `src/anytrain` 包内。
-8. 将配置字段从 `task` 统一为 `pl_module`。
-9. 删除 base package 里的 `integrations/anydataset`，数据连接留给下游项目。
-10. 将 LightningModule logging helper 明确为 core；第三方 backend 作为 optional。
-11. 将 loss/evaluator/plotter/framework 按 core/optional 子模块分层。
-12. 公开接口优先按 `pl_module` 组织，单一 `model` 只作为最简内部组件，不再作为硬性顶层字段。
-13. 从 `deepaudio.module.dynamic_conv` 迁入 1D Dynamic Conv / Dynamic Conv Transpose，并保留 einops 作为默认依赖以提高 shape 变换可读性。
-14. 按 `docs/quantization-migration.md` 从 `deepaudio.module.vector_quantizer` 迁入 task-agnostic 量化组件，第一版覆盖 FSQ、VQ、RVQ。
-15. 将 optimizer helper 从 `utils.optim` 提升到顶层 `anytrain.optim`。
+1. Done: 删除 `anytrain.hydra` 默认训练入口和 `hydra-core` 默认依赖。
+2. Done: tiny regression smoke 示例改为下游自有 Python 入口，不放进 `src/anytrain` 包内。
+3. Done: 将 LightningModule logging helper 明确为 core；第三方 backend 作为 optional。
+4. Done: 将 loss/evaluator/plotter/framework 按 core/optional 子模块分层。
+5. Done: 公开接口优先按 `pl_module` 组织，单一 `model` 只作为最简内部组件，不再作为硬性顶层字段。
+6. Done: 从 `deepaudio.module.dynamic_conv` 迁入 1D Dynamic Conv / Dynamic Conv Transpose，并保留 einops 作为默认依赖以提高 shape 变换可读性。
+7. Done: 按 `docs/quantization-migration.md` 从 `deepaudio.module.vector_quantizer` 迁入 task-agnostic 量化组件，第一版覆盖 FSQ、VQ、RVQ。
+8. Done: 将 optimizer helper 从 `utils.optim` 提升到顶层 `anytrain.optim`。
 
 ## 已确认
 
-- `hydra` 使用子包拆分，不保留顶层 `api.py`。
-- 配置里统一使用 `pl_module`，不把用户自定义 task 语义占掉。
-- `pl_module` 是主要装配入口，模型和其他组件由下游模块的 `__init__` 显式接收。
-- optimizer / scheduler 不作为 `anytrain.hydra` 顶层绑定逻辑；下游 `pl_module` 自己决定配置形状和创建方式。
+- 不保留 `anytrain.hydra` 子包。
+- 配置工具由下游选择；库内不依赖 Hydra/OmegaConf。
+- `pl_module` 是主要训练语义入口，模型和其他组件由下游模块的 `__init__` 显式接收。
+- optimizer / scheduler 不作为顶层绑定逻辑；下游 `pl_module` 自己决定配置形状和创建方式。
 - `anydataset` 不作为强依赖，base package 里先不提供 integration。
 - LightningModule logging helper 是 core；`wandb` 等第三方 backend 是 optional。
 - loss/evaluator 有 core 接口和组合器；audio/text/speech/gan 等领域组件作为 optional 子模块。
-- optimizer/scheduler helper 可以放在 `anytrain.optim`，但仍由下游 `pl_module.configure_optimizers()` 显式调用，不作为 Hydra 顶层硬注入。
+- optimizer/scheduler helper 放在 `anytrain.optim`，但仍由下游 `pl_module.configure_optimizers()` 显式调用，不做隐藏注入。
 - `module.dynamic_conv` 只迁入成熟的 1D 实现；2D dynamic conv 暂不迁入注释/实验代码。
 
 ## Quantization 迁移

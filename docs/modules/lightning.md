@@ -2,7 +2,7 @@
 
 ## 定位
 
-`anytrain.lightning` 是 core runtime 层，服务下游普通 LightningModule。`anytrain` 的框架感集中在 Hydra app 层；这个模块只提供任务无关的 logging mixin 和训练调试 callback。
+`anytrain.lightning` 是 core runtime 层，服务下游普通 LightningModule。训练入口由下游项目自己维护；这个模块只提供任务无关的 logging mixin 和训练调试 callback。
 
 Lightning 是 core 依赖，不作为 optional integration。
 
@@ -55,17 +55,18 @@ src/anytrain/lightning/
 
 `StopOnNonfiniteLossCallback` 在 `on_before_backward()` 检查 loss 是否 finite。遇到 NaN 或 Inf 时直接抛错，错误信息包含当前 epoch、global step 和 loss 值。
 
-Hydra 配置示例：
+Python 入口示例：
 
-```yaml
-trainer:
-  callbacks:
-    - _target_: anytrain.lightning.StopOnNonfiniteLossCallback
+```python
+from lightning import pytorch as pl
+from anytrain.lightning import StopOnNonfiniteLossCallback
+
+trainer = pl.Trainer(callbacks=[StopOnNonfiniteLossCallback()])
 ```
 
 ## Root 约定
 
-`anytrain.hydra.create_trainer()` 使用 experiment 字段设置 `default_root_dir`。logger backend 不再由 `anytrain.lightning` 自动创建；需要 logger 时，直接通过 Lightning 原生 `trainer.logger` 配置或 Python 代码传入。
+`anytrain.lightning` 不设置 root。下游入口创建 `Trainer` 时显式传入 `default_root_dir`。logger backend 不由 `anytrain.lightning` 自动创建；需要 logger 时，直接通过 Lightning 原生 `trainer.logger` 配置或 Python 代码传入。
 
 第三方 logger backend 属于 optional backend，不放在 core `lightning` 默认导入路径里。
 
@@ -87,6 +88,6 @@ trainer:
 
 - `LightningLogMixin` 的 prefixed dict、媒体 logger 错误路径和 rank logging 策略。
 - `StopOnNonfiniteLossCallback` 的异常路径。
-- `anytrain.hydra.create_trainer()` 对 callback config 的实例化。
+- callback 可直接传入 Lightning `Trainer`。
 
 后续新增 logger backend 或 callback 时，需要补充与 Lightning logger backend 的集成测试，并确保没有引入 optional 依赖到 core import。

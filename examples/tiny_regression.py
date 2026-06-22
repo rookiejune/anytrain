@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from pathlib import Path
+from functools import partial
 
 import torch
 import torch.nn.functional as F
 from lightning import pytorch as pl
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
-
-from anytrain.hydra import run_train
 
 
 class TinyRegressionModule(pl.LightningModule):
@@ -63,11 +61,42 @@ class TinyRegressionDataModule(pl.LightningDataModule):
         return DataLoader(self.dataset, batch_size=self.batch_size)
 
 
-def main():
-    from omegaconf import OmegaConf
+def run_tiny_regression(
+    *,
+    max_epochs: int = 1,
+    num_samples: int = 64,
+    input_dim: int = 4,
+    batch_size: int = 16,
+    default_root_dir: str = "outputs/anytrain/tiny_regression",
+    enable_progress_bar: bool = True,
+):
+    torch.set_float32_matmul_precision("medium")
+    pl.seed_everything(0, workers=True)
 
-    config_path = Path(__file__).with_name("configs") / "tiny_regression.yaml"
-    run_train(OmegaConf.load(config_path))
+    module = TinyRegressionModule(
+        model=torch.nn.Linear(input_dim, 1),
+        optimizer=partial(torch.optim.Adam, lr=0.01),
+    )
+    data_module = TinyRegressionDataModule(
+        num_samples=num_samples,
+        input_dim=input_dim,
+        batch_size=batch_size,
+    )
+    trainer = pl.Trainer(
+        max_epochs=max_epochs,
+        accelerator="cpu",
+        logger=False,
+        enable_checkpointing=False,
+        enable_model_summary=False,
+        enable_progress_bar=enable_progress_bar,
+        default_root_dir=default_root_dir,
+    )
+    trainer.fit(module, datamodule=data_module)
+    return trainer, module
+
+
+def main():
+    run_tiny_regression()
 
 
 if __name__ == "__main__":

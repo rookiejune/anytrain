@@ -14,7 +14,7 @@ from anytrain.module.quantization.finite_scalar import default_fsq_levels
 
 
 class FiniteScalarQuantizerTest(unittest.TestCase):
-    def test_config_is_hydra_friendly_plain_data(self):
+    def test_config_is_plain_data(self):
         config = FSQConfig(input_dim=8, levels=(5, 5))
 
         field_names = {field.name for field in fields(config)}

@@ -11,7 +11,7 @@ from anytrain.module.quantization import (
 
 
 class EmbeddingVectorQuantizerTest(unittest.TestCase):
-    def test_config_is_hydra_friendly_plain_data(self):
+    def test_config_is_plain_data(self):
         config = VQConfig(input_dim=8, codebook_size=16, codebook_dim=4)
 
         field_names = {field.name for field in fields(config)}
@@ -96,4 +96,3 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

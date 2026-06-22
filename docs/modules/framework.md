@@ -4,7 +4,7 @@
 
 `anytrain.framework` 是 optional/experimental 研究框架层，用于沉淀跨项目复用的训练范式组件，例如 flow matching、masked autoencoder 或 GAN helper。
 
-它不是 core 层，也不替下游项目生成完整 LightningModule。不要把这里的 `framework` 和默认 Hydra app 层混在一起：Hydra app 是训练工程入口，`anytrain.framework` 是可选训练范式积木。
+它不是 core 层，也不替下游项目生成完整 LightningModule。不要把这里的 `framework` 和训练工程入口混在一起：入口由下游项目自己维护，`anytrain.framework` 是可选训练范式积木。
 
 ## 当前状态
 

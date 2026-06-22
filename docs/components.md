@@ -2,7 +2,7 @@
 
 ## 设计原则
 
-`anytrain` 的组件是给用户写普通 LightningModule 时使用的积木。Hydra app 层负责把这些组件按配置装配进下游对象；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、optim、plotter 和 framework。
+`anytrain` 的组件是给用户写 PyTorch/Lightning 训练代码时使用的积木，尤其服务普通 `LightningModule` 的实现。下游项目负责训练入口和配置装配；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、optim、plotter 和 framework。
 
 组件应该是显式可组合的对象，而不是隐藏在自定义 `LightningModule` 基类里的行为。一个组件如果会改变训练流程、文件系统状态或日志行为，应通过明确的 helper、callback 或 `pl_module.__init__` 参数暴露。
 
@@ -18,9 +18,8 @@ LightningModule 侧 logging helper 是 core。
 
 core 提供：
 
-- experiment root 约定：`save_dir/name/version`。
-- `Trainer.default_root_dir` 设置。
 - `LightningLogMixin`：prefixed dict、audio 和 figure logging helper。
+- `StopOnNonfiniteLossCallback` 等训练调试 callback。
 
 optional backend：
 
@@ -119,7 +118,7 @@ plotter 是 optional general 组件，依赖 `plot` extra。
 
 ## Framework
 
-framework 是 optional/experimental 组件。这里的 framework 指研究训练范式组件，不是默认 Hydra app 层。
+framework 是 optional/experimental 组件。这里的 framework 指研究训练范式组件，不是默认训练 app 层。
 
 适合放入：
 

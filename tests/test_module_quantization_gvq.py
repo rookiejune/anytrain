@@ -7,7 +7,7 @@ from anytrain.module.quantization import GroupedVectorQuantizer, GVQConfig, Quan
 
 
 class GroupedVectorQuantizerTest(unittest.TestCase):
-    def test_config_is_hydra_friendly_plain_data(self):
+    def test_config_is_plain_data(self):
         config = GVQConfig(input_dim=8, group_sizes=(90, 90), codebook_dim=4)
 
         field_names = {field.name for field in fields(config)}
@@ -99,4 +99,3 @@ class GroupedVectorQuantizerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

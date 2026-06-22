@@ -152,14 +152,14 @@ def _selects_muon_parameter(
     output_head_module_names: Collection[str],
 ) -> bool:
     if is_muon_parameter is not None:
-        return any(context_matches(context, is_muon_parameter) for context in parameter_contexts)
+        return any(_context_matches(context, is_muon_parameter) for context in parameter_contexts)
     return _is_default_muon_parameter_group(
         parameter_contexts,
         output_head_module_names=output_head_module_names,
     )
 
 
-def context_matches(
+def _context_matches(
     context: _ParameterContext,
     is_muon_parameter: MuonParameterPredicate,
 ) -> bool:

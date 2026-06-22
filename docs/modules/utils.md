@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-当前 `src/anytrain/utils/__init__.py` 为空，目录只保留边界和 `todo.md`。没有稳定公开 utility API。
+当前 `src/anytrain/utils/__init__.py` 为空，目录只保留边界和 `todo.md`。optimizer 相关 helper 已提升到顶层 `anytrain.optim`，不再放在 utils 下。
 
 ## 可接受内容
 
@@ -38,4 +38,3 @@
 ## 测试策略
 
 每个公开 utility 都需要独立单测。涉及 optional dependency 的 helper 需要覆盖依赖存在和缺失两条路径。
-

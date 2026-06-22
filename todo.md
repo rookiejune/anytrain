@@ -6,7 +6,7 @@
 
 - `anytrain.hydra`：Hydra 配置驱动的训练装配入口。
 - `anytrain.lightning`：可复用的 LightningModule logging mixin 和训练调试 callback。
-- `anytrain.loss` / `anytrain.evaluator` / `anytrain.plotter` / `anytrain.framework`：用户写 LightningModule 时可选使用的训练组件层。
+- `anytrain.loss` / `anytrain.evaluator` / `anytrain.optim` / `anytrain.plotter` / `anytrain.framework`：用户写 LightningModule 时可选使用的训练组件层。
 
 下游用户的主要工作流应该是：
 
@@ -154,6 +154,7 @@ src/anytrain/
     mixin/
   loss/
   evaluator/
+  optim/
   plotter/
   framework/
   registry.py
@@ -190,6 +191,7 @@ examples/
 12. 公开接口优先按 `pl_module` 组织，单一 `model` 只作为最简内部组件，不再作为硬性顶层字段。
 13. 从 `deepaudio.module.dynamic_conv` 迁入 1D Dynamic Conv / Dynamic Conv Transpose，并保留 einops 作为默认依赖以提高 shape 变换可读性。
 14. 按 `docs/quantization-migration.md` 从 `deepaudio.module.vector_quantizer` 迁入 task-agnostic 量化组件，第一版覆盖 FSQ、VQ、RVQ。
+15. 将 optimizer helper 从 `utils.optim` 提升到顶层 `anytrain.optim`。
 
 ## 已确认
 
@@ -200,6 +202,7 @@ examples/
 - `anydataset` 不作为强依赖，base package 里先不提供 integration。
 - LightningModule logging helper 是 core；`wandb` 等第三方 backend 是 optional。
 - loss/evaluator 有 core 接口和组合器；audio/text/speech/gan 等领域组件作为 optional 子模块。
+- optimizer/scheduler helper 可以放在 `anytrain.optim`，但仍由下游 `pl_module.configure_optimizers()` 显式调用，不作为 Hydra 顶层硬注入。
 - `module.dynamic_conv` 只迁入成熟的 1D 实现；2D dynamic conv 暂不迁入注释/实验代码。
 
 ## Quantization 迁移

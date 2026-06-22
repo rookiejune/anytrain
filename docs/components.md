@@ -2,7 +2,7 @@
 
 ## 设计原则
 
-`anytrain` 的组件是给用户写普通 LightningModule 时使用的积木。Hydra app 层负责把这些组件按配置装配进下游对象；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、plotter 和 framework。
+`anytrain` 的组件是给用户写普通 LightningModule 时使用的积木。Hydra app 层负责把这些组件按配置装配进下游对象；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、optim、plotter 和 framework。
 
 组件应该是显式可组合的对象，而不是隐藏在自定义 `LightningModule` 基类里的行为。一个组件如果会改变训练流程、文件系统状态或日志行为，应通过明确的 helper、callback 或 `pl_module.__init__` 参数暴露。
 
@@ -73,6 +73,19 @@ optional evaluator：
 - text evaluator。
 - torchmetrics-backed 通用 evaluator。
 
+## Optim
+
+optim 负责 optimizer / scheduler 构造 helper，不接管训练流程。
+
+当前提供：
+
+- AdamW 参数组 helper：按标准 AdamW 或 Muon-eligible policy 拆分 decay 和 no-decay。
+- Muon 参数组 helper：默认只把 hidden 2D weight 放入 Muon，其余参数走 AdamW；head 等特殊模块由用户显式传入排除。
+- `CompositeOptimizer`：把 Muon 和 AdamW 包成一个 optimizer，方便 Lightning 和 scheduler 使用。
+- LLM helper：按 `pretrain` / `cpt` / `sft` stage 生成 AdamW 或 Muon+AdamW optimizer，并提供 warmup cosine / linear scheduler。
+
+optim 不提供魔法 LightningModule 基类。下游在自己的 `configure_optimizers()` 里显式调用 helper。
+
 ## Module
 
 `module` 是 optional general 组件，提供 task-agnostic 的 `torch.nn.Module` 积木。
@@ -130,5 +143,6 @@ framework 是 optional/experimental 组件。这里的 framework 指研究训练
 - `import anytrain.lightning` 可以假设 torch/lightning 已安装。
 - `import anytrain.module` 可以假设 torch/einops 已安装；需要额外依赖的后续组件再要求 `module` extra。
 - `import anytrain.loss.spectral` 和 `import anytrain.loss.temporal` 当前只依赖 core torch。
+- `import anytrain.optim` 可以假设 torch 已安装。
 - `import anytrain.plotter` 可以要求 plot extra。
 - optional 缺依赖时抛出明确错误，例如提示安装对应 extra。

@@ -9,6 +9,7 @@
 - [`anytrain.lightning`](lightning.md)：LightningModule logging mixin 和调试 callback。
 - [`anytrain.loss`](loss.md)：通用 loss 组件和组合器。
 - [`anytrain.evaluator`](evaluator.md)：训练期 evaluator 接口和组合器边界。
+- [`anytrain.optim`](optim.md)：optimizer、scheduler 和 LLM/Muon helper。
 - [`anytrain.module`](module.md)：task-agnostic `torch.nn.Module` 积木。
 - [`anytrain.plotter`](plotter.md)：可视化组件边界和 optional plot 依赖约定。
 - [`anytrain.framework`](framework.md)：可选研究框架层。

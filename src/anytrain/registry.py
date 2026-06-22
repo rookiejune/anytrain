@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
 
 
-class Registry(Generic[K, V]):
+class Registry[K, V]:
     def __init__(self, initial: Mapping[K, V] | None = None):
         self._items: dict[K, V] = dict(initial or {})
 

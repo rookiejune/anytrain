@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import TypeAlias
 
 import torch
 from torch import Tensor, nn
 
 from .abc import LossResult
 
-LossTensorDict: TypeAlias = Mapping[str, Tensor]
+type LossTensorDict = Mapping[str, Tensor]
 
 
 def _validate_ordered_loss_names(loss_names: list[str], *, label: str) -> list[str]:

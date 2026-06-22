@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, TypeAlias
+from typing import Any
 
 import torch
 from torch import nn
 
-MetricValue: TypeAlias = float | torch.Tensor
-MetricDict: TypeAlias = dict[str, MetricValue]
+type MetricValue = float | torch.Tensor
+type MetricDict = dict[str, MetricValue]
 
 
 class EvaluatorABC(nn.Module, ABC):

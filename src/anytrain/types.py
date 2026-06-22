@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AutoNameEnum(str, Enum):
+class AutoNameEnum(StrEnum):
     def _generate_next_value_(name, start, count, last_values):
         return name.lower()

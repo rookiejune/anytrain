@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any, TypeAlias
+from typing import Any
 
 import torch
 from torch import nn
 
-LossDetailValue: TypeAlias = float | torch.Tensor
-LossDetails: TypeAlias = dict[str, LossDetailValue]
-LossResult: TypeAlias = torch.Tensor | tuple[torch.Tensor, LossDetails]
+type LossDetailValue = float | torch.Tensor
+type LossDetails = dict[str, LossDetailValue]
+type LossResult = torch.Tensor | tuple[torch.Tensor, LossDetails]
 
 
 class LossABC(nn.Module, ABC):

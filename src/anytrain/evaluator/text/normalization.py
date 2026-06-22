@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
 
-TextInput: TypeAlias = str | Sequence[str]
+type TextInput = str | Sequence[str]
 
 
 @dataclass(frozen=True)

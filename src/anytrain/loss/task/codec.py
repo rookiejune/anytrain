@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import torch
@@ -22,7 +22,7 @@ DYNACODEC_LOSS_WEIGHTS = {
 }
 
 
-class CodecLossPreset(str, Enum):
+class CodecLossPreset(StrEnum):
     DAC = "dac"
     DYNACODEC = "dynacodec"
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypeAlias, overload
+from typing import overload
 
 from torch import Size
 
-SizeLike: TypeAlias = int | Sequence[int] | Size
+type SizeLike = int | Sequence[int] | Size
 
 
 @overload

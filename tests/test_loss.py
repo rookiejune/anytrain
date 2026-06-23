@@ -297,6 +297,17 @@ class LossTest(unittest.TestCase):
         self.assertEqual(set(dynacodec_loss.losses), {"si_sdr", "multi_mel", "multi_stft"})
         self.assertIn("si_sdr", dynacodec_loss.balancer.loss_names)
 
+    def test_codec_loss_preset_allows_nested_loss_details(self):
+        estimate = torch.randn(1, 1, 4096, requires_grad=True)
+        reference = estimate.detach() + 0.01 * torch.randn(1, 1, 4096)
+        loss = CodecLoss.from_preset("dynacodec", backend="torch")
+
+        total, details = loss(estimate, reference)
+
+        self.assertEqual(total.ndim, 0)
+        self.assertIn("multi_mel/mel_2048_320/log_magnitude", details)
+        self.assertIn("multi_stft/stft_2048/log_magnitude", details)
+
     def test_codec_loss_supports_lengths(self):
         estimate = torch.tensor(
             [

@@ -79,12 +79,13 @@ class LossGroup(LossABC):
         return name
 
     def _split_loss_result(self, result: object) -> tuple[torch.Tensor, LossDetails]:
-        validated = self._validate_loss_result(result)
-        if isinstance(validated, torch.Tensor):
-            return validated, {}
+        if isinstance(result, torch.Tensor):
+            return self._validate_loss_tensor(result), {}
 
-        loss, details = validated
-        return loss, details
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError("loss result must be a scalar tensor or (scalar tensor, details).")
+        loss, details = result
+        return self._validate_loss_tensor(loss), self._validate_nested_loss_details(details)
 
     def _add_detail(self, details: LossDetails, name: str, value: object) -> None:
         name = self._validate_detail_name(name)
@@ -109,6 +110,25 @@ class LossGroup(LossABC):
         return self.detail_key_separator.join(
             [
                 self._validate_detail_name(loss_name),
-                self._validate_detail_name(detail_name),
+                self._validate_detail_path(detail_name),
             ]
         )
+
+    def _validate_nested_loss_details(self, details: object) -> LossDetails:
+        if not isinstance(details, Mapping):
+            raise TypeError("loss details must be a mapping of string keys to detail values.")
+
+        validated: LossDetails = {}
+        for raw_name, raw_value in details.items():
+            name = self._validate_detail_path(raw_name)
+            validated[name] = self._validate_detail_value(raw_value, name=name, detach=True)
+        return validated
+
+    def _validate_detail_path(self, name: object) -> str:
+        if not isinstance(name, str):
+            raise TypeError("loss detail key must be a string.")
+        if not name:
+            raise ValueError("loss detail key must not be empty.")
+        for part in name.split(self.detail_key_separator):
+            self._validate_detail_name(part)
+        return name

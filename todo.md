@@ -212,6 +212,6 @@ examples/
 - Done: 在 fork 中加入 `pyproject.toml`，补齐 package wrapper 和默认 config resource。
 - Done: 在 fork 中加入 checkpoint/config 路径解析，支持 `LONGCAT_AUDIO_CODEC_CKPT_DIR`。
 - Done: 在 `anytrain` 中加入 `longcat` optional extra。
-- Done: 新增 `anytrain.codec.longcat`，支持 `ANYTRAIN_LONGCAT_CACHE` / `ANYTRAIN_CACHE_DIR`、自动下载 checkpoint 和 patched config。
-- Todo: 将 fork 的 packaging 改动推送到 `rookiejune/LongCat-Audio-Codec` 后，在干净环境验证 `pip install -e ".[longcat]"`。
+- Done: 新增 `anytrain.codec.longcat`，支持 `HF_HOME`、自动下载 checkpoint 和 patched config。
+- Done: 已将 fork 的 packaging 改动推送到 `rookiejune/LongCat-Audio-Codec`，并验证远端 wheel 可构建。
 - Todo: 用真实短音频跑一次 encode/decode smoke，确认 LongCat 上游权重和 torchaudio 版本在本地 `torch2.12` 环境可用。

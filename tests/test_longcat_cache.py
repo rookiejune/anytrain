@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from anytrain.codec.longcat.cache import (
-    ANYTRAIN_CACHE_ENV,
-    ANYTRAIN_LONGCAT_CACHE_ENV,
+    DEFAULT_HF_HOME,
+    HF_HOME_ENV,
     resolve_longcat_cache_dir,
 )
 
@@ -20,34 +20,26 @@ class LongCatCacheTest(unittest.TestCase):
 
             self.assertEqual(path, root / "explicit")
 
-    def test_longcat_env_wins_over_global_env(self):
+    def test_hf_home_env_controls_default_cache_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            env = {
-                ANYTRAIN_LONGCAT_CACHE_ENV: str(root / "longcat"),
-                ANYTRAIN_CACHE_ENV: str(root / "anytrain"),
-            }
+            env = {HF_HOME_ENV: str(root / "hf")}
 
             with patch.dict(os.environ, env, clear=False):
                 path = resolve_longcat_cache_dir()
 
-            self.assertEqual(path, root / "longcat")
+            self.assertEqual(path, root / "hf" / "longcat-audio-codec")
 
-    def test_global_env_is_used_when_longcat_env_is_missing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            env = {ANYTRAIN_CACHE_ENV: str(root / "anytrain")}
+    def test_default_cache_dir_uses_default_hf_home(self):
+        with patch.dict(os.environ, {}, clear=True):
+            path = resolve_longcat_cache_dir()
 
-            with patch.dict(os.environ, env, clear=False):
-                os.environ.pop(ANYTRAIN_LONGCAT_CACHE_ENV, None)
-                path = resolve_longcat_cache_dir()
-
-            self.assertEqual(path, root / "anytrain" / "longcat-audio-codec")
+        self.assertEqual(path, DEFAULT_HF_HOME / "longcat-audio-codec")
 
     def test_empty_env_fails(self):
         with (
-            patch.dict(os.environ, {ANYTRAIN_LONGCAT_CACHE_ENV: ""}, clear=False),
-            self.assertRaisesRegex(ValueError, ANYTRAIN_LONGCAT_CACHE_ENV),
+            patch.dict(os.environ, {HF_HOME_ENV: ""}, clear=False),
+            self.assertRaisesRegex(ValueError, HF_HOME_ENV),
         ):
             resolve_longcat_cache_dir()
 

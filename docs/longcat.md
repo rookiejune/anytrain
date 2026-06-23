@@ -28,15 +28,17 @@ python -m pip install -e ".[longcat]"
 checkpoint 自动下载到缓存目录。路径优先级：
 
 1. 显式传入 `cache_dir=...`
-2. `ANYTRAIN_LONGCAT_CACHE`
-3. `ANYTRAIN_CACHE_DIR/longcat-audio-codec`
-4. `~/.cache/anytrain/longcat-audio-codec`
+2. `HF_HOME/longcat-audio-codec`
+3. `~/.cache/huggingface/longcat-audio-codec`
 
 远程服务器上推荐：
 
 ```bash
-export ANYTRAIN_LONGCAT_CACHE=/mnt/pami14/zhuyin/cache/longcat-audio-codec
+export HF_HOME=/mnt/pami14/zhuyin/cache/huggingface
 ```
+
+下载后的 LongCat 权重在 `$HF_HOME/longcat-audio-codec/ckpts`，生成的 patched
+config 在 `$HF_HOME/longcat-audio-codec/configs`。
 
 ## 使用
 

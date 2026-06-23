@@ -23,6 +23,10 @@ plot = ["matplotlib>=3.7", "plotly>=5.0", "seaborn>=0.13"]
 text = []
 speech = []
 evaluator = []
+longcat = [
+    "huggingface-hub>=0.23",
+    "longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git",
+]
 test = ["pytest>=8.0", "ruff>=0.8"]
 
 [tool.setuptools.packages.find]

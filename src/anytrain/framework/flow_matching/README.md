@@ -4,4 +4,6 @@
 
 第一版会作为 Facebook `flow_matching` 的可组合再封装，优先提供 source、time sampler、objective、sampler 和 continuous/discrete preset，不接管下游 `LightningModule` 或 batch schema。
 
-默认 time sampler 是 `LogitNormalTimeSampler(t_min=1e-3, t_max=1.0 - 1e-3)`；需要完整区间时可以显式传 `UniformTimeSampler`。
+连续 preset 默认使用 `LogitNormalTimeSampler(t_min=0.0, t_max=1.0)`；离散 preset 默认使用 `LogitNormalTimeSampler(t_min=0.0, t_max=1.0 - 1e-3)`，和离散 Euler sampler 的端点保持一致。离散输入必须是 `torch.long` token tensor。
+
+`Objective` 是底层训练目标入口，`FlowMatcher` 是 preset 组合器入口；matcher 不接收 objective 作为构造参数。

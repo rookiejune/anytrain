@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from torch import Tensor, nn
 
-from ._deps import ProbPath
+from ._deps import CondOTProbPath
 from .objective import ContinuousVelocityObjective
 from .sampler import ODESampler
 from .source import GaussianSource
@@ -14,25 +14,20 @@ class ContinuousFlowMatcher(nn.Module):
     def __init__(
         self,
         *,
-        path: ProbPath | None = None,
+        path: CondOTProbPath | None = None,
         source: Source | None = None,
         time_sampler: TimeSampler | None = None,
-        objective: ContinuousVelocityObjective | None = None,
         sampler: ODESampler | None = None,
         call_model: ModelCaller = default_call_model,
     ):
         super().__init__()
         self.source = GaussianSource() if source is None else source
         self.time_sampler = LogitNormalTimeSampler() if time_sampler is None else time_sampler
-        self.objective = (
-            ContinuousVelocityObjective(
-                path=path,
-                source=self.source,
-                time_sampler=self.time_sampler,
-                call_model=call_model,
-            )
-            if objective is None
-            else objective
+        self.objective = ContinuousVelocityObjective(
+            path=path,
+            source=self.source,
+            time_sampler=self.time_sampler,
+            call_model=call_model,
         )
         self.sampler = ODESampler(call_model=call_model) if sampler is None else sampler
 

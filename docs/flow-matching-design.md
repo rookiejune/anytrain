@@ -108,8 +108,9 @@ class TimeSampler(Protocol):
 
 默认实现：
 
-- `LogitNormalTimeSampler(mean=0.0, std=1.0, t_min=1e-3, t_max=1.0 - 1e-3)`
-- 默认采样避开 `t=0` 和 `t=1` 两端；如果下游确认目标函数在端点稳定，可以显式传入其他 time sampler 或区间。
+- 连续 preset 使用 `LogitNormalTimeSampler(mean=0.0, std=1.0, t_min=0.0, t_max=1.0)`，和采样的 `[0, 1]` 端点保持一致。
+- 离散 preset 使用 `LogitNormalTimeSampler(mean=0.0, std=1.0, t_min=0.0, t_max=1.0 - 1e-3)`，和离散 Euler sampler 的 `[0, 1 - eps]` 端点保持一致。
+- `LogitNormalTimeSampler` 经过 sigmoid 后不会实际采到端点；`t_min` / `t_max` 描述的是训练和采样约定的时间区间。不要默认把 `t_min` 设成非零值，否则推理时起点会变成未知的 `x_eps`。
 
 ### Objective
 
@@ -130,10 +131,14 @@ loss = objective(model, x_1, x_0=None, **extras)
 
 - path：`MixtureDiscreteProbPath(PolynomialConvexScheduler(n=2.0))`
 - source：`UniformTokenSource` 或 `MaskTokenSource`
+- time：`LogitNormalTimeSampler(t_min=0.0, t_max=1.0 - 1e-3)`
 - loss：`MixturePathGeneralizedKL`
+- `x_0` / `x_1` 必须是 `torch.long` token tensor，不做静默 dtype 转换。
 - 模型输出 logits，objective 内部不自动做 sampling 或 argmax。
 
 `objective` 返回必须是 scalar Tensor。额外日志不在第一版塞进返回值；后续如果需要，可加 `FlowLossOutput(loss, details)`，但不能影响 `backward()` 主路径。
+
+`Objective` 是底层训练目标入口；`FlowMatcher` 是 preset 组合器入口。两者不要互相作为构造参数混用：需要完全自定义训练目标时，直接使用 objective；需要默认训练/采样组合时，使用 matcher。
 
 ### Model Caller
 
@@ -183,7 +188,7 @@ class FlowSampleOutput:
 prob = model(x_t, t, **extras).softmax(dim=-1)
 ```
 
-离散 sampler 的 `vocab_size` 表示目标 token 空间大小；mask token 是否属于模型输入 embedding，由下游模型自己处理。
+离散 sampler 的默认时间网格是 `[0, 1 - eps]`，和离散训练 objective 保持同一个有效时间区间。`vocab_size` 表示目标 token 空间大小；mask token 是否属于模型输入 embedding，由下游模型自己处理。
 
 ## 便利封装
 

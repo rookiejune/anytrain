@@ -62,9 +62,9 @@ class FlowMatchingComponentTest(unittest.TestCase):
 
         self.assertIsInstance(ContinuousFlowMatcher().time_sampler, LogitNormalTimeSampler)
         self.assertIsInstance(DiscreteFlowMatcher(6).time_sampler, LogitNormalTimeSampler)
-        self.assertGreater(ContinuousFlowMatcher().time_sampler.t_min, 0.0)
-        self.assertLess(ContinuousFlowMatcher().time_sampler.t_max, 1.0)
-        self.assertGreater(DiscreteFlowMatcher(6).time_sampler.t_min, 0.0)
+        self.assertEqual(ContinuousFlowMatcher().time_sampler.t_min, 0.0)
+        self.assertEqual(ContinuousFlowMatcher().time_sampler.t_max, 1.0)
+        self.assertEqual(DiscreteFlowMatcher(6).time_sampler.t_min, 0.0)
         self.assertLess(DiscreteFlowMatcher(6).time_sampler.t_max, 1.0)
 
     def test_continuous_loss_backward_and_sample_shape(self):
@@ -96,6 +96,33 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
 
+    def test_ode_sampler_expands_scalar_time_to_batch(self):
+        from anytrain.framework.flow_matching import ODESampler
+
+        class RecordingModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.t_shape = None
+
+            def forward(self, x_t, t):
+                self.t_shape = tuple(t.shape)
+                return x_t
+
+        class FakeSolver:
+            def __init__(self, model):
+                self.model = model
+
+            def sample(self, x_init, **kwargs):
+                del kwargs
+                return self.model(x=x_init, t=torch.tensor(0.5, device=x_init.device))
+
+        model = RecordingModel()
+        sampler = ODESampler(solver_factory=FakeSolver, return_intermediates=False)
+        output = sampler.sample(model, torch.zeros(4, 3))
+
+        self.assertEqual(model.t_shape, (4,))
+        self.assertEqual(output.final.shape, (4, 3))
+
     def test_discrete_loss_backward_and_sample_shape(self):
         from anytrain.framework.flow_matching import DiscreteFlowMatcher
 
@@ -126,6 +153,18 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertEqual(output.final.shape, x_1.shape)
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
+
+    def test_discrete_inputs_must_be_long(self):
+        from anytrain.framework.flow_matching import DiscreteEulerSampler, DiscreteFlowMatcher
+
+        matcher = DiscreteFlowMatcher(6)
+
+        with self.assertRaisesRegex(TypeError, "x_1"):
+            matcher.loss(nn.Identity(), torch.randn(2, 3))
+        with self.assertRaisesRegex(TypeError, "x_0"):
+            matcher.loss(nn.Identity(), torch.zeros(2, 3, dtype=torch.long), x_0=torch.randn(2, 3))
+        with self.assertRaisesRegex(TypeError, "x_0"):
+            DiscreteEulerSampler(6).sample(nn.Identity(), torch.randn(2, 3))
 
 
 if __name__ == "__main__":

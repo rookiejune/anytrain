@@ -12,8 +12,8 @@ DEFAULT_TIME_EPS = 1e-3
 class LogitNormalTimeSampler:
     mean: float = 0.0
     std: float = 1.0
-    t_min: float = DEFAULT_TIME_EPS
-    t_max: float = 1.0 - DEFAULT_TIME_EPS
+    t_min: float = 0.0
+    t_max: float = 1.0
 
     def __post_init__(self) -> None:
         if self.std <= 0:

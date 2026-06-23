@@ -10,8 +10,8 @@ from ._deps import (
     MixtureDiscreteProbPath,
     ODESolver,
     PolynomialConvexScheduler,
-    ProbPath,
 )
+from .time import DEFAULT_TIME_EPS
 from .types import FlowSampleOutput, ModelCaller, default_call_model
 
 
@@ -109,12 +109,12 @@ class DiscreteEulerSampler:
         self,
         vocab_size: int,
         *,
-        path: ProbPath | None = None,
+        path: MixtureDiscreteProbPath | None = None,
         solver_factory: Callable[..., MixtureDiscreteEulerSolver] = MixtureDiscreteEulerSolver,
         call_model: ModelCaller = default_call_model,
         nfe: int = 64,
         num_steps: int = 10,
-        eps: float = 1e-3,
+        eps: float = DEFAULT_TIME_EPS,
         return_intermediates: bool = True,
         verbose: bool = False,
     ):
@@ -146,6 +146,9 @@ class DiscreteEulerSampler:
         x_0: Tensor,
         **model_extras: object,
     ) -> FlowSampleOutput:
+        if x_0.dtype != torch.long:
+            raise TypeError(f"x_0 must have dtype torch.long, got {x_0.dtype}.")
+
         extras = dict(model_extras)
 
         def prob_fn(
@@ -170,7 +173,7 @@ class DiscreteEulerSampler:
         )
         time_grid = torch.linspace(0, 1 - self.eps, self.num_steps, device=x_0.device)
         states = solver.sample(
-            x_init=x_0.long(),
+            x_init=x_0,
             step_size=1 / self.nfe,
             time_grid=time_grid,
             return_intermediates=self.return_intermediates,

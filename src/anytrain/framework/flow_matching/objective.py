@@ -9,10 +9,9 @@ from ._deps import (
     MixtureDiscreteProbPath,
     MixturePathGeneralizedKL,
     PolynomialConvexScheduler,
-    ProbPath,
 )
 from .source import GaussianSource, UniformTokenSource
-from .time import LogitNormalTimeSampler
+from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler
 from .types import ModelCaller, Source, TimeSampler, default_call_model
 
 
@@ -27,7 +26,7 @@ class ContinuousVelocityObjective(nn.Module):
     def __init__(
         self,
         *,
-        path: ProbPath | None = None,
+        path: CondOTProbPath | None = None,
         source: Source | None = None,
         time_sampler: TimeSampler | None = None,
         call_model: ModelCaller = default_call_model,
@@ -62,7 +61,7 @@ class DiscreteGeneralizedKLObjective(nn.Module):
         self,
         vocab_size: int,
         *,
-        path: ProbPath | None = None,
+        path: MixtureDiscreteProbPath | None = None,
         source: Source | None = None,
         time_sampler: TimeSampler | None = None,
         call_model: ModelCaller = default_call_model,
@@ -76,7 +75,11 @@ class DiscreteGeneralizedKLObjective(nn.Module):
             MixtureDiscreteProbPath(PolynomialConvexScheduler(n=2.0)) if path is None else path
         )
         self.source = UniformTokenSource(vocab_size) if source is None else source
-        self.time_sampler = LogitNormalTimeSampler() if time_sampler is None else time_sampler
+        self.time_sampler = (
+            LogitNormalTimeSampler(t_max=1.0 - DEFAULT_TIME_EPS)
+            if time_sampler is None
+            else time_sampler
+        )
         self.call_model = call_model
         self.loss_fn = MixturePathGeneralizedKL(self.path)
 
@@ -89,8 +92,11 @@ class DiscreteGeneralizedKLObjective(nn.Module):
     ) -> Tensor:
         _require_batch(x_1, "x_1")
         if x_1.dtype != torch.long:
-            x_1 = x_1.long()
-        x_0 = self.source.sample_like(x_1) if x_0 is None else x_0.long()
+            raise TypeError(f"x_1 must have dtype torch.long, got {x_1.dtype}.")
+        if x_0 is None:
+            x_0 = self.source.sample_like(x_1)
+        elif x_0.dtype != torch.long:
+            raise TypeError(f"x_0 must have dtype torch.long, got {x_0.dtype}.")
         if x_0.shape != x_1.shape:
             raise ValueError(f"x_0 and x_1 must have the same shape, got {x_0.shape} and {x_1.shape}.")
 

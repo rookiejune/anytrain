@@ -31,7 +31,7 @@ class LongCatCodecTest(unittest.TestCase):
                 return "encoder"
 
             def fake_load_decoder(config_path, device):
-                self.assertEqual(config_path, str(configs.decoder_24k_4codebooks))
+                self.assertEqual(config_path, str(configs.decoder_16k_4codebooks))
                 self.assertEqual(os.environ["LONGCAT_AUDIO_CODEC_CKPT_DIR"], str(assets.ckpt_dir))
                 return "decoder"
 
@@ -47,7 +47,7 @@ class LongCatCodecTest(unittest.TestCase):
                     codec = LongCatAudioCodec.from_pretrained(device="cpu")
 
                 self.assertEqual(codec.encoder, "encoder")
-                self.assertEqual(codec.decoders["24k_4codebooks"], "decoder")
+                self.assertEqual(codec.decoders["16k_4codebooks"], "decoder")
                 self.assertNotIn("LONGCAT_AUDIO_CODEC_CKPT_DIR", os.environ)
 
 

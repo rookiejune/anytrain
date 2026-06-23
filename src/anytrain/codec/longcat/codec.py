@@ -12,7 +12,7 @@ from torch import Tensor
 
 from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 
-DEFAULT_DECODER: LongCatDecoderName = "24k_4codebooks"
+DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
 
 
 @dataclass

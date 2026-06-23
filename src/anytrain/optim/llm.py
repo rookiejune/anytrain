@@ -20,14 +20,14 @@ type _OptimizerConfig = AdamWConfig | MuonAdamWConfig
 type _SchedulerInput = list[tuple[str, int]] | tuple[tuple[str, int], ...]
 
 
-class LLMLRSchedulerConfig(TypedDict):
+class LRSchedulerConfig(TypedDict):
     scheduler: torch.optim.lr_scheduler.LambdaLR
     interval: str
 
 
-class LLMLightningOptimizerConfig(TypedDict):
+class LightningOptimizerConfig(TypedDict):
     optimizer: torch.optim.Optimizer
-    lr_scheduler: LLMLRSchedulerConfig
+    lr_scheduler: LRSchedulerConfig
 
 
 class _OptimizationPreset(StrEnum):
@@ -42,7 +42,7 @@ class _OptimizerOption(StrEnum):
 
 
 @dataclass(frozen=True)
-class LLMOptimizationConfig:
+class OptimizationConfig:
     optimizer_config: _OptimizerConfig
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     excluded_modules: ExcludedModules = ()
@@ -63,7 +63,7 @@ class LLMOptimizationConfig:
         scheduler: _SchedulerInput | None = None,
         excluded_modules: ExcludedModules = (),
         excluded_module_types: ExcludedModuleTypes = (),
-    ) -> LLMOptimizationConfig:
+    ) -> OptimizationConfig:
         return cls(
             optimizer_config=_make_optimizer_config(preset, optimizer=optimizer),
             scheduler=_make_scheduler_config(scheduler),
@@ -72,9 +72,9 @@ class LLMOptimizationConfig:
         )
 
 
-def create_llm_optimizer(
+def create_optimizer(
     module: nn.Module,
-    config: LLMOptimizationConfig,
+    config: OptimizationConfig,
 ) -> torch.optim.Optimizer:
     optimizer_config = config.optimizer_config
     if isinstance(optimizer_config, AdamWConfig):
@@ -95,11 +95,11 @@ def create_llm_optimizer(
     )
 
 
-def create_llm_lightning_optimizers(
+def create_lightning_optimizers(
     module: nn.Module,
-    config: LLMOptimizationConfig,
-) -> LLMLightningOptimizerConfig:
-    optimizer = create_llm_optimizer(module, config)
+    config: OptimizationConfig,
+) -> LightningOptimizerConfig:
+    optimizer = create_optimizer(module, config)
     scheduler = create_scheduler(optimizer, config.scheduler)
     return {
         "optimizer": optimizer,
@@ -227,9 +227,9 @@ def _validate_excluded_module_types(
 
 
 __all__ = [
-    "LLMLightningOptimizerConfig",
-    "LLMLRSchedulerConfig",
-    "LLMOptimizationConfig",
-    "create_llm_lightning_optimizers",
-    "create_llm_optimizer",
+    "LightningOptimizerConfig",
+    "LRSchedulerConfig",
+    "OptimizationConfig",
+    "create_lightning_optimizers",
+    "create_optimizer",
 ]

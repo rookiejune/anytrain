@@ -1,13 +1,11 @@
 from .adamw import AdamWDecayPolicy, create_adamw_optimizer, split_adamw_decay_params
 from .compose import CompositeOptimizer
 from .config import AdamWConfig, MuonAdamWConfig, MuonAdjustLRFn, MuonConfig
-from .llm import (
-    LLMLightningOptimizerConfig,
-    LLMLRSchedulerConfig,
-    LLMOptimizationConfig,
-    create_llm_lightning_optimizers,
-    create_llm_optimizer,
-)
+from .llm import LightningOptimizerConfig as LLMLightningOptimizerConfig
+from .llm import LRSchedulerConfig as LLMLRSchedulerConfig
+from .llm import OptimizationConfig as LLMOptimizationConfig
+from .llm import create_lightning_optimizers as create_llm_lightning_optimizers
+from .llm import create_optimizer as create_llm_optimizer
 from .muon import (
     create_muon_adamw_optimizer,
     split_muon_params,

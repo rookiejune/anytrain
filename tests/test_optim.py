@@ -27,6 +27,7 @@ from anytrain.optim import (
     split_adamw_decay_params,
     split_muon_params,
 )
+from anytrain.optim import llm as llm_optim
 
 
 def _param_ids(params: list[nn.Parameter]) -> set[int]:
@@ -578,6 +579,13 @@ class LLMOptimizerTest(unittest.TestCase):
         config = LLMOptimizationConfig(optimizer_config=muon_adamw)
 
         self.assertIs(config.optimizer_config, muon_adamw)
+
+    def test_llm_module_exports_short_names(self):
+        model = TinyLLM()
+        config = llm_optim.OptimizationConfig.from_preset("sft")
+        optimizer = llm_optim.create_optimizer(model, config)
+
+        self.assertIsInstance(optimizer, torch.optim.AdamW)
 
     def test_create_llm_lightning_optimizers_returns_lightning_style_dict(self):
         model = TinyLLM()

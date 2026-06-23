@@ -168,6 +168,8 @@ make_scheduler_config(
 
 `create_llm_optimizer()` 根据配置调用 AdamW 或 Muon+AdamW helper。
 
+顶层 `anytrain.optim` 保留 `LLM` 前缀用于消歧义；如果直接使用 `anytrain.optim.llm` 子模块，对应短名是 `OptimizationConfig`、`create_optimizer()` 和 `create_lightning_optimizers()`。
+
 LLM preset 通过字符串指定，内部再规范化为枚举：
 
 ```python

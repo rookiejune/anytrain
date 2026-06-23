@@ -41,7 +41,7 @@ import torch.nn.functional as F
 from lightning import pytorch as pl
 from torch.optim import Optimizer
 
-from anytrain.lightning import StopOnNonfiniteLossCallback
+from anytrain.lightning import DebugCallback
 
 
 class RegressionPLModule(pl.LightningModule):
@@ -83,7 +83,7 @@ def train(data_module: pl.LightningDataModule) -> None:
         accelerator="auto",
         devices="auto",
         default_root_dir="outputs/my_project/debug",
-        callbacks=[StopOnNonfiniteLossCallback()],
+        callbacks=[DebugCallback()],
     )
     trainer.fit(module, datamodule=data_module)
 ```

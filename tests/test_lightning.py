@@ -1,6 +1,10 @@
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
+from os import environ
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 class _LogModule:
@@ -39,16 +43,39 @@ class _CheckpointTrainer:
 
 
 class LightningTest(unittest.TestCase):
-    def test_stop_on_nonfinite_loss_callback_raises(self):
+    def test_debug_callback_requires_debug_env(self):
+        from anytrain.lightning import DebugCallback
+
+        with (
+            mock.patch.dict(environ, {}, clear=True),
+            self.assertRaisesRegex(RuntimeError, "ANYTRAIN_DEBUG=True"),
+        ):
+            DebugCallback()
+
+    def test_debug_callback_reports_first_gradient_after_backward(self):
         import torch
 
-        from anytrain.lightning import StopOnNonfiniteLossCallback
+        from anytrain.lightning import DebugCallback
 
-        callback = StopOnNonfiniteLossCallback()
-        trainer = SimpleNamespace(current_epoch=0, global_step=0)
+        class Module(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.clean = torch.nn.Linear(1, 1, bias=False)
+                self.bad = torch.nn.Linear(1, 1, bias=False)
 
-        with self.assertRaisesRegex(RuntimeError, "Non-finite loss"):
-            callback.on_before_backward(trainer, None, torch.tensor(float("nan")))
+        module = Module()
+        module.clean.weight.grad = torch.ones_like(module.clean.weight)
+        module.bad.weight.grad = torch.full_like(module.bad.weight, float("inf"))
+        trainer = SimpleNamespace(current_epoch=0, global_step=0, global_rank=0)
+
+        with mock.patch.dict(environ, {"ANYTRAIN_DEBUG": "True"}, clear=True):
+            callback = DebugCallback()
+
+        stderr = StringIO()
+        with redirect_stderr(stderr), self.assertRaisesRegex(RuntimeError, "Non-finite gradient"):
+            callback.on_after_backward(trainer, module)
+
+        self.assertIn("bad.weight", stderr.getvalue())
 
     def test_prefixed_log_dict(self):
         from anytrain.lightning import prefixed_log_dict
@@ -169,12 +196,13 @@ class LightningTest(unittest.TestCase):
         self.assertEqual(logger.experiment.audio[0][2:], (3, 16000))
         self.assertEqual(logger.experiment.figures, [("rank=2/figure", figure, 3)])
 
-    def test_stop_on_nonfinite_loss_callback_can_be_passed_to_trainer(self):
+    def test_debug_callback_can_be_passed_to_trainer(self):
         from lightning import pytorch as pl
 
-        from anytrain.lightning import StopOnNonfiniteLossCallback
+        from anytrain.lightning import DebugCallback
 
-        callback = StopOnNonfiniteLossCallback()
+        with mock.patch.dict(environ, {"ANYTRAIN_DEBUG": "True"}, clear=True):
+            callback = DebugCallback()
         trainer = pl.Trainer(
             logger=False,
             enable_checkpointing=False,

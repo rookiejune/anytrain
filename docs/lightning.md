@@ -217,9 +217,9 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 
 ## 调试能力
 
-`StopOnNonfiniteLossCallback` 会在 backward 前检查 loss 是否 finite。
+`DebugCallback` 由 `ANYTRAIN_DEBUG=True` 显式启用，并在 backward 后检查参数和梯度是否 finite。
 
-如果 loss 中出现 NaN 或 Inf，直接抛错，避免继续写坏 checkpoint 或污染日志。
+如果参数或梯度中出现 NaN 或 Inf，它会打印第一个异常项的 name、index、value、shape、dtype、device 并直接抛错，避免继续写坏 checkpoint 或污染日志。
 
 ## Checkpoint 保存
 
@@ -235,9 +235,9 @@ Python 入口示例：
 
 ```python
 from lightning import pytorch as pl
-from anytrain.lightning import StopOnNonfiniteLossCallback
+from anytrain.lightning import DebugCallback
 
-trainer = pl.Trainer(callbacks=[StopOnNonfiniteLossCallback()])
+trainer = pl.Trainer(callbacks=[DebugCallback()])
 ```
 
 固定单个 batch 训练属于 dataloader / data module 的采样策略，不放在 `anytrain.lightning` 里。

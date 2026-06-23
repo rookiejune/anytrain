@@ -1,11 +1,11 @@
 from .callback.checkpoint import ModelCheckpoint
-from .callback.debug import StopOnNonfiniteLossCallback
+from .callback.debug import DebugCallback
 from .mixin import LightningLogMixin, RankLogMode, prefixed_log_dict
 
 __all__ = [
+    "DebugCallback",
     "LightningLogMixin",
     "ModelCheckpoint",
     "RankLogMode",
-    "StopOnNonfiniteLossCallback",
     "prefixed_log_dict",
 ]

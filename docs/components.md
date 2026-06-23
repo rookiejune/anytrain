@@ -19,7 +19,7 @@ LightningModule 侧 logging helper 是 core。
 core 提供：
 
 - `LightningLogMixin`：prefixed dict、audio 和 figure logging helper。
-- `StopOnNonfiniteLossCallback` 等训练调试 callback。
+- `DebugCallback` 等训练调试 callback。
 
 optional backend：
 

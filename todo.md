@@ -47,7 +47,7 @@ class MyPLModule(pl.LightningModule):
 ```python
 from lightning import pytorch as pl
 
-from anytrain.lightning import StopOnNonfiniteLossCallback
+from anytrain.lightning import DebugCallback
 
 
 def train():
@@ -55,7 +55,7 @@ def train():
     data_module = MyDataModule()
     trainer = pl.Trainer(
         default_root_dir="outputs/my_project/debug",
-        callbacks=[StopOnNonfiniteLossCallback()],
+        callbacks=[DebugCallback()],
     )
     trainer.fit(module, datamodule=data_module)
 ```

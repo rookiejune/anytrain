@@ -8,7 +8,9 @@
 
 ## 当前状态
 
-当前目录只保留模块边界和 `todo.md`，尚无稳定公开 Python API。任何 framework 子模块都需要在复用需求明确后再迁入。
+当前已有 `framework.flow_matching` 第一版 optional API，其他 framework 子模块仍只保留模块边界和 `todo.md`。任何新 framework 子模块都需要在复用需求明确后再迁入。
+
+`framework.flow_matching` 的目标设计见 [`docs/flow-matching-design.md`](../flow-matching-design.md)。它应作为 Facebook `flow_matching` 的可组合再封装，提供 source、time sampler、objective 和 sampler 等积木，而不是完整任务框架。
 
 ## 适合放入的内容
 

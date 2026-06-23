@@ -134,6 +134,31 @@ examples/
 - optimizer/scheduler helper 放在 `anytrain.optim`，但仍由下游 `pl_module.configure_optimizers()` 显式调用，不做隐藏注入。
 - `module.dynamic_conv` 只迁入成熟的 1D 实现；2D dynamic conv 暂不迁入注释/实验代码。
 
+## Idspace 组合
+
+设计文档：`docs/modules/idspace.md`
+
+### P0: 设计冻结
+
+- Done: 明确训练期使用 block-wise embedding，而不是提前拼成单个大 `Parameter`。
+- Done: 明确 tied `lm_head` 使用 block-wise head 复用同一批 embedding block 权重。
+- Done: 明确 tokenizer offset 组合属于 `anytrain.idspace.tokenizer`，embedding 同包接收统一 token id。
+- Done: 调整主设计为 `TokenLayout` 驱动，special token 独立于 text tokenizer。
+- Done: 将 modality 收紧为写死的 `Modality` `StrEnum`，第一版只包含 text/audio。
+- Done: 更新策略不进入 embedding 主设计，由下游 optimizer param group 处理。
+
+### P1: 训练期最小闭环
+
+- Done: 新增 `src/anytrain/idspace/` 包结构。
+- Done: 实现 `TokenEmbedding` 和私有 head view，支持 sparse special 参数和 modality embedding 权重迁移。
+- Done: 删除旧 embedding block 兼容层。
+
+### P2: Tokenizer 组合和下游适配
+
+- Done: 实现 `TokenLayout` / `MultiTokenizer` / `HFTokenizerAdapter`，从预训练 tokenizer 拆分 special 和 regular text。
+- Done: 删除旧 tokenizer offset 兼容层。
+- Done: 将 layout / tokenizer / embedding/head 抽到 `anytrain.idspace`。
+
 ## Quantization 迁移
 
 设计文档：`docs/quantization-migration.md`

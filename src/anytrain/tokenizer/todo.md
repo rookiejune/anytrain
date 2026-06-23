@@ -182,11 +182,12 @@ expanded_x = [x[0], x[0], x[0], x[1]]
 8. Later: 增加 batch packed/padded 两种输出形态。
 9. Later: 根据下游实际调用方式决定是否让 `Tokenizer.encode()` 直接返回 base units，或只保留显式 post-process helper。
 
-## Compose
+## Idspace Compose
 
-Done: 新增 `compose.py`，提供 `TokenRange`、`TokenBlock` 和 `TokenMap`。
+Done: special-aware 主线已迁到 `anytrain.idspace`：
 
-- `TokenRange` 管理单个 block 的 local/global id 转换和 special token global id。
-- `TokenBlock` 绑定 range 与显式 `encode` / `decode` callable。
-- `TokenMap` 校验 block range 不重叠，并提供按 block name 的 encode/decode 分发。
-- 不解释 batch schema，不自动处理不同模态 interleave。
+- `anytrain.idspace.layout` 提供 `TokenLayout`、`Modality` 和 `ModalityRange`，让 shared special token 独立于写死的 modality block。
+- `anytrain.idspace.tokenizer` 提供 `MultiTokenizer` / `SubTokenizer`，只处理各模态 local id。
+- `anytrain.idspace.hf` 提供 `HFTokenizerAdapter`，从 Hugging Face 风格 tokenizer 中拆出 sparse special id 和 regular text range。
+- adapter 不迁移 token id；text range 保留原 HF token id 范围，避免 regular token 再映射。
+- `anytrain.tokenizer` 只保留 tokenizer 算法组件，例如 `IntBPE`。

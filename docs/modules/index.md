@@ -10,6 +10,8 @@
 - [`anytrain.evaluator`](evaluator.md)：训练期 evaluator 接口和组合器边界。
 - [`anytrain.optim`](optim.md)：optimizer、scheduler 和 LLM/Muon helper。
 - [`anytrain.module`](module.md)：task-agnostic `torch.nn.Module` 积木。
+- [`anytrain.idspace`](idspace.md)：统一 token layout、multi tokenizer 和 embedding/head 设计。
+- [`anytrain.tokenizer`](tokenizer.md)：int BPE。
 - [`anytrain.plotter`](plotter.md)：可视化组件边界和 optional plot 依赖约定。
 - [`anytrain.framework`](framework.md)：可选研究框架层。
 - [`anytrain.registry`](registry.md)：轻量 registry 支撑层。

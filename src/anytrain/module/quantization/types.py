@@ -6,6 +6,7 @@ from anytrain.types import AutoNameEnum
 
 
 class QuantizerType(AutoNameEnum):
+    AGRVQ = auto()
     FSQ = auto()
     GVQ = auto()
     VQ = auto()

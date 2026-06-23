@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from .lookup import nearest_codebook_indices
 from .output import QuantizationLoss, QuantizeOutput
 from .projection import make_projection
 
@@ -65,34 +66,43 @@ class GroupedVectorQuantizer(nn.Module):
     project_out: nn.Module
     codebooks: nn.ParameterList
     _basis: Tensor
+    _group_sizes: Tensor
 
     def __init__(self, config: GVQConfig) -> None:
         super().__init__()
+        codebook_dim = config.codebook_dim
+        group_dims = config.group_dims
+        if codebook_dim is None:
+            raise RuntimeError("GVQConfig.codebook_dim should be resolved in __post_init__.")
+        if group_dims is None:
+            raise RuntimeError("GVQConfig.group_dims should be resolved in __post_init__.")
+
         self.config = config
         self.input_dim = config.input_dim
-        self.codebook_dim = config.codebook_dim
+        self.codebook_dim = codebook_dim
         self.group_sizes = config.group_sizes
-        self.group_dims = config.group_dims
+        self.group_dims = group_dims
         self.num_groups = len(config.group_sizes)
         self.num_codebooks = 1
         self.codebook_size = reduce(mul, config.group_sizes, 1)
 
         self.project_in = make_projection(
             config.input_dim,
-            config.codebook_dim,
+            codebook_dim,
             bias=config.projection_bias,
             weight_norm=config.weight_norm,
         )
         self.project_out = make_projection(
-            config.codebook_dim,
+            codebook_dim,
             config.input_dim,
             bias=config.projection_bias,
             weight_norm=config.weight_norm,
         )
         self.codebooks = nn.ParameterList(
-            [nn.Parameter(torch.empty(size, dim)) for size, dim in zip(config.group_sizes, config.group_dims, strict=True)]
+            [nn.Parameter(torch.empty(size, dim)) for size, dim in zip(config.group_sizes, group_dims, strict=True)]
         )
         self._basis = nn.Buffer(torch.cumprod(torch.tensor([1, *config.group_sizes[:-1]]), dim=0))
+        self._group_sizes = nn.Buffer(torch.tensor(config.group_sizes), persistent=False)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -145,11 +155,9 @@ class GroupedVectorQuantizer(nn.Module):
 
     def indices_to_group_indices(self, indices: Tensor) -> Tensor:
         self._validate_indices(indices)
-        return (indices.unsqueeze(-1) // self._basis) % torch.tensor(
-            self.group_sizes,
-            dtype=indices.dtype,
-            device=indices.device,
-        )
+        basis = self._basis.to(device=indices.device)
+        group_sizes = self._group_sizes.to(device=indices.device, dtype=indices.dtype)
+        return (indices.unsqueeze(-1) // basis) % group_sizes
 
     def group_indices_to_indices(self, group_indices: Tensor) -> Tensor:
         self._validate_group_indices(group_indices)
@@ -197,20 +205,11 @@ class GroupedVectorQuantizer(nn.Module):
         return torch.cat(vector_parts, dim=-1), torch.stack(index_parts, dim=-1)
 
     def _nearest_indices(self, latents: Tensor, codebook: Tensor) -> Tensor:
-        leading_shape = latents.shape[:-1]
-        flat_latents = latents.reshape(-1, latents.shape[-1])
-        if self.config.normalize_latents:
-            flat_lookup = F.normalize(flat_latents, dim=-1)
-            codebook_lookup = F.normalize(codebook, dim=-1)
-            indices = (flat_lookup @ codebook_lookup.t()).argmax(dim=-1)
-        else:
-            distances = (
-                flat_latents.pow(2).sum(dim=-1, keepdim=True)
-                - 2 * flat_latents @ codebook.t()
-                + codebook.pow(2).sum(dim=-1)
-            )
-            indices = distances.argmin(dim=-1)
-        return indices.reshape(*leading_shape)
+        return nearest_codebook_indices(
+            latents,
+            codebook,
+            normalize=self.config.normalize_latents,
+        )
 
     def _validate_input_latents(self, latents: Tensor) -> None:
         if latents.ndim == 0:
@@ -279,4 +278,3 @@ def _balanced_group_dims(codebook_dim: int, num_groups: int) -> tuple[int, ...]:
     base = codebook_dim // num_groups
     remainder = codebook_dim % num_groups
     return tuple(base + (1 if index < remainder else 0) for index in range(num_groups))
-

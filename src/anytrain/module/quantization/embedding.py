@@ -6,6 +6,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from .lookup import nearest_codebook_indices
 from .output import QuantizationLoss, QuantizeOutput
 from .projection import make_projection
 
@@ -48,32 +49,36 @@ class EmbeddingVectorQuantizer(nn.Module):
 
     def __init__(self, config: VQConfig) -> None:
         super().__init__()
+        codebook_dim = config.codebook_dim
+        if codebook_dim is None:
+            raise RuntimeError("VQConfig.codebook_dim should be resolved in __post_init__.")
+
         self.config = config
         self.input_dim = config.input_dim
         self.codebook_size = config.codebook_size
-        self.codebook_dim = config.codebook_dim
+        self.codebook_dim = codebook_dim
         self.num_codebooks = 1
 
         self.project_in = make_projection(
             config.input_dim,
-            config.codebook_dim,
+            codebook_dim,
             bias=config.projection_bias,
             weight_norm=config.weight_norm,
         )
         self.project_out = make_projection(
-            config.codebook_dim,
+            codebook_dim,
             config.input_dim,
             bias=config.projection_bias,
             weight_norm=config.weight_norm,
         )
         self.codebook = nn.Embedding(
             config.codebook_size,
-            config.codebook_dim,
+            codebook_dim,
             scale_grad_by_freq=config.scale_grad_by_freq,
         )
         if config.use_ema:
             self._ema_counts = nn.Buffer(torch.ones(config.codebook_size))
-            self._ema_sums = nn.Buffer(torch.empty(config.codebook_size, config.codebook_dim))
+            self._ema_sums = nn.Buffer(torch.empty(config.codebook_size, codebook_dim))
             self.codebook.weight.requires_grad_(False)
         self.reset_parameters()
 
@@ -172,23 +177,13 @@ class EmbeddingVectorQuantizer(nn.Module):
     def _nearest_codebook_vectors(self, projected_latents: Tensor) -> tuple[Tensor, Tensor]:
         self._validate_codebook_vectors(projected_latents, name="projected_latents")
         leading_shape = projected_latents.shape[:-1]
-        flat_latents = projected_latents.reshape(-1, self.codebook_dim)
-        codebook = self.codebook.weight
-
-        if self.config.normalize_latents:
-            flat_lookup = F.normalize(flat_latents, dim=-1)
-            codebook_lookup = F.normalize(codebook, dim=-1)
-            indices = (flat_lookup @ codebook_lookup.t()).argmax(dim=-1)
-        else:
-            distances = (
-                flat_latents.pow(2).sum(dim=-1, keepdim=True)
-                - 2 * flat_latents @ codebook.t()
-                + codebook.pow(2).sum(dim=-1)
-            )
-            indices = distances.argmin(dim=-1)
-
+        indices = nearest_codebook_indices(
+            projected_latents,
+            self.codebook.weight,
+            normalize=self.config.normalize_latents,
+        )
         codebook_vectors = self.codebook(indices).reshape(*leading_shape, self.codebook_dim)
-        return codebook_vectors, indices.reshape(*leading_shape)
+        return codebook_vectors, indices
 
     @torch.no_grad()
     def _update_ema(self, projected_latents: Tensor, indices: Tensor) -> None:

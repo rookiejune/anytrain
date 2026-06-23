@@ -1,3 +1,4 @@
+from .auto_group_residual import AGRVQConfig, AutoGroupResidualVectorQuantizer
 from .embedding import EmbeddingVectorQuantizer, VQConfig
 from .finite_scalar import DEFAULT_FSQ_LEVELS, FiniteScalarQuantizer, FSQConfig, default_fsq_levels
 from .grouped import GroupedVectorQuantizer, GVQConfig
@@ -7,6 +8,8 @@ from .residual import ResidualVectorQuantizer, RVQConfig
 from .types import QuantizerType
 
 __all__ = [
+    "AGRVQConfig",
+    "AutoGroupResidualVectorQuantizer",
     "EmbeddingVectorQuantizer",
     "DEFAULT_FSQ_LEVELS",
     "FSQConfig",

@@ -84,6 +84,17 @@ class ResidualVectorQuantizerTest(unittest.TestCase):
         self.assertTrue((output.indices == -1).any())
         self.assertFalse(output.active_codebook_mask.all())
 
+    def test_dropout_has_no_effect_with_one_active_codebook(self):
+        quantizer = ResidualVectorQuantizer(
+            RVQConfig.from_kwargs(input_dim=4, num_codebooks=4, codebook_size=8, dropout=1.0)
+        )
+
+        output = quantizer(torch.randn(8, 4), num_active_codebooks=1)
+
+        self.assertEqual(output.indices.shape, (8, 1))
+        self.assertTrue((output.indices >= 0).all())
+        self.assertTrue(output.active_codebook_mask.all())
+
     def test_eval_disables_dropout(self):
         quantizer = ResidualVectorQuantizer(
             RVQConfig.from_kwargs(input_dim=4, num_codebooks=4, codebook_size=8, dropout=1.0)

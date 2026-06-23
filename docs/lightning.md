@@ -10,6 +10,7 @@
 
 - LightningModule 侧的轻量 logging helper。
 - non-finite loss 检查等训练调试 callback。
+- NFS 等慢文件系统场景下可选的异步 checkpoint 落盘 callback。
 
 它不负责：
 
@@ -219,6 +220,16 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 `StopOnNonfiniteLossCallback` 会在 backward 前检查 loss 是否 finite。
 
 如果 loss 中出现 NaN 或 Inf，直接抛错，避免继续写坏 checkpoint 或污染日志。
+
+## Checkpoint 保存
+
+`ModelCheckpoint` 继承 Lightning 原生 `ModelCheckpoint`，构造参数沿用原版接口，并在末尾增加 `async_save: bool = True`。
+
+默认 `async_save=True` 时，rank 0 会先把 checkpoint 写入本机临时目录，再用后台单线程队列复制到目标路径，适合目标目录挂在 NFS 等慢文件系统上的场景。传入 `async_save=False` 时，它的保存、top-k、`save_last`、删除和 logger 通知行为保持原生同步逻辑。
+
+异步队列串行处理目标路径复制和 top-k 删除，避免旧 checkpoint 的后台复制晚于删除完成而重新写回。后台复制会先写目标目录下的 `.part` 文件，再 `os.replace()` 到最终路径，减少半写入文件被观察到的风险。`save_last="link"` 保持 Lightning 原生逻辑；如果希望最后一份 checkpoint 也走异步文件复制，优先使用 `save_last=True`。
+
+第一版只支持本地文件系统路径，包括挂载到本机的 NFS；不支持 `s3://`、`gs://` 等远端 URI。后台任务错误会在下一次 checkpoint 操作、`on_fit_end()`、异常处理保存后或用户显式调用 `wait_async_saves()` 时抛出。
 
 Python 入口示例：
 

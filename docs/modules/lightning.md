@@ -15,6 +15,7 @@ src/anytrain/lightning/
   __init__.py
   callback/
     __init__.py
+    checkpoint.py
     debug.py
   mixin/
     __init__.py
@@ -24,6 +25,7 @@ src/anytrain/lightning/
 当前公开导出：
 
 - `LightningLogMixin`
+- `ModelCheckpoint`
 - `StopOnNonfiniteLossCallback`
 - `prefixed_log_dict`
 
@@ -55,13 +57,20 @@ src/anytrain/lightning/
 
 `StopOnNonfiniteLossCallback` 在 `on_before_backward()` 检查 loss 是否 finite。遇到 NaN 或 Inf 时直接抛错，错误信息包含当前 epoch、global step 和 loss 值。
 
+`ModelCheckpoint` 继承 Lightning 原生 `ModelCheckpoint`。默认 `async_save=True`，rank 0 先保存到本机临时目录，再把复制和删除操作排进单线程后台队列。它用于目标 checkpoint 目录位于 NFS 等慢文件系统时，缩短训练主循环等待目标文件系统写入的时间；传入 `async_save=False` 时保持原版同步行为。
+
 Python 入口示例：
 
 ```python
 from lightning import pytorch as pl
-from anytrain.lightning import StopOnNonfiniteLossCallback
+from anytrain.lightning import ModelCheckpoint, StopOnNonfiniteLossCallback
 
-trainer = pl.Trainer(callbacks=[StopOnNonfiniteLossCallback()])
+trainer = pl.Trainer(
+    callbacks=[
+        StopOnNonfiniteLossCallback(),
+        ModelCheckpoint(dirpath="outputs/checkpoints", async_save=True),
+    ],
+)
 ```
 
 ## Root 约定
@@ -88,6 +97,7 @@ trainer = pl.Trainer(callbacks=[StopOnNonfiniteLossCallback()])
 
 - `LightningLogMixin` 的 prefixed dict、媒体 logger 错误路径和 rank logging 策略。
 - `StopOnNonfiniteLossCallback` 的异常路径。
+- `ModelCheckpoint` 的原生接口兼容、异步复制、同步 opt-out 和删除排队。
 - callback 可直接传入 Lightning `Trainer`。
 
 后续新增 logger backend 或 callback 时，需要补充与 Lightning logger backend 的集成测试，并确保没有引入 optional 依赖到 core import。

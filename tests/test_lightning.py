@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -8,6 +9,33 @@ class _LogModule:
 
     def log_dict(self, values, **kwargs):
         self.log_dict_calls.append((values, kwargs))
+
+
+class _CheckpointStrategy:
+    def __init__(self):
+        self.barrier_count = 0
+
+    def reduce_boolean_decision(self, decision, *, all=False):
+        return decision
+
+    def barrier(self, *args, **kwargs):
+        self.barrier_count += 1
+
+
+class _CheckpointTrainer:
+    def __init__(self, payload: bytes = b"checkpoint"):
+        self.global_step = 7
+        self.is_global_zero = True
+        self.loggers = []
+        self.strategy = _CheckpointStrategy()
+        self.saved_paths = []
+        self.payload = payload
+
+    def save_checkpoint(self, filepath, weights_only):
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.payload)
+        self.saved_paths.append((path, weights_only))
 
 
 class LightningTest(unittest.TestCase):
@@ -155,6 +183,88 @@ class LightningTest(unittest.TestCase):
         )
 
         self.assertTrue(any(item is callback for item in trainer.callbacks))
+
+    def test_model_checkpoint_matches_lightning_checkpoint_interface(self):
+        import inspect
+
+        from lightning.pytorch.callbacks import ModelCheckpoint as LightningModelCheckpoint
+
+        from anytrain.lightning import ModelCheckpoint
+
+        original = inspect.signature(LightningModelCheckpoint.__init__)
+        custom = inspect.signature(ModelCheckpoint.__init__)
+
+        self.assertEqual(list(custom.parameters)[:-1], list(original.parameters))
+        self.assertEqual(custom.parameters["async_save"].default, True)
+        self.assertEqual(custom.parameters["async_save"].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_model_checkpoint_can_be_pickled_before_async_work(self):
+        import pickle
+
+        from anytrain.lightning import ModelCheckpoint
+
+        callback = ModelCheckpoint(async_save=True)
+        restored = pickle.loads(pickle.dumps(callback))
+
+        self.assertTrue(restored.async_save)
+        restored.wait_async_saves()
+
+    def test_model_checkpoint_async_save_copies_from_local_tmp(self):
+        from tempfile import TemporaryDirectory
+
+        from anytrain.lightning import ModelCheckpoint
+
+        callback = ModelCheckpoint(async_save=True)
+        try:
+            with TemporaryDirectory() as tmp_dir:
+                target = Path(tmp_dir) / "nfs" / "model.ckpt"
+                trainer = _CheckpointTrainer(payload=b"saved")
+
+                callback._save_checkpoint(trainer, str(target))
+                callback.wait_async_saves()
+
+                self.assertEqual(target.read_bytes(), b"saved")
+                self.assertNotEqual(trainer.saved_paths[0][0], target)
+                self.assertEqual(trainer.saved_paths[0][0].suffix, ".ckpt")
+                self.assertFalse(trainer.saved_paths[0][1])
+                self.assertEqual(callback._last_checkpoint_saved, str(target))
+        finally:
+            callback._close_async_storage()
+
+    def test_model_checkpoint_sync_opt_out_uses_target_path(self):
+        from tempfile import TemporaryDirectory
+
+        from anytrain.lightning import ModelCheckpoint
+
+        with TemporaryDirectory() as tmp_dir:
+            target = Path(tmp_dir) / "model.ckpt"
+            trainer = _CheckpointTrainer(payload=b"sync")
+            callback = ModelCheckpoint(async_save=False)
+
+            callback._save_checkpoint(trainer, str(target))
+
+            self.assertEqual(target.read_bytes(), b"sync")
+            self.assertEqual(trainer.saved_paths, [(target, False)])
+
+    def test_model_checkpoint_async_remove_is_ordered_after_copy(self):
+        from tempfile import TemporaryDirectory
+
+        from anytrain.lightning import ModelCheckpoint
+
+        callback = ModelCheckpoint(async_save=True)
+        try:
+            with TemporaryDirectory() as tmp_dir:
+                source = Path(tmp_dir) / "source.ckpt"
+                source.write_bytes(b"old")
+                target = Path(tmp_dir) / "target.ckpt"
+
+                callback._submit_async_copy(source, target)
+                callback._submit_async_remove(target)
+                callback.wait_async_saves()
+
+                self.assertFalse(target.exists())
+        finally:
+            callback._close_async_storage()
 
 
 if __name__ == "__main__":

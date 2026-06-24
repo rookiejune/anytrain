@@ -45,6 +45,7 @@ class BPETest(unittest.TestCase):
 
         self.assertEqual(loaded.to_dict(), bpe.to_dict())
         self.assertEqual(loaded.encode_units([1, 2, 3]), [5])
+        self.assertEqual(loaded.vocab_size, 6)
 
     def test_from_pretrained_accepts_state_file(self):
         bpe = IntBPE.train([[1, 2, 1, 2, 3], [1, 2, 3]], num_merges=2)
@@ -64,6 +65,7 @@ class BPETest(unittest.TestCase):
     def test_train_merges_int_sequences_and_round_trips(self):
         bpe = IntBPE.train([[1, 2, 1, 2, 3], [1, 2, 3]], num_merges=2)
 
+        self.assertEqual(bpe.vocab_size, 6)
         self.assertEqual(bpe.tokens[4], (1, 2))
         self.assertEqual(bpe.tokens[5], (1, 2, 3))
         self.assertEqual(bpe.encode_units([1, 2, 3]), [5])

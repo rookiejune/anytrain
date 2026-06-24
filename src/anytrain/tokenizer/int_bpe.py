@@ -88,6 +88,10 @@ class _CoreBPE:
 
         self.unit_to_id = self._build_unit_to_id(self.tokens)
 
+    @property
+    def vocab_size(self) -> int:
+        return max(self.tokens) + 1
+
     @classmethod
     def train(
         cls,
@@ -421,6 +425,10 @@ class IntBPE:
     @property
     def merges(self) -> tuple[Merge, ...]:
         return self.core.merges
+
+    @property
+    def vocab_size(self) -> int:
+        return self.core.vocab_size
 
     @property
     def strict(self) -> bool:

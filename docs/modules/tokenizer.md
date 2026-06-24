@@ -35,7 +35,12 @@ bpe = IntBPE.train([[1, 2, 1, 2, 3], [1, 2, 3]], vocab_size=8)
 token_ids = bpe.encode_units([1, 2, 1, 2, 3])
 unit_ids = bpe.expand_ids(token_ids)
 stats = bpe.eval([[1, 2, 1, 2, 3]])
+vocab_size = bpe.vocab_size
 ```
+
+`IntBPE` 保留输入 int id 语义，不把 token id 压成从 0 开始连续的 compact vocab index。
+因此 `tokens` 的 key 可能有洞，`vocab_size` 表示可索引范围 `max(token_id) + 1`。
+需要统计实际 token 条目数时用 `len(bpe.tokens)`。
 
 `tokenizers` 不进入 package root import 链；只有使用 `IntBPE` 需要构造底层 BPE model 时才要求安装。
 

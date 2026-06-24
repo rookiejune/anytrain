@@ -65,7 +65,59 @@ class LongCatAssetsTest(unittest.TestCase):
                     str(assets.checkpoints[key]),
                 )
 
+    def test_ensure_assets_only_requires_requested_decoders(self):
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            downloads = []
+
+            def fake_download(
+                *,
+                repo_id,
+                filename,
+                local_dir,
+                local_files_only,
+                force_download,
+            ):
+                downloads.append(filename)
+                path = Path(local_dir) / filename
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(repo_id)
+                return str(path)
+
+            def fake_config(stem):
+                return {"codec_config": {"name": stem, "ckpt_path": "ckpts/old.pt"}}
+
+            with (
+                patch.object(longcat_assets, "_require_huggingface_hub", return_value=fake_download),
+                patch.object(longcat_assets, "_read_default_config", side_effect=fake_config),
+            ):
+                assets = ensure_longcat_assets(cache_dir=root, decoders=("16k_4codebooks",))
+
+            self.assertEqual(
+                set(assets.checkpoints),
+                {"encoder", "encoder_cmvn", "decoder_16k_4codebooks"},
+            )
+            self.assertEqual(
+                set(downloads),
+                {
+                    "ckpts/LongCatAudioCodec_encoder.pt",
+                    "ckpts/LongCatAudioCodec_encoder_cmvn.npy",
+                    "ckpts/LongCatAudioCodec_decoder_16k_4codebooks.pt",
+                },
+            )
+            self.assertTrue(assets.configs.encoder.exists())
+            self.assertTrue(assets.configs.decoder_16k_4codebooks.exists())
+            self.assertFalse(assets.configs.decoder_24k_2codebooks.exists())
+            self.assertFalse(assets.configs.decoder_24k_4codebooks.exists())
+
+            decoder_config = yaml.safe_load(assets.configs.decoder_16k_4codebooks.read_text())
+            self.assertEqual(
+                decoder_config["codec_config"]["ckpt_path"],
+                str(assets.checkpoints["decoder_16k_4codebooks"]),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-

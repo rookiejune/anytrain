@@ -71,3 +71,5 @@ audio_24k = codec.decode(
 - `LongCatAudioCodec_decoder_24k_4codebooks.pt`
 
 `local_files_only=True` 可以在离线环境中只使用已有缓存。
+`decoders` 只会准备请求的 decoder；encoder 和 encoder cmvn 始终会准备，
+缺失的请求项会按需从 Hugging Face 下载。

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -66,28 +66,31 @@ class LongCatAssets:
 def ensure_longcat_assets(
     cache_dir: str | os.PathLike[str] | None = None,
     *,
+    decoders: Sequence[LongCatDecoderName] = tuple(DECODER_CONFIG_KEYS),
     repo_id: str = DEFAULT_HF_REPO_ID,
     local_files_only: bool = False,
     force_download: bool = False,
 ) -> LongCatAssets:
+    decoder_names = _validate_decoders(decoders)
     root = resolve_longcat_cache_dir(cache_dir)
     ckpt_dir = root / "ckpts"
     config_dir = root / "configs"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)
 
+    checkpoint_keys = _required_checkpoint_keys(decoder_names)
     checkpoints = {
         name: _ensure_checkpoint(
             repo_id=repo_id,
             cache_dir=root,
             ckpt_dir=ckpt_dir,
-            filename=filename,
+            filename=CHECKPOINT_FILENAMES[name],
             local_files_only=local_files_only,
             force_download=force_download,
         )
-        for name, filename in CHECKPOINT_FILENAMES.items()
+        for name in checkpoint_keys
     }
-    configs = write_longcat_configs(config_dir, checkpoints)
+    configs = write_longcat_configs(config_dir, checkpoints, decoders=decoder_names)
 
     return LongCatAssets(
         cache_dir=root,
@@ -100,20 +103,22 @@ def ensure_longcat_assets(
 def write_longcat_configs(
     config_dir: str | os.PathLike[str],
     checkpoints: Mapping[str, Path],
+    *,
+    decoders: Sequence[LongCatDecoderName] = tuple(DECODER_CONFIG_KEYS),
 ) -> LongCatConfigPaths:
     config_root = Path(config_dir)
     config_root.mkdir(parents=True, exist_ok=True)
+    decoder_names = _validate_decoders(decoders)
+    config_keys = ("encoder", *(DECODER_CONFIG_KEYS[name] for name in decoder_names))
 
-    paths: dict[str, Path] = {}
-    for key, stem in CONFIG_STEMS.items():
+    paths = {key: config_root / f"{stem}.yaml" for key, stem in CONFIG_STEMS.items()}
+    for key in config_keys:
+        stem = CONFIG_STEMS[key]
         data = _read_default_config(stem)
         ckpt_key = key.removeprefix("decoder_")
         checkpoint_key = key if key == "encoder" else f"decoder_{ckpt_key}"
         data["codec_config"]["ckpt_path"] = str(checkpoints[checkpoint_key])
-
-        path = config_root / f"{stem}.yaml"
-        _write_yaml(path, data)
-        paths[key] = path
+        _write_yaml(paths[key], data)
 
     return LongCatConfigPaths(
         encoder=paths["encoder"],
@@ -121,6 +126,23 @@ def write_longcat_configs(
         decoder_24k_2codebooks=paths["decoder_24k_2codebooks"],
         decoder_24k_4codebooks=paths["decoder_24k_4codebooks"],
     )
+
+
+def _required_checkpoint_keys(decoders: Sequence[LongCatDecoderName]) -> tuple[str, ...]:
+    keys = ["encoder", "encoder_cmvn"]
+    keys.extend(DECODER_CONFIG_KEYS[name] for name in decoders)
+    return tuple(dict.fromkeys(keys))
+
+
+def _validate_decoders(decoders: Sequence[LongCatDecoderName]) -> tuple[LongCatDecoderName, ...]:
+    if isinstance(decoders, str):
+        raise TypeError("decoders must be a sequence of decoder names, not a string.")
+    if not decoders:
+        raise ValueError("decoders must not be empty.")
+    unknown = [name for name in decoders if name not in DECODER_CONFIG_KEYS]
+    if unknown:
+        raise ValueError(f"Unknown LongCat decoders: {unknown}.")
+    return tuple(dict.fromkeys(decoders))
 
 
 def _ensure_checkpoint(

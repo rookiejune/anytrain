@@ -33,13 +33,14 @@ class LongCatAudioCodec:
         force_download: bool = False,
     ) -> LongCatAudioCodec:
         load_encoder, load_decoder = _load_longcat_loaders()
+        decoder_names = _validate_decoders(decoders)
         assets = ensure_longcat_assets(
             cache_dir=cache_dir,
+            decoders=decoder_names,
             local_files_only=local_files_only,
             force_download=force_download,
         )
         resolved_device = _resolve_device(device)
-        decoder_names = _validate_decoders(decoders)
 
         with _longcat_checkpoint_env(assets.ckpt_dir):
             encoder = load_encoder(str(assets.configs.encoder), resolved_device)

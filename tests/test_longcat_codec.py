@@ -35,10 +35,14 @@ class LongCatCodecTest(unittest.TestCase):
                 self.assertEqual(os.environ["LONGCAT_AUDIO_CODEC_CKPT_DIR"], str(assets.ckpt_dir))
                 return "decoder"
 
+            def fake_ensure_assets(**kwargs):
+                self.assertEqual(kwargs["decoders"], ("16k_4codebooks",))
+                return assets
+
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("LONGCAT_AUDIO_CODEC_CKPT_DIR", None)
                 with (
-                    patch("anytrain.codec.longcat.codec.ensure_longcat_assets", return_value=assets),
+                    patch("anytrain.codec.longcat.codec.ensure_longcat_assets", side_effect=fake_ensure_assets),
                     patch(
                         "anytrain.codec.longcat.codec._load_longcat_loaders",
                         return_value=(fake_load_encoder, fake_load_decoder),

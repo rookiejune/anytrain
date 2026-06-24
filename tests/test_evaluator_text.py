@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from anytrain.evaluator import EvaluatorABC
 from anytrain.evaluator.text import TextComparisonEvaluator
+from anytrain.evaluator.text.scores import corpus_chrf_score, word_error_rate
 
 
 class TextComparisonEvaluatorTest(unittest.TestCase):
@@ -39,6 +41,39 @@ class TextComparisonEvaluatorTest(unittest.TestCase):
 
         self.assertEqual(metrics["wer"], 0.0)
         self.assertEqual(metrics["chrf"], 100.0)
+
+    def test_normalization_removes_punctuation_by_default(self):
+        evaluator = TextComparisonEvaluator()
+
+        metrics = evaluator("Please call Stella", "Please call Stella.")
+
+        self.assertEqual(metrics["bleu"], 100.0)
+        self.assertEqual(metrics["wer"], 0.0)
+        self.assertEqual(metrics["chrf"], 100.0)
+
+    def test_punctuation_removal_can_be_disabled(self):
+        evaluator = TextComparisonEvaluator(remove_punctuation=False)
+
+        metrics = evaluator("Please call Stella", "Please call Stella.")
+
+        self.assertGreater(metrics["wer"], 0.0)
+        self.assertLess(metrics["chrf"], 100.0)
+
+    def test_smoothed_bleu_reports_short_partial_match(self):
+        evaluator = TextComparisonEvaluator()
+
+        metrics = evaluator("Please cool Stella", "Please call Stella.")
+
+        self.assertGreater(metrics["bleu"], 0.0)
+        self.assertLess(metrics["bleu"], 100.0)
+        self.assertAlmostEqual(metrics["wer"], 1.0 / 3.0)
+
+    def test_bleu_smoothing_can_be_disabled(self):
+        evaluator = TextComparisonEvaluator(bleu_smoothing=False)
+
+        metrics = evaluator("Please cool Stella", "Please call Stella.")
+
+        self.assertEqual(metrics["bleu"], 0.0)
 
     def test_normalization_lowercase_is_explicit(self):
         evaluator = TextComparisonEvaluator(lowercase=True)
@@ -99,6 +134,45 @@ class TextComparisonEvaluatorTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "at least one item"):
             evaluator([], [])
+
+    def test_wer_warns_and_uses_fallback_when_jiwer_is_missing(self):
+        real_import = __import__
+
+        def fail_jiwer_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "jiwer":
+                raise ImportError("missing jiwer")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with (
+            patch("builtins.__import__", side_effect=fail_jiwer_import),
+            self.assertWarnsRegex(RuntimeWarning, "fallback"),
+        ):
+            score = word_error_rate(["hello world"], ["hello there"])
+
+        self.assertEqual(score, 0.5)
+
+    def test_chrf_fallback_matches_sacrebleu_for_corpus_examples(self):
+        examples = [
+            (["Please cool Stella"], ["Please call Stella"]),
+            (["the quick brown fox", "hello world"], ["the quick brown fox", "hello there"]),
+        ]
+
+        real_import = __import__
+
+        def fail_sacrebleu_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("sacrebleu"):
+                raise ImportError("missing sacrebleu")
+            return real_import(name, globals, locals, fromlist, level)
+
+        for predictions, targets in examples:
+            expected = corpus_chrf_score(predictions, targets)
+            with (
+                patch("builtins.__import__", side_effect=fail_sacrebleu_import),
+                self.assertWarnsRegex(RuntimeWarning, "fallback"),
+            ):
+                fallback = corpus_chrf_score(predictions, targets)
+
+            self.assertAlmostEqual(fallback, expected)
 
 
 if __name__ == "__main__":

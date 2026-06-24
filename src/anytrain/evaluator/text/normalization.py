@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -10,6 +11,7 @@ type TextInput = str | Sequence[str]
 class TextNormalizationConfig:
     strip: bool = True
     collapse_whitespace: bool = True
+    remove_punctuation: bool = True
     lowercase: bool = False
 
 
@@ -37,6 +39,8 @@ def coerce_text_batch(
 def normalize_text(text: str, config: TextNormalizationConfig) -> str:
     if config.strip:
         text = text.strip()
+    if config.remove_punctuation:
+        text = remove_punctuation(text)
     if config.collapse_whitespace:
         text = " ".join(text.split())
     if config.lowercase:
@@ -51,3 +55,7 @@ def normalize_text_batch(
     config: TextNormalizationConfig,
 ) -> tuple[str, ...]:
     return tuple(normalize_text(value, config) for value in coerce_text_batch(text, name=name))
+
+
+def remove_punctuation(text: str) -> str:
+    return "".join(char for char in text if not unicodedata.category(char).startswith("P"))

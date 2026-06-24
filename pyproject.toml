@@ -21,8 +21,14 @@ data = []
 logger = ["wandb>=0.16"]
 module = ["transformers"]
 plot = ["matplotlib>=3.7", "plotly>=5.0", "seaborn>=0.13"]
-text = []
-speech = []
+text = ["jiwer>=4.0", "sacrebleu>=2.0"]
+speech = [
+    "jiwer>=4.0",
+    "openai-whisper",
+    "sacrebleu>=2.0",
+    "soundfile>=0.12",
+    "torchaudio>=2.0",
+]
 evaluator = []
 flow = ["flow_matching"]
 longcat = [

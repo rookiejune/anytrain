@@ -1,16 +1,9 @@
-from .asr import (
-    TextInput,
-    TextMetricEvaluatorProtocol,
-    WhisperASRBackendProtocol,
-    WhisperASREvaluator,
-)
-from .utmos import UTMOSBackendProtocol, UTMOSEvaluator
+from .asr import WhisperASREvaluator
+from .evaluator import SpeechEvaluator
+from .utmos import UTMOSEvaluator
 
 __all__ = [
-    "TextInput",
-    "TextMetricEvaluatorProtocol",
-    "UTMOSBackendProtocol",
+    "SpeechEvaluator",
     "UTMOSEvaluator",
-    "WhisperASRBackendProtocol",
     "WhisperASREvaluator",
 ]

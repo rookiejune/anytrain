@@ -1,27 +1,14 @@
 import unittest
+from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 
 import torch
 
-from anytrain.evaluator.speech import UTMOSEvaluator, WhisperASREvaluator
-
-
-class FakeWhisperBackend:
-    def __init__(self, output):
-        self.output = output
-        self.calls = []
-
-    def transcribe(self, audio, sample_rate, **decode_options):
-        self.calls.append((audio, sample_rate, decode_options))
-        return self.output
-
-
-class FakeTextEvaluator:
-    def __init__(self):
-        self.calls = []
-
-    def evaluate(self, prediction_text, reference_text):
-        self.calls.append((prediction_text, reference_text))
-        return {"bleu": 99.0, "wer": 0.25, "chrf": 88.0}
+import anytrain.evaluator.speech as speech
+from anytrain.evaluator.speech import SpeechEvaluator, UTMOSEvaluator, WhisperASREvaluator
+from anytrain.evaluator.speech.audio import load_wave_batch
+from anytrain.evaluator.speech.utmos import TorchHubUTMOSBackend
 
 
 class FakeUTMOSBackend:
@@ -34,16 +21,97 @@ class FakeUTMOSBackend:
         return self.output
 
 
-class SpeechEvaluatorTest(unittest.TestCase):
-    def test_whisper_asr_calls_backend_and_returns_text_metrics(self):
-        audio = torch.zeros(2, 16000)
-        backend = FakeWhisperBackend(["hello world", "good morning"])
-        text_evaluator = FakeTextEvaluator()
-        evaluator = WhisperASREvaluator(
-            backend=backend,
-            text_evaluator=text_evaluator,
-            decode_options={"language": "en"},
+class FakeWhisperModule(ModuleType):
+    def __init__(self, model):
+        super().__init__("whisper")
+        self.model = model
+        self.calls = []
+
+    def load_model(self, model_name, **load_options):
+        self.calls.append((model_name, load_options))
+        return self.model
+
+
+class FakeWhisperModel(torch.nn.Module):
+    def __init__(self, output):
+        super().__init__()
+        self.output = output
+        self.calls = []
+        self.weight = torch.nn.Parameter(torch.ones(()))
+
+    def transcribe(self, audio, **decode_options):
+        self.calls.append(
+            (
+                audio,
+                decode_options,
+                self.training,
+                self.weight.requires_grad,
+                torch.is_grad_enabled(),
+                torch.is_inference_mode_enabled(),
+            )
         )
+        return self.output
+
+
+class FakeWhisperASREvaluator(WhisperASREvaluator):
+    def __init__(self, metrics):
+        super().__init__()
+        self.metrics = metrics
+        self.calls = []
+
+    def evaluate(
+        self,
+        audio,
+        sample_rate,
+        reference_text=None,
+        *,
+        target_text=None,
+        **decode_options,
+    ):
+        self.calls.append((audio, sample_rate, reference_text, target_text, decode_options))
+        return dict(self.metrics)
+
+
+class FakeUTMOSModel(torch.nn.Module):
+    def __init__(self, output):
+        super().__init__()
+        self.output = output
+        self.calls = []
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.eval_calls = 0
+
+    def eval(self):
+        self.eval_calls += 1
+        return super().eval()
+
+    def forward(self, audio, sample_rate):
+        self.calls.append(
+            (
+                audio,
+                sample_rate,
+                self.training,
+                self.weight.requires_grad,
+                torch.is_grad_enabled(),
+                torch.is_inference_mode_enabled(),
+            )
+        )
+        return self.output
+
+
+class SpeechEvaluatorTest(unittest.TestCase):
+    def test_speech_top_level_exports_only_evaluators(self):
+        self.assertEqual(
+            set(speech.__all__),
+            {"SpeechEvaluator", "UTMOSEvaluator", "WhisperASREvaluator"},
+        )
+        self.assertFalse(hasattr(speech, "OpenAIWhisperBackend"))
+        self.assertFalse(hasattr(speech, "TorchHubUTMOSBackend"))
+
+    def test_speech_evaluator_returns_asr_text_and_utmos_metrics(self):
+        audio = torch.zeros(2, 16000)
+        asr = FakeWhisperASREvaluator({"bleu": 99.0, "wer": 0.25, "chrf": 88.0})
+        utmos = UTMOSEvaluator(backend=FakeUTMOSBackend([4.0, 5.0]))
+        evaluator = SpeechEvaluator(asr=asr, utmos=utmos)
 
         metrics = evaluator(
             audio,
@@ -52,40 +120,117 @@ class SpeechEvaluatorTest(unittest.TestCase):
             temperature=0.0,
         )
 
-        self.assertEqual(set(metrics), {"bleu", "wer", "chrf"})
-        self.assertEqual(metrics["bleu"], 99.0)
-        self.assertEqual(metrics["wer"], 0.25)
-        self.assertEqual(metrics["chrf"], 88.0)
-        self.assertEqual(len(backend.calls), 1)
-        self.assertIs(backend.calls[0][0], audio)
-        self.assertEqual(backend.calls[0][1], 16000)
-        self.assertEqual(backend.calls[0][2], {"language": "en", "temperature": 0.0})
+        self.assertEqual(metrics, {"bleu": 99.0, "wer": 0.25, "chrf": 88.0, "utmos": 4.5})
         self.assertEqual(
-            text_evaluator.calls,
-            [(["hello world", "good morning"], ["hello world", "good morning"])],
+            asr.calls,
+            [
+                (
+                    audio,
+                    16000,
+                    ["hello world", "good morning"],
+                    None,
+                    {"temperature": 0.0},
+                )
+            ],
+        )
+        self.assertEqual(utmos.backend.calls, [(audio, 16000)])
+
+    def test_speech_evaluator_validates_children(self):
+        with self.assertRaisesRegex(TypeError, "asr"):
+            SpeechEvaluator(asr=UTMOSEvaluator(backend=FakeUTMOSBackend(4.0)))
+        with self.assertRaisesRegex(TypeError, "utmos"):
+            SpeechEvaluator(
+                asr=FakeWhisperASREvaluator({"bleu": 99.0, "wer": 0.0, "chrf": 99.0}),
+                utmos=FakeWhisperASREvaluator({"bleu": 99.0, "wer": 0.0, "chrf": 99.0}),
+            )
+
+    def test_whisper_asr_loads_openai_whisper_and_returns_text_metrics(self):
+        audio = torch.zeros(2, 16000)
+        model = FakeWhisperModel({"text": "hello world"})
+        whisper = FakeWhisperModule(model)
+        evaluator = WhisperASREvaluator(
+            model_name="tiny",
+            device="cpu",
+            decode_options={"language": "en"},
+            load_options={"in_memory": True},
         )
 
+        with patch.dict("sys.modules", {"whisper": whisper}):
+            metrics = evaluator(
+                audio,
+                16000,
+                reference_text=["hello world", "hello world"],
+                temperature=0.0,
+            )
+
+        self.assertEqual(set(metrics), {"bleu", "wer", "chrf"})
+        self.assertEqual(metrics["bleu"], 100.0)
+        self.assertEqual(metrics["wer"], 0.0)
+        self.assertEqual(metrics["chrf"], 100.0)
+        self.assertEqual(whisper.calls, [("tiny", {"in_memory": True, "device": "cpu"})])
+        self.assertEqual(len(model.calls), 2)
+        self.assertEqual(model.calls[0][1], {"language": "en", "temperature": 0.0})
+
     def test_whisper_asr_requires_reference_text(self):
-        backend = FakeWhisperBackend("hello world")
-        evaluator = WhisperASREvaluator(backend=backend, text_evaluator=FakeTextEvaluator())
+        evaluator = WhisperASREvaluator()
 
         with self.assertRaisesRegex(ValueError, "reference_text is required"):
             evaluator(torch.zeros(16000), 16000)
 
-        self.assertEqual(backend.calls, [])
+        self.assertIsNone(evaluator._backend.model)
 
     def test_whisper_asr_rejects_prediction_reference_count_mismatch(self):
-        evaluator = WhisperASREvaluator(
-            backend=FakeWhisperBackend("hello world"),
-            text_evaluator=FakeTextEvaluator(),
-        )
+        model = FakeWhisperModel({"text": "hello world"})
+        whisper = FakeWhisperModule(model)
+        evaluator = WhisperASREvaluator()
 
-        with self.assertRaisesRegex(ValueError, "counts must match"):
+        with (
+            patch.dict("sys.modules", {"whisper": whisper}),
+            self.assertRaisesRegex(ValueError, "counts must match"),
+        ):
             evaluator(torch.zeros(16000), 16000, reference_text=["hello", "world"])
 
-    def test_whisper_asr_requires_backend(self):
-        with self.assertRaisesRegex(ValueError, "requires an explicit backend"):
-            WhisperASREvaluator(text_evaluator=FakeTextEvaluator())
+    def test_whisper_asr_builds_default_loader_without_loading_model(self):
+        evaluator = WhisperASREvaluator(model_name="tiny")
+
+        self.assertEqual(evaluator.model_name, "tiny")
+        self.assertIsNone(evaluator._backend.model)
+
+    def test_whisper_asr_default_model_is_large_v3(self):
+        evaluator = WhisperASREvaluator()
+
+        self.assertEqual(evaluator.model_name, "large-v3")
+        self.assertIsNone(evaluator._backend.model)
+        self.assertIn("large-v3", evaluator.supported_model_names)
+
+    def test_whisper_asr_rejects_unknown_model_name(self):
+        with self.assertRaisesRegex(ValueError, "model_name must be one of"):
+            WhisperASREvaluator(model_name="/tmp/custom-whisper.pt")
+        with self.assertRaisesRegex(ValueError, "model_name must be one of"):
+            WhisperASREvaluator(model_name="future-whisper")
+
+    def test_whisper_asr_rejects_backend_or_model_injection(self):
+        with self.assertRaisesRegex(TypeError, "backend"):
+            WhisperASREvaluator(backend=object())
+        with self.assertRaisesRegex(TypeError, "model"):
+            WhisperASREvaluator(model=object())
+
+    def test_whisper_asr_transcribes_in_inference_mode(self):
+        model = FakeWhisperModel({"text": "hello world"})
+        whisper = FakeWhisperModule(model)
+        evaluator = WhisperASREvaluator(model_name="tiny", device="cpu")
+
+        with patch.dict("sys.modules", {"whisper": whisper}):
+            prediction = evaluator.transcribe(torch.zeros(16000), 16000, language="en")
+
+        self.assertEqual(prediction, "hello world")
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.calls[0][0].shape, (16000,))
+        self.assertEqual(model.calls[0][1], {"language": "en"})
+        self.assertFalse(model.calls[0][2])
+        self.assertFalse(model.calls[0][3])
+        self.assertFalse(model.calls[0][4])
+        self.assertTrue(model.calls[0][5])
 
     def test_utmos_returns_batch_mean(self):
         audio = torch.zeros(3, 16000)
@@ -104,15 +249,63 @@ class SpeechEvaluatorTest(unittest.TestCase):
 
         self.assertEqual(metrics, {"utmos": 4.0})
 
+    def test_utmos_accepts_tensor_scores_from_backend(self):
+        evaluator = UTMOSEvaluator(backend=FakeUTMOSBackend(torch.tensor([3.0, 5.0])))
+
+        metrics = evaluator(torch.zeros(2, 16000), 16000)
+
+        self.assertEqual(metrics, {"utmos": 4.0})
+
     def test_utmos_rejects_boolean_scores(self):
         evaluator = UTMOSEvaluator(backend=FakeUTMOSBackend([True]))
 
         with self.assertRaisesRegex(TypeError, r"score\[0\]"):
             evaluator(torch.zeros(16000), 16000)
 
-    def test_utmos_requires_backend(self):
-        with self.assertRaisesRegex(ValueError, "requires an explicit backend"):
-            UTMOSEvaluator()
+    def test_utmos_rejects_boolean_tensor_scores(self):
+        evaluator = UTMOSEvaluator(backend=FakeUTMOSBackend(torch.tensor([True])))
+
+        with self.assertRaisesRegex(TypeError, "score tensor"):
+            evaluator(torch.zeros(16000), 16000)
+
+    def test_audio_path_loader_falls_back_to_soundfile(self):
+        with (
+            patch(
+                "anytrain.evaluator.speech.audio._load_audio_file_with_torchaudio",
+                side_effect=RuntimeError("broken torchaudio"),
+            ),
+            patch(
+                "anytrain.evaluator.speech.audio._load_audio_file_with_soundfile",
+                return_value=(torch.zeros(1, 8), 48000),
+            ),
+        ):
+            wave, sample_rate = load_wave_batch(Path("sample.flac"), 16000)
+
+        self.assertEqual(wave.shape, torch.Size([1, 8]))
+        self.assertEqual(sample_rate, 48000)
+
+    def test_utmos_builds_default_backend_without_loading_model(self):
+        evaluator = UTMOSEvaluator(device="cpu")
+
+        self.assertIsInstance(evaluator.backend, TorchHubUTMOSBackend)
+        self.assertEqual(evaluator.backend.model_name, "utmos22_strong")
+        self.assertIsNone(evaluator.backend.model)
+
+    def test_torch_hub_utmos_backend_scores_tensor_audio(self):
+        model = FakeUTMOSModel(torch.tensor([3.0, 5.0]))
+        backend = TorchHubUTMOSBackend(model=model, device="cpu")
+
+        score = backend.score(torch.zeros(2, 16000), 16000)
+
+        self.assertTrue(torch.equal(score, torch.tensor([3.0, 5.0])))
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.calls[0][0].shape, torch.Size([2, 16000]))
+        self.assertEqual(model.calls[0][1], 16000)
+        self.assertFalse(model.calls[0][2])
+        self.assertFalse(model.calls[0][3])
+        self.assertFalse(model.calls[0][4])
+        self.assertTrue(model.calls[0][5])
+        self.assertEqual(model.eval_calls, 1)
 
 
 if __name__ == "__main__":

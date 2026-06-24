@@ -1,42 +1,150 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any
 
-from anytrain.evaluator.abc import EvaluatorABC, MetricDict
-from anytrain.evaluator.text import TextInput
-from anytrain.evaluator.text.normalization import coerce_text_batch
+import torch
+
+from ..abc import EvaluatorABC, MetricDict
+from ..text import TextComparisonEvaluator, TextInput
+from ..text.normalization import coerce_text_batch
+from ._torch import freeze_model
+from .audio import load_wave_batch, resample_wave, validate_sample_rate
+
+_DEFAULT_MODEL_NAME = "large-v3"
+_SUPPORTED_MODEL_NAMES = (
+    "tiny.en",
+    "tiny",
+    "base.en",
+    "base",
+    "small.en",
+    "small",
+    "medium.en",
+    "medium",
+    "large-v1",
+    "large-v2",
+    "large-v3",
+    "large",
+    "large-v3-turbo",
+    "turbo",
+)
+_SUPPORTED_MODEL_NAME_SET = frozenset(_SUPPORTED_MODEL_NAMES)
 
 
-@runtime_checkable
-class WhisperASRBackendProtocol(Protocol):
+class _OpenAIWhisperBackend:
+    target_sample_rate = 16000
+
+    def __init__(
+        self,
+        *,
+        model_name: str = _DEFAULT_MODEL_NAME,
+        device: Any | None = None,
+        download_root: str | Path | None = None,
+        load_options: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.model_name = self._validate_model_name(model_name)
+        self.device = device
+        self.download_root = str(download_root) if download_root is not None else None
+        self.model: Any | None = None
+        self.load_options = self._validate_load_options(load_options)
+
     def transcribe(
         self,
         audio: Any,
         sample_rate: int,
         **decode_options: Any,
     ) -> TextInput:
-        raise NotImplementedError
+        wave, sample_rate = load_wave_batch(audio, sample_rate)
+        wave = resample_wave(wave, sample_rate, self.target_sample_rate)
+        model = self._prepare_model(self._load_model())
 
+        with torch.inference_mode():
+            predictions = [
+                self._extract_text(model.transcribe(sample.cpu().numpy(), **decode_options))
+                for sample in wave
+            ]
+        return predictions[0] if len(predictions) == 1 else predictions
 
-@runtime_checkable
-class TextMetricEvaluatorProtocol(Protocol):
-    def evaluate(self, prediction_text: TextInput, reference_text: TextInput) -> MetricDict:
-        raise NotImplementedError
+    def _load_model(self) -> Any:
+        if self.model is not None:
+            return self.model
+
+        try:
+            import whisper
+        except ImportError as exc:
+            raise ImportError(
+                "WhisperASREvaluator requires the `openai-whisper` package. "
+                "Install speech dependencies with `pip install anytrain[speech]`."
+            ) from exc
+
+        load_options = dict(self.load_options)
+        if self.device is not None:
+            load_options["device"] = self.device
+        if self.download_root is not None:
+            load_options["download_root"] = self.download_root
+        self.model = whisper.load_model(self.model_name, **load_options)
+        return self.model
+
+    def _prepare_model(self, model: Any) -> Any:
+        model = freeze_model(model, device=self.device)
+        self.model = model
+        return model
+
+    def _extract_text(self, result: object) -> str:
+        if isinstance(result, str):
+            return result
+        if isinstance(result, Mapping):
+            text = result.get("text")
+            if isinstance(text, str):
+                return text
+            raise TypeError("Whisper transcribe result must contain a string `text` value.")
+        raise TypeError("Whisper transcribe result must be a string or mapping.")
+
+    def _validate_model_name(self, model_name: str) -> str:
+        if not isinstance(model_name, str):
+            raise TypeError("model_name must be a string.")
+        if model_name not in _SUPPORTED_MODEL_NAME_SET:
+            names = ", ".join(_SUPPORTED_MODEL_NAMES)
+            raise ValueError(f"model_name must be one of: {names}.")
+        return model_name
+
+    def _validate_load_options(
+        self,
+        load_options: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        if load_options is None:
+            return {}
+        if not isinstance(load_options, Mapping):
+            raise TypeError("load_options must be a mapping.")
+        return dict(load_options)
 
 
 class WhisperASREvaluator(EvaluatorABC):
     required_metric_keys = ("bleu", "wer", "chrf")
+    default_model_name = _DEFAULT_MODEL_NAME
+    supported_model_names = _SUPPORTED_MODEL_NAMES
 
     def __init__(
         self,
         *,
-        backend: WhisperASRBackendProtocol | None = None,
-        text_evaluator: TextMetricEvaluatorProtocol | None = None,
+        text_evaluator: TextComparisonEvaluator | None = None,
         decode_options: Mapping[str, Any] | None = None,
+        model_name: str = default_model_name,
+        device: Any | None = None,
+        download_root: str | Path | None = None,
+        load_options: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
-        self.backend = self._validate_backend(backend)
+        self.model_name = model_name
+        self.device = device
+        self.download_root = download_root
+        self._backend = _OpenAIWhisperBackend(
+            model_name=model_name,
+            device=device,
+            download_root=download_root,
+            load_options=load_options,
+        )
         self.text_evaluator = self._resolve_text_evaluator(text_evaluator)
         self.decode_options = self._validate_decode_options(decode_options)
 
@@ -64,53 +172,23 @@ class WhisperASREvaluator(EvaluatorABC):
         return self._extract_required_metrics(metrics)
 
     def transcribe(self, audio: Any, sample_rate: int, **decode_options: Any) -> TextInput:
-        sample_rate = self._validate_sample_rate(sample_rate)
+        sample_rate = validate_sample_rate(sample_rate)
         options = dict(self.decode_options)
         options.update(decode_options)
-        output = self.backend.transcribe(audio, sample_rate, **options)
+        output = self._backend.transcribe(audio, sample_rate, **options)
         if isinstance(output, str):
             return output
         return self._normalize_text_input(output, label="prediction_text")
 
-    def _validate_backend(
-        self,
-        backend: WhisperASRBackendProtocol | None,
-    ) -> WhisperASRBackendProtocol:
-        if backend is None:
-            raise ValueError(
-                "WhisperASREvaluator requires an explicit backend implementing "
-                "transcribe(audio, sample_rate, **decode_options). anytrain does not "
-                "load or download Whisper models."
-            )
-        if not isinstance(backend, WhisperASRBackendProtocol):
-            raise TypeError(
-                "WhisperASREvaluator backend must implement "
-                "transcribe(audio, sample_rate, **decode_options)."
-            )
-        return backend
-
     def _resolve_text_evaluator(
         self,
-        text_evaluator: TextMetricEvaluatorProtocol | None,
-    ) -> TextMetricEvaluatorProtocol:
+        text_evaluator: TextComparisonEvaluator | None,
+    ) -> TextComparisonEvaluator:
         if text_evaluator is None:
-            text_evaluator = self._load_default_text_evaluator()
-        if not isinstance(text_evaluator, TextMetricEvaluatorProtocol):
-            raise TypeError(
-                "text_evaluator must implement evaluate(prediction_text, reference_text)."
-            )
+            return TextComparisonEvaluator()
+        if not isinstance(text_evaluator, TextComparisonEvaluator):
+            raise TypeError("text_evaluator must be a TextComparisonEvaluator.")
         return text_evaluator
-
-    def _load_default_text_evaluator(self) -> TextMetricEvaluatorProtocol:
-        try:
-            from anytrain.evaluator.text import TextComparisonEvaluator
-        except ImportError as exc:
-            raise ImportError(
-                "WhisperASREvaluator requires text_evaluator=... or an available "
-                "anytrain.evaluator.text.TextComparisonEvaluator for BLEU/WER/chrF metrics."
-            ) from exc
-
-        return TextComparisonEvaluator()
 
     def _resolve_reference_text(
         self,
@@ -153,10 +231,3 @@ class WhisperASREvaluator(EvaluatorABC):
         if not isinstance(decode_options, Mapping):
             raise TypeError("decode_options must be a mapping.")
         return dict(decode_options)
-
-    def _validate_sample_rate(self, sample_rate: int) -> int:
-        if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
-            raise TypeError("sample_rate must be an integer.")
-        if sample_rate <= 0:
-            raise ValueError("sample_rate must be positive.")
-        return sample_rate

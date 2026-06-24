@@ -13,6 +13,12 @@ class CurveShape(StrEnum):
     COSINE = auto()
 
 
+class SchedulerOption(StrEnum):
+    CONSTANT = auto()
+    WARMUP_COSINE = auto()
+    WSD = auto()
+
+
 def _validate_ratio(value: float, *, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"{name} must be a float.")
@@ -76,6 +82,29 @@ class SchedulerConfig:
 
 def create_scheduler(
     optimizer: torch.optim.Optimizer,
+    *,
+    schedule: str = "constant",
+    warmup_steps: int = 0,
+    total_steps: int | None = None,
+    stable_steps: int | None = None,
+    decay_steps: int | None = None,
+    min_lr_ratio: float = 0.1,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    return create_scheduler_from_config(
+        optimizer,
+        make_named_scheduler_config(
+            schedule=schedule,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            stable_steps=stable_steps,
+            decay_steps=decay_steps,
+            min_lr_ratio=min_lr_ratio,
+        ),
+    )
+
+
+def create_scheduler_from_config(
+    optimizer: torch.optim.Optimizer,
     config: SchedulerConfig,
 ) -> torch.optim.lr_scheduler.LambdaLR:
     phases = _resolve_phases(config)
@@ -94,6 +123,57 @@ def make_scheduler_config(
     *phases: SchedulerPhaseLike,
 ) -> SchedulerConfig:
     return SchedulerConfig(phases=tuple(_coerce_scheduler_phase(phase) for phase in phases))
+
+
+def make_named_scheduler_config(
+    *,
+    schedule: str = "constant",
+    warmup_steps: int = 0,
+    total_steps: int | None = None,
+    stable_steps: int | None = None,
+    decay_steps: int | None = None,
+    min_lr_ratio: float = 0.1,
+) -> SchedulerConfig:
+    _validate_non_negative_int(warmup_steps, name="warmup_steps")
+    _validate_ratio(min_lr_ratio, name="min_lr_ratio")
+
+    option = _normalize_scheduler_option(schedule)
+    if option is SchedulerOption.CONSTANT:
+        _reject_constant_scheduler_steps(
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            stable_steps=stable_steps,
+            decay_steps=decay_steps,
+        )
+        return SchedulerConfig()
+
+    if option is SchedulerOption.WARMUP_COSINE:
+        resolved_total_steps = _require_positive_int(total_steps, name="total_steps")
+        if resolved_total_steps <= warmup_steps:
+            raise ValueError("total_steps must be greater than warmup_steps.")
+        return _make_warmup_cosine_config(
+            warmup_steps=warmup_steps,
+            decay_steps=resolved_total_steps - warmup_steps,
+            min_lr_ratio=min_lr_ratio,
+        )
+
+    if option is SchedulerOption.WSD:
+        resolved_stable_steps = _require_non_negative_int(stable_steps, name="stable_steps")
+        resolved_decay_steps = _require_positive_int(decay_steps, name="decay_steps")
+        if total_steps is not None:
+            expected_total_steps = warmup_steps + resolved_stable_steps + resolved_decay_steps
+            if total_steps != expected_total_steps:
+                raise ValueError(
+                    "total_steps must equal warmup_steps + stable_steps + decay_steps for wsd."
+                )
+        return _make_wsd_config(
+            warmup_steps=warmup_steps,
+            stable_steps=resolved_stable_steps,
+            decay_steps=resolved_decay_steps,
+            min_lr_ratio=min_lr_ratio,
+        )
+
+    raise ValueError("schedule must be constant, warmup_cosine, or wsd.")
 
 
 @dataclass(frozen=True)
@@ -176,11 +256,125 @@ def _coerce_scheduler_phase(phase: SchedulerPhaseLike) -> SchedulerPhaseConfig:
     )
 
 
+def _make_warmup_cosine_config(
+    *,
+    warmup_steps: int,
+    decay_steps: int,
+    min_lr_ratio: float,
+) -> SchedulerConfig:
+    phases: list[SchedulerPhaseConfig] = []
+    if warmup_steps > 0:
+        phases.append(
+            SchedulerPhaseConfig(
+                shape=CurveShape.LINEAR,
+                duration_steps=warmup_steps,
+                start_lr_ratio=0.0,
+                end_lr_ratio=1.0,
+            )
+        )
+    phases.append(
+        SchedulerPhaseConfig(
+            shape=CurveShape.COSINE,
+            duration_steps=decay_steps,
+            end_lr_ratio=min_lr_ratio,
+        )
+    )
+    return SchedulerConfig(phases=tuple(phases))
+
+
+def _make_wsd_config(
+    *,
+    warmup_steps: int,
+    stable_steps: int,
+    decay_steps: int,
+    min_lr_ratio: float,
+) -> SchedulerConfig:
+    phases: list[SchedulerPhaseConfig] = []
+    if warmup_steps > 0:
+        phases.append(
+            SchedulerPhaseConfig(
+                shape=CurveShape.LINEAR,
+                duration_steps=warmup_steps,
+                start_lr_ratio=0.0,
+                end_lr_ratio=1.0,
+            )
+        )
+    if stable_steps > 0:
+        phases.append(
+            SchedulerPhaseConfig(
+                shape=CurveShape.CONSTANT,
+                duration_steps=stable_steps,
+                end_lr_ratio=1.0,
+            )
+        )
+    phases.append(
+        SchedulerPhaseConfig(
+            shape=CurveShape.COSINE,
+            duration_steps=decay_steps,
+            end_lr_ratio=min_lr_ratio,
+        )
+    )
+    return SchedulerConfig(phases=tuple(phases))
+
+
+def _reject_constant_scheduler_steps(
+    *,
+    warmup_steps: int,
+    total_steps: int | None,
+    stable_steps: int | None,
+    decay_steps: int | None,
+) -> None:
+    if warmup_steps != 0:
+        raise ValueError("warmup_steps is only valid for warmup_cosine or wsd schedules.")
+    if total_steps is not None:
+        raise ValueError("total_steps is only valid for warmup_cosine or wsd schedules.")
+    if stable_steps is not None:
+        raise ValueError("stable_steps is only valid for wsd schedules.")
+    if decay_steps is not None:
+        raise ValueError("decay_steps is only valid for wsd schedules.")
+
+
+def _normalize_scheduler_option(schedule: str) -> SchedulerOption:
+    if not isinstance(schedule, str):
+        raise TypeError("schedule must be a string.")
+    try:
+        return SchedulerOption(schedule)
+    except ValueError as error:
+        raise ValueError("schedule must be constant, warmup_cosine, or wsd.") from error
+
+
+def _validate_non_negative_int(value: int, *, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative.")
+
+
+def _require_non_negative_int(value: int | None, *, name: str) -> int:
+    if value is None:
+        raise ValueError(f"{name} is required.")
+    _validate_non_negative_int(value, name=name)
+    return value
+
+
+def _require_positive_int(value: int | None, *, name: str) -> int:
+    if value is None:
+        raise ValueError(f"{name} is required.")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer.")
+    if value <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return value
+
+
 __all__ = [
     "CurveShape",
+    "SchedulerOption",
     "SchedulerConfig",
     "SchedulerPhaseLike",
     "SchedulerPhaseConfig",
     "create_scheduler",
+    "create_scheduler_from_config",
+    "make_named_scheduler_config",
     "make_scheduler_config",
 ]

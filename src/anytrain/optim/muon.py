@@ -3,9 +3,9 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from .adamw import AdamWDecayPolicy, create_adamw_optimizer
+from .adamw import AdamWDecayPolicy, create_adamw_optimizer_from_config
 from .compose import CompositeOptimizer
-from .config import AdamWConfig, MuonConfig
+from .config import AdamWConfig, MuonAdjustLRFn, MuonConfig
 from .rules import (
     ExcludedModules,
     ExcludedModuleTypes,
@@ -15,6 +15,53 @@ from .rules import (
 
 
 def create_muon_adamw_optimizer(
+    module: nn.Module,
+    *,
+    lr: float,
+    weight_decay: float = 0.1,
+    adamw_lr: float | None = None,
+    adamw_weight_decay: float | None = None,
+    adamw_betas: tuple[float, float] = (0.9, 0.95),
+    adamw_eps: float = 1e-8,
+    adamw_fused: bool | None = None,
+    muon_lr: float | None = None,
+    muon_weight_decay: float | None = None,
+    muon_momentum: float = 0.95,
+    muon_nesterov: bool = True,
+    muon_ns_coefficients: tuple[float, float, float] = (3.4445, -4.775, 2.0315),
+    muon_eps: float = 1e-7,
+    muon_ns_steps: int = 5,
+    muon_adjust_lr_fn: MuonAdjustLRFn | str = MuonAdjustLRFn.MATCH_RMS_ADAMW,
+    requires_grad_only: bool = True,
+    excluded_modules: ExcludedModules = (),
+    excluded_module_types: ExcludedModuleTypes = (),
+) -> CompositeOptimizer:
+    return create_muon_adamw_optimizer_from_config(
+        module,
+        muon=MuonConfig(
+            lr=lr if muon_lr is None else muon_lr,
+            weight_decay=weight_decay if muon_weight_decay is None else muon_weight_decay,
+            momentum=muon_momentum,
+            nesterov=muon_nesterov,
+            ns_coefficients=muon_ns_coefficients,
+            eps=muon_eps,
+            ns_steps=muon_ns_steps,
+            adjust_lr_fn=muon_adjust_lr_fn,
+        ),
+        adamw=AdamWConfig(
+            lr=lr if adamw_lr is None else adamw_lr,
+            weight_decay=weight_decay if adamw_weight_decay is None else adamw_weight_decay,
+            betas=adamw_betas,
+            eps=adamw_eps,
+            fused=adamw_fused,
+        ),
+        requires_grad_only=requires_grad_only,
+        excluded_modules=excluded_modules,
+        excluded_module_types=excluded_module_types,
+    )
+
+
+def create_muon_adamw_optimizer_from_config(
     module: nn.Module,
     *,
     muon: MuonConfig,
@@ -36,7 +83,7 @@ def create_muon_adamw_optimizer(
         "muon": _create_muon_optimizer(muon_parameters, muon),
     }
     if adamw_parameters:
-        optimizers["adamw"] = create_adamw_optimizer(
+        optimizers["adamw"] = create_adamw_optimizer_from_config(
             module,
             adamw,
             requires_grad_only=requires_grad_only,
@@ -127,5 +174,6 @@ __all__ = [
     "ExcludedModules",
     "ExcludedModuleTypes",
     "create_muon_adamw_optimizer",
+    "create_muon_adamw_optimizer_from_config",
     "split_muon_params",
 ]

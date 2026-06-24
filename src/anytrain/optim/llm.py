@@ -7,14 +7,19 @@ from typing import TypedDict
 import torch
 from torch import nn
 
-from .adamw import AdamWDecayPolicy, create_adamw_optimizer
-from .config import AdamWConfig, MuonAdamWConfig, MuonConfig
+from .adamw import AdamWDecayPolicy, create_adamw_optimizer_from_config
+from .config import AdamWConfig, MuonAdamWConfig, MuonAdjustLRFn, MuonConfig
 from .muon import (
     ExcludedModules,
     ExcludedModuleTypes,
-    create_muon_adamw_optimizer,
+    create_muon_adamw_optimizer_from_config,
 )
-from .scheduler import SchedulerConfig, create_scheduler, make_scheduler_config
+from .scheduler import (
+    SchedulerConfig,
+    create_scheduler,
+    create_scheduler_from_config,
+    make_scheduler_config,
+)
 
 type _OptimizerConfig = AdamWConfig | MuonAdamWConfig
 type _SchedulerInput = list[tuple[str, int]] | tuple[tuple[str, int], ...]
@@ -41,6 +46,14 @@ class _OptimizerOption(StrEnum):
     MUON = auto()
 
 
+_DEFAULT_MUON_MOMENTUM = 0.95
+_DEFAULT_MUON_NESTEROV = True
+_DEFAULT_MUON_NS_COEFFICIENTS = (3.4445, -4.775, 2.0315)
+_DEFAULT_MUON_EPS = 1e-7
+_DEFAULT_MUON_NS_STEPS = 5
+_DEFAULT_MUON_ADJUST_LR_FN = MuonAdjustLRFn.MATCH_RMS_ADAMW
+
+
 @dataclass(frozen=True)
 class OptimizationConfig:
     optimizer_config: _OptimizerConfig
@@ -60,12 +73,41 @@ class OptimizationConfig:
         preset: str = "pretrain",
         *,
         optimizer: str = "adamw",
+        lr: float | None = None,
+        weight_decay: float | None = None,
+        betas: tuple[float, float] | None = None,
+        eps: float | None = None,
+        fused: bool | None = None,
+        muon_lr: float | None = None,
+        muon_weight_decay: float | None = None,
+        muon_momentum: float = _DEFAULT_MUON_MOMENTUM,
+        muon_nesterov: bool = _DEFAULT_MUON_NESTEROV,
+        muon_ns_coefficients: tuple[float, float, float] = _DEFAULT_MUON_NS_COEFFICIENTS,
+        muon_eps: float = _DEFAULT_MUON_EPS,
+        muon_ns_steps: int = _DEFAULT_MUON_NS_STEPS,
+        muon_adjust_lr_fn: MuonAdjustLRFn | str = _DEFAULT_MUON_ADJUST_LR_FN,
         scheduler: _SchedulerInput | None = None,
         excluded_modules: ExcludedModules = (),
         excluded_module_types: ExcludedModuleTypes = (),
     ) -> OptimizationConfig:
         return cls(
-            optimizer_config=_make_optimizer_config(preset, optimizer=optimizer),
+            optimizer_config=_make_optimizer_config(
+                preset,
+                optimizer=optimizer,
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=betas,
+                eps=eps,
+                fused=fused,
+                muon_lr=muon_lr,
+                muon_weight_decay=muon_weight_decay,
+                muon_momentum=muon_momentum,
+                muon_nesterov=muon_nesterov,
+                muon_ns_coefficients=muon_ns_coefficients,
+                muon_eps=muon_eps,
+                muon_ns_steps=muon_ns_steps,
+                muon_adjust_lr_fn=muon_adjust_lr_fn,
+            ),
             scheduler=_make_scheduler_config(scheduler),
             excluded_modules=excluded_modules,
             excluded_module_types=excluded_module_types,
@@ -74,11 +116,56 @@ class OptimizationConfig:
 
 def create_optimizer(
     module: nn.Module,
+    *,
+    preset: str = "pretrain",
+    optimizer: str = "adamw",
+    lr: float | None = None,
+    weight_decay: float | None = None,
+    betas: tuple[float, float] | None = None,
+    eps: float | None = None,
+    fused: bool | None = None,
+    muon_lr: float | None = None,
+    muon_weight_decay: float | None = None,
+    muon_momentum: float = _DEFAULT_MUON_MOMENTUM,
+    muon_nesterov: bool = _DEFAULT_MUON_NESTEROV,
+    muon_ns_coefficients: tuple[float, float, float] = _DEFAULT_MUON_NS_COEFFICIENTS,
+    muon_eps: float = _DEFAULT_MUON_EPS,
+    muon_ns_steps: int = _DEFAULT_MUON_NS_STEPS,
+    muon_adjust_lr_fn: MuonAdjustLRFn | str = _DEFAULT_MUON_ADJUST_LR_FN,
+    excluded_modules: ExcludedModules = (),
+    excluded_module_types: ExcludedModuleTypes = (),
+) -> torch.optim.Optimizer:
+    return create_optimizer_from_config(
+        module,
+        OptimizationConfig.from_preset(
+            preset,
+            optimizer=optimizer,
+            lr=lr,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+            fused=fused,
+            muon_lr=muon_lr,
+            muon_weight_decay=muon_weight_decay,
+            muon_momentum=muon_momentum,
+            muon_nesterov=muon_nesterov,
+            muon_ns_coefficients=muon_ns_coefficients,
+            muon_eps=muon_eps,
+            muon_ns_steps=muon_ns_steps,
+            muon_adjust_lr_fn=muon_adjust_lr_fn,
+            excluded_modules=excluded_modules,
+            excluded_module_types=excluded_module_types,
+        ),
+    )
+
+
+def create_optimizer_from_config(
+    module: nn.Module,
     config: OptimizationConfig,
 ) -> torch.optim.Optimizer:
     optimizer_config = config.optimizer_config
     if isinstance(optimizer_config, AdamWConfig):
-        return create_adamw_optimizer(
+        return create_adamw_optimizer_from_config(
             module,
             optimizer_config,
             excluded_modules=config.excluded_modules,
@@ -86,7 +173,7 @@ def create_optimizer(
             decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE,
         )
 
-    return create_muon_adamw_optimizer(
+    return create_muon_adamw_optimizer_from_config(
         module,
         muon=_resolve_muon_config(optimizer_config),
         adamw=_resolve_adamw_config(optimizer_config),
@@ -97,10 +184,75 @@ def create_optimizer(
 
 def create_lightning_optimizers(
     module: nn.Module,
+    *,
+    preset: str = "pretrain",
+    optimizer: str = "adamw",
+    lr: float | None = None,
+    weight_decay: float | None = None,
+    betas: tuple[float, float] | None = None,
+    eps: float | None = None,
+    fused: bool | None = None,
+    muon_lr: float | None = None,
+    muon_weight_decay: float | None = None,
+    muon_momentum: float = _DEFAULT_MUON_MOMENTUM,
+    muon_nesterov: bool = _DEFAULT_MUON_NESTEROV,
+    muon_ns_coefficients: tuple[float, float, float] = _DEFAULT_MUON_NS_COEFFICIENTS,
+    muon_eps: float = _DEFAULT_MUON_EPS,
+    muon_ns_steps: int = _DEFAULT_MUON_NS_STEPS,
+    muon_adjust_lr_fn: MuonAdjustLRFn | str = _DEFAULT_MUON_ADJUST_LR_FN,
+    schedule: str = "constant",
+    warmup_steps: int = 0,
+    total_steps: int | None = None,
+    stable_steps: int | None = None,
+    decay_steps: int | None = None,
+    min_lr_ratio: float = 0.1,
+    excluded_modules: ExcludedModules = (),
+    excluded_module_types: ExcludedModuleTypes = (),
+) -> LightningOptimizerConfig:
+    optimizer_instance = create_optimizer(
+        module,
+        preset=preset,
+        optimizer=optimizer,
+        lr=lr,
+        weight_decay=weight_decay,
+        betas=betas,
+        eps=eps,
+        fused=fused,
+        muon_lr=muon_lr,
+        muon_weight_decay=muon_weight_decay,
+        muon_momentum=muon_momentum,
+        muon_nesterov=muon_nesterov,
+        muon_ns_coefficients=muon_ns_coefficients,
+        muon_eps=muon_eps,
+        muon_ns_steps=muon_ns_steps,
+        muon_adjust_lr_fn=muon_adjust_lr_fn,
+        excluded_modules=excluded_modules,
+        excluded_module_types=excluded_module_types,
+    )
+    scheduler = create_scheduler(
+        optimizer_instance,
+        schedule=schedule,
+        warmup_steps=warmup_steps,
+        total_steps=total_steps,
+        stable_steps=stable_steps,
+        decay_steps=decay_steps,
+        min_lr_ratio=min_lr_ratio,
+    )
+    return {
+        "optimizer": optimizer_instance,
+        "lr_scheduler": {
+            "scheduler": scheduler,
+            "interval": "step",
+        },
+    }
+
+
+def create_lightning_optimizers_from_config(
+    module: nn.Module,
     config: OptimizationConfig,
 ) -> LightningOptimizerConfig:
-    optimizer = create_optimizer(module, config)
-    scheduler = create_scheduler(optimizer, config.scheduler)
+    optimizer = create_optimizer_from_config(module, config)
+    scheduler = create_scheduler_from_config(optimizer, config.scheduler)
     return {
         "optimizer": optimizer,
         "lr_scheduler": {
@@ -114,22 +266,54 @@ def _make_optimizer_config(
     preset: str,
     *,
     optimizer: str,
+    lr: float | None,
+    weight_decay: float | None,
+    betas: tuple[float, float] | None,
+    eps: float | None,
+    fused: bool | None,
+    muon_lr: float | None,
+    muon_weight_decay: float | None,
+    muon_momentum: float,
+    muon_nesterov: bool,
+    muon_ns_coefficients: tuple[float, float, float],
+    muon_eps: float,
+    muon_ns_steps: int,
+    muon_adjust_lr_fn: MuonAdjustLRFn | str,
 ) -> _OptimizerConfig:
     optimizer_option = _normalize_optimizer_option(optimizer)
     defaults = _preset_defaults(_normalize_optimization_preset(preset))
     adamw_config = AdamWConfig(
-        lr=defaults.lr,
-        weight_decay=defaults.weight_decay,
-        betas=defaults.betas,
-        eps=defaults.eps,
+        lr=defaults.lr if lr is None else lr,
+        weight_decay=defaults.weight_decay if weight_decay is None else weight_decay,
+        betas=defaults.betas if betas is None else betas,
+        eps=defaults.eps if eps is None else eps,
+        fused=fused,
     )
     if optimizer_option is _OptimizerOption.ADAMW:
+        _reject_muon_options_for_adamw(
+            muon_lr=muon_lr,
+            muon_weight_decay=muon_weight_decay,
+            muon_momentum=muon_momentum,
+            muon_nesterov=muon_nesterov,
+            muon_ns_coefficients=muon_ns_coefficients,
+            muon_eps=muon_eps,
+            muon_ns_steps=muon_ns_steps,
+            muon_adjust_lr_fn=muon_adjust_lr_fn,
+        )
         return adamw_config
     if optimizer_option is _OptimizerOption.MUON:
         return MuonAdamWConfig(
             muon=MuonConfig(
-                lr=adamw_config.lr,
-                weight_decay=adamw_config.weight_decay,
+                lr=adamw_config.lr if muon_lr is None else muon_lr,
+                weight_decay=adamw_config.weight_decay
+                if muon_weight_decay is None
+                else muon_weight_decay,
+                momentum=muon_momentum,
+                nesterov=muon_nesterov,
+                ns_coefficients=muon_ns_coefficients,
+                eps=muon_eps,
+                ns_steps=muon_ns_steps,
+                adjust_lr_fn=muon_adjust_lr_fn,
             ),
             adamw=adamw_config,
     )
@@ -194,6 +378,34 @@ def _normalize_optimizer_option(optimizer: str) -> _OptimizerOption:
         raise ValueError("optimizer must be adamw or muon.") from error
 
 
+def _reject_muon_options_for_adamw(
+    *,
+    muon_lr: float | None,
+    muon_weight_decay: float | None,
+    muon_momentum: float,
+    muon_nesterov: bool,
+    muon_ns_coefficients: tuple[float, float, float],
+    muon_eps: float,
+    muon_ns_steps: int,
+    muon_adjust_lr_fn: MuonAdjustLRFn | str,
+) -> None:
+    default_adjust_lr_values = {
+        _DEFAULT_MUON_ADJUST_LR_FN,
+        _DEFAULT_MUON_ADJUST_LR_FN.value,
+    }
+    if (
+        muon_lr is not None
+        or muon_weight_decay is not None
+        or muon_momentum != _DEFAULT_MUON_MOMENTUM
+        or muon_nesterov != _DEFAULT_MUON_NESTEROV
+        or muon_ns_coefficients != _DEFAULT_MUON_NS_COEFFICIENTS
+        or muon_eps != _DEFAULT_MUON_EPS
+        or muon_ns_steps != _DEFAULT_MUON_NS_STEPS
+        or muon_adjust_lr_fn not in default_adjust_lr_values
+    ):
+        raise ValueError("muon_* options require optimizer='muon'.")
+
+
 def _validate_optimizer_config(
     optimizer_config: _OptimizerConfig,
 ) -> None:
@@ -231,5 +443,7 @@ __all__ = [
     "LRSchedulerConfig",
     "OptimizationConfig",
     "create_lightning_optimizers",
+    "create_lightning_optimizers_from_config",
     "create_optimizer",
+    "create_optimizer_from_config",
 ]

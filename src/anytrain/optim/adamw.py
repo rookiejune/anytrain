@@ -24,6 +24,39 @@ class AdamWDecayPolicy(StrEnum):
 
 def create_adamw_optimizer(
     module: nn.Module,
+    *,
+    lr: float,
+    weight_decay: float = 0.1,
+    betas: tuple[float, float] = (0.9, 0.95),
+    eps: float = 1e-8,
+    fused: bool | None = None,
+    requires_grad_only: bool = True,
+    selected_params: Collection[nn.Parameter] | None = None,
+    excluded_modules: ExcludedModules = (),
+    excluded_module_types: ExcludedModuleTypes = (),
+    decay_selected_params: bool = True,
+    decay_policy: AdamWDecayPolicy | str = AdamWDecayPolicy.STANDARD,
+) -> torch.optim.AdamW:
+    return create_adamw_optimizer_from_config(
+        module,
+        AdamWConfig(
+            lr=lr,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+            fused=fused,
+        ),
+        requires_grad_only=requires_grad_only,
+        selected_params=selected_params,
+        excluded_modules=excluded_modules,
+        excluded_module_types=excluded_module_types,
+        decay_selected_params=decay_selected_params,
+        decay_policy=decay_policy,
+    )
+
+
+def create_adamw_optimizer_from_config(
+    module: nn.Module,
     config: AdamWConfig,
     *,
     requires_grad_only: bool = True,
@@ -208,5 +241,6 @@ def _resolve_selected_param_ids(
 __all__ = [
     "AdamWDecayPolicy",
     "create_adamw_optimizer",
+    "create_adamw_optimizer_from_config",
     "split_adamw_decay_params",
 ]

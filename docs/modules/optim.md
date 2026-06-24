@@ -22,11 +22,7 @@ src/anytrain/optim/
 
 当前公开导出：
 
-- `AdamWConfig`
 - `AdamWDecayPolicy`
-- `MuonConfig`
-- `MuonAdjustLRFn`
-- `MuonAdamWConfig`
 - `CompositeOptimizer`
 - `ExcludedModules`
 - `ExcludedModuleTypes`
@@ -34,21 +30,23 @@ src/anytrain/optim/
 - `split_adamw_decay_params`
 - `create_muon_adamw_optimizer`
 - `split_muon_params`
-- `CurveShape`
-- `SchedulerConfig`
-- `SchedulerPhaseConfig`
-- `SchedulerPhaseLike`
 - `create_scheduler`
-- `make_scheduler_config`
-- `LLMOptimizationConfig`
 - `create_llm_optimizer`
 - `create_llm_lightning_optimizers`
+
+高级配置对象保留在子模块：
+
+- `anytrain.optim.adamw`: `create_adamw_optimizer_from_config`
+- `anytrain.optim.config`: `AdamWConfig`、`MuonConfig`、`MuonAdamWConfig`、`MuonAdjustLRFn`
+- `anytrain.optim.muon`: `create_muon_adamw_optimizer_from_config`
+- `anytrain.optim.scheduler`: `CurveShape`、`SchedulerConfig`、`SchedulerPhaseConfig`、`SchedulerPhaseLike`、`make_scheduler_config`、`create_scheduler_from_config`
+- `anytrain.optim.llm`: `OptimizationConfig`、`create_optimizer_from_config`、`create_lightning_optimizers_from_config`
 
 `torch.optim.Muon` 是依赖边界之一，因此 `anytrain` 要求 `torch>=2.12`。
 
 ## AdamW
 
-`create_adamw_optimizer(module, config)` 会拆分 decay / no-decay 参数组。默认 `decay_policy=AdamWDecayPolicy.STANDARD`，也就是常见 AdamW 规则：
+`create_adamw_optimizer(module, lr=..., weight_decay=...)` 会拆分 decay / no-decay 参数组。默认 `decay_policy=AdamWDecayPolicy.STANDARD`，也就是常见 AdamW 规则：
 
 - decay：非 embedding / norm / 显式排除 module 中，名称为 `weight` 且维度不小于 2 的参数。
 - no-decay：bias、norm、embedding，以及用户显式排除的 module / module type。
@@ -58,11 +56,7 @@ LLM 预设会显式使用 `decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE`，让 Ad
 `optim` 不按名字猜 output head。需要排除 head 时，显式传 module 对象：
 
 ```python
-optimizer = create_adamw_optimizer(
-    model,
-    AdamWConfig(lr=3e-4),
-    excluded_modules=(model.lm_head,),
-)
+optimizer = create_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_head,))
 ```
 
 ## Muon
@@ -79,15 +73,10 @@ optimizer = create_adamw_optimizer(
 因此 head 不再因为名字包含 `head` 自动排除；如果要让 head 走 AdamW，传入具体 module：
 
 ```python
-optimizer = create_muon_adamw_optimizer(
-    model,
-    muon=MuonConfig(lr=3e-4),
-    adamw=AdamWConfig(lr=3e-4),
-    excluded_modules=(model.lm_head,),
-)
+optimizer = create_muon_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_head,))
 ```
 
-`create_muon_adamw_optimizer(module, muon=..., adamw=...)` 返回 `CompositeOptimizer`：
+`create_muon_adamw_optimizer(module, lr=..., ...)` 返回 `CompositeOptimizer`：
 
 - `"muon"` 子 optimizer 处理 Muon 参数。
 - `"adamw"` 子 optimizer 处理其余参数，并全部使用 `weight_decay=0.0`。
@@ -96,7 +85,25 @@ optimizer = create_muon_adamw_optimizer(
 
 ## Scheduler
 
-`scheduler.py` 提供组合式 step-level scheduler。每个 `SchedulerPhaseConfig` 表示一个连续 phase：
+顶层 `create_scheduler(optimizer, schedule=...)` 提供命名的 step-level scheduler。常用模式是：
+
+```python
+create_scheduler(
+    optimizer,
+    schedule="warmup_cosine",
+    warmup_steps=1000,
+    total_steps=100000,
+    min_lr_ratio=0.1,
+)
+```
+
+可用的 `schedule` 是：
+
+- `constant`: 保持学习率不变。
+- `warmup_cosine`: 线性 warmup 后做 cosine decay。
+- `wsd`: warmup + stable + cosine decay。
+
+如果需要完整 phase DSL，继续用 `anytrain.optim.scheduler` 子模块。每个 `SchedulerPhaseConfig` 表示一个连续 phase：
 
 ```python
 SchedulerPhaseConfig(
@@ -132,7 +139,7 @@ SchedulerConfig(
 )
 ```
 
-`create_scheduler(optimizer, config)` 返回 `torch.optim.lr_scheduler.LambdaLR`。所有 phase 都由自己的 `duration_steps` 定义长度；有限 phase 全部结束后会保持最后一个 `end_lr_ratio`。
+`create_scheduler_from_config(optimizer, config)` 返回 `torch.optim.lr_scheduler.LambdaLR`。所有 phase 都由自己的 `duration_steps` 定义长度；有限 phase 全部结束后会保持最后一个 `end_lr_ratio`。
 
 `duration_steps=-1` 是无限尾段。它会让后续 phase 不可达，因此只能出现在最后一个 phase，并且只支持 `constant`。
 
@@ -161,52 +168,50 @@ make_scheduler_config(
 
 ## LLM Helper
 
-`LLMOptimizationConfig` 用于按显式的 optimizer 配置创建 LLM 常用 optimizer。optimizer 类型不再单独配置，而是由 `optimizer_config` 的类型决定：
-
-- `AdamWConfig`: 创建 AdamW。
-- `MuonAdamWConfig`: 创建 Muon + AdamW 组合。
-
-`create_llm_optimizer()` 根据配置调用 AdamW 或 Muon+AdamW helper。
-
-顶层 `anytrain.optim` 保留 `LLM` 前缀用于消歧义；如果直接使用 `anytrain.optim.llm` 子模块，对应短名是 `OptimizationConfig`、`create_optimizer()` 和 `create_lightning_optimizers()`。
-
-LLM preset 通过字符串指定，内部再规范化为枚举：
+`create_llm_optimizer(module, preset=..., optimizer=..., lr=..., ...)` 用于按扁平参数创建 LLM 常用 optimizer。`preset` 负责默认值，`optimizer` 只决定用 AdamW 还是 Muon+AdamW。
 
 ```python
-adamw_config = LLMOptimizationConfig.from_preset("sft", optimizer="adamw")
-muon_config = LLMOptimizationConfig.from_preset(
+optimizer = create_llm_optimizer(
+    model,
+    preset="pretrain",
+    optimizer="muon",
+    excluded_modules=(model.lm_head,),
+)
+```
+
+`create_llm_lightning_optimizers()` 直接返回 Lightning `configure_optimizers()` 可用的 dict：
+
+```python
+return create_llm_lightning_optimizers(
+    self.model,
+    preset="sft",
+    schedule="warmup_cosine",
+    warmup_steps=1000,
+    total_steps=100000,
+)
+```
+
+如果要保留配置对象装配，可以直接用 `anytrain.optim.llm` 子模块：
+
+```python
+config = OptimizationConfig.from_preset(
+    "pretrain",
+    optimizer="muon",
+)
+optimizer = create_optimizer_from_config(model, config)
+```
+
+子模块里的 `from_preset()` 仍然支持 phase 列表：
+
+```python
+config = OptimizationConfig.from_preset(
     "pretrain",
     optimizer="muon",
     scheduler=[("linear", 1000), ("cosine", 10000)],
 )
 ```
 
-如果要排除 output head，可以在下游 LightningModule 拿到模型后直接构造配置：
-
-```python
-config = LLMOptimizationConfig.from_preset(
-    "pretrain",
-    optimizer="muon",
-    excluded_modules=(model.lm_head,),
-)
-```
-
-可用 `preset` 是 `"pretrain"`、`"cpt"`、`"sft"`；可用 `optimizer` 是 `"adamw"`、`"muon"`。
-
-`from_preset()` 的 `scheduler` 是轻量 phase 列表：
-
-- 默认是无限 `constant` phase，也就是保持 optimizer 原始 lr。
-- 每项是 `(shape, duration_steps)`，例如 `[("linear", 1000), ("cosine", 10000)]`。
-- 完整 scheduler 配置仍可通过直接构造 `LLMOptimizationConfig` 使用。
-
-`create_llm_lightning_optimizers()` 返回 Lightning `configure_optimizers()` 可直接返回的 dict：
-
-```python
-return create_llm_lightning_optimizers(
-    self.model,
-    self.optim_config,
-)
-```
+高级构造还可以用 `create_optimizer_from_config()` 和 `create_lightning_optimizers_from_config()`，它们保留了完整的 config 对象边界。
 
 ## 边界
 

@@ -249,6 +249,40 @@ class DynamicConvTranspose1dTest(unittest.TestCase):
         self.assertEqual(y.shape, (2, 32, 63))
         self.assertTrue(torch.isfinite(y).all())
 
+    def test_segmented_forward_matches_full_conv_with_bias(self):
+        torch.manual_seed(0)
+        expert_weights = torch.ones(1, 1)
+        for stride, kernel_size, segment_size in ((1, 3, 8), (2, 4, 8)):
+            with self.subTest(stride=stride):
+                full_conv = DynamicConvTranspose1d(
+                    2,
+                    3,
+                    kernel_size=kernel_size,
+                    num_experts=1,
+                    stride=stride,
+                    router=None,
+                )
+                segmented_conv = DynamicConvTranspose1d(
+                    2,
+                    3,
+                    kernel_size=kernel_size,
+                    num_experts=1,
+                    stride=stride,
+                    segment_size=segment_size,
+                    router=None,
+                )
+                with torch.no_grad():
+                    full_conv.weight.normal_()
+                    full_conv.bias.normal_()
+                    segmented_conv.weight.copy_(full_conv.weight)
+                    segmented_conv.bias.copy_(full_conv.bias)
+                x = torch.randn(4, 2, 23)
+
+                full_y = full_conv.forward_manually(x, expert_weights)
+                segmented_y = segmented_conv.forward_manually(x, expert_weights)
+
+                self.assertTrue(torch.allclose(segmented_y, full_y, atol=1e-6))
+
     def test_stride_two_upsamples(self):
         conv = DynamicConvTranspose1d(
             16,

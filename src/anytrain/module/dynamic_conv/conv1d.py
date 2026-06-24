@@ -381,7 +381,8 @@ class DynamicConvTranspose1d(nn.Module):
         x, cache = self.preprocess(x)
         expert_weights = self.compute_expert_weights(x)
         output = self.apply_conv(x, expert_weights)
-        return self.postprocess(output, cache)
+        output = self.postprocess(output, cache)
+        return self.apply_bias(output, expert_weights, cache)
 
     def forward_manually(self, x: Tensor, expert_weights: Tensor) -> Tensor:
         _validate_expert_weights(expert_weights, num_experts=self.num_experts)
@@ -393,7 +394,8 @@ class DynamicConvTranspose1d(nn.Module):
             num_segments=cache.num_segments[0],
         )
         output = self.apply_conv(x, expert_weights)
-        return self.postprocess(output, cache)
+        output = self.postprocess(output, cache)
+        return self.apply_bias(output, expert_weights, cache)
 
     def compute_expert_weights(self, x: Tensor) -> Tensor:
         router = self.router
@@ -449,9 +451,6 @@ class DynamicConvTranspose1d(nn.Module):
         )
         output = rearrange(output, "1 (b o) t -> b o t", b=expert_weights.size(0))
 
-        if self.bias is not None:
-            bias = torch.einsum("be,eo->bo", expert_weights, self.bias)
-            output = output + bias[..., None]
         return output
 
     def postprocess(self, output: Tensor, cache: PreprocessCache) -> Tensor:
@@ -475,6 +474,49 @@ class DynamicConvTranspose1d(nn.Module):
             padding=padding,
         )
         return trim_1d(folded, cache.output_size[0])
+
+    def apply_bias(self, output: Tensor, expert_weights: Tensor, cache: PreprocessCache) -> Tensor:
+        if self.bias is None:
+            return output
+
+        num_segments = cache.num_segments[0]
+        expert_weights = _expand_expert_weights(
+            expert_weights,
+            batch_size=cache.batch_size * num_segments,
+        )
+        bias = torch.einsum("be,eo->bo", expert_weights, self.bias)
+        if num_segments == 1:
+            return output + bias[..., None]
+
+        segment_size_config = self.segment_size
+        if segment_size_config is None:
+            raise RuntimeError("segment_size must be set when cache has multiple segments.")
+        segment_size = scalar_1d(segment_size_config, name="segment_size")
+        padding = scalar_1d(self.padding, name="padding")
+        raw_segment_output_size = self._raw_output_length(segment_size)
+        raw_full_output_size = self._raw_output_length(num_segments * segment_size)
+        segment_bias = bias[..., None].expand(-1, -1, raw_segment_output_size)
+        folded_bias = fold_transposed_segments_1d(
+            segment_bias,
+            num_segments=num_segments,
+            segment_size=segment_size,
+            stride=scalar_1d(self.stride, name="stride"),
+            raw_segment_output_size=raw_segment_output_size,
+            raw_full_output_size=raw_full_output_size,
+            padding=padding,
+        )
+        coverage = fold_transposed_segments_1d(
+            torch.ones_like(segment_bias),
+            num_segments=num_segments,
+            segment_size=segment_size,
+            stride=scalar_1d(self.stride, name="stride"),
+            raw_segment_output_size=raw_segment_output_size,
+            raw_full_output_size=raw_full_output_size,
+            padding=padding,
+        )
+        folded_bias = trim_1d(folded_bias, cache.output_size[0])
+        coverage = trim_1d(coverage, cache.output_size[0]).clamp_min(1)
+        return output + folded_bias / coverage
 
     def _raw_output_length(self, input_length: int) -> int:
         stride = scalar_1d(self.stride, name="stride")

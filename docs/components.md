@@ -49,7 +49,6 @@ loss = loss_fn(prediction, target)
 optional loss：
 
 - spectral / temporal audio loss。
-- GAN loss。
 - text/speech 领域 loss。
 
 ## Evaluator

@@ -44,7 +44,6 @@ Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 - audio：spectral loss、codec/speech evaluator、audio plotter。
 - text：文本生成/分类 evaluator。
 - speech：WER/CER/ASR 相关 evaluator。
-- gan：GAN loss、D/G monitor、manual optimization helper。
 
 ### Optional Framework
 
@@ -52,6 +51,7 @@ Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 
 - flow matching。
 - masked autoencoder。
+- GAN adversarial objective、D/G monitor、manual optimization helper。
 - 其他跨项目复用的训练范式。
 
 这些不进入 core，避免 `anytrain` 的默认依赖和默认心智负担膨胀。
@@ -92,7 +92,7 @@ class MyPLModule(pl.LightningModule):
 
 ### `loss`
 
-提供训练 step 中可直接使用的 loss 组件。core 里保留通用组合器；audio/gan 等领域 loss 通过 optional 子模块提供。
+提供训练 step 中可直接使用的 loss 组件。core 里保留通用组合器；audio/text/speech 等领域 loss 通过 optional 子模块提供。GAN adversarial training 属于 `framework.gan`，不放在 `loss` 下。
 
 ### `evaluator`
 

@@ -27,8 +27,8 @@
 
 - core：`lightning`、通用 loss/evaluator/optim/module 接口、轻量 registry/types。
 - optional general：plotter、通用 torchmetrics evaluator、第三方 logger backend。
-- optional domain：audio/text/speech/gan 等领域 loss、evaluator、plotter。
-- optional framework：flow matching、MAE、GAN 训练辅助等研究框架。
+- optional domain：audio/text/speech 等领域 loss、evaluator、plotter。
+- optional framework：flow matching、MAE、GAN adversarial training 等研究框架。
 
 core import 只依赖默认依赖；optional 子模块可以要求额外依赖，但错误信息应明确提示安装对应 extra。
 

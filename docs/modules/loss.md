@@ -2,7 +2,7 @@
 
 ## 定位
 
-`anytrain.loss` 提供下游 LightningModule 可直接组合使用的通用 loss 组件。core loss 不绑定具体任务领域；audio/text/speech/gan 等领域 loss 应放在 optional 子模块。
+`anytrain.loss` 提供下游 LightningModule 可直接组合使用的通用 loss 组件。core loss 不绑定具体任务领域；audio/text/speech 等领域 loss 应放在 optional 子模块。GAN adversarial training 属于 `anytrain.framework.gan`，不放在 `loss` 下。
 
 ## 当前结构
 

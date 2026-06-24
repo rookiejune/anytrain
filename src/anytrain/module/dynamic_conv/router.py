@@ -125,6 +125,69 @@ class ADTRouter1d(nn.Module):
         return self.gate(logits)
 
 
+class ADTRouter2d(nn.Module):
+    dropout: nn.Module
+    layer: nn.Sequential
+    gate: ADT
+
+    def __init__(
+        self,
+        channels: int,
+        num_experts: int,
+        *,
+        hidden_size: int | None = None,
+        norm: NormName = "group",
+        activation: ActivationName = "silu",
+        norm_groups: int | None = None,
+        weight_norm: bool = False,
+        dropout: float | None = None,
+        **adt_kwargs,
+    ) -> None:
+        super().__init__()
+        if channels <= 0:
+            raise ValueError(f"channels must be positive, got {channels}.")
+        if num_experts <= 0:
+            raise ValueError(f"num_experts must be positive, got {num_experts}.")
+        if dropout is not None and not 0 <= dropout < 1:
+            raise ValueError(f"dropout must be in [0, 1), got {dropout}.")
+
+        self.channels = channels
+        self.num_experts = num_experts
+        self.dropout = nn.Identity() if dropout is None else nn.Dropout2d(dropout)
+
+        if hidden_size is None:
+            hidden_size = channels
+        if hidden_size <= 0:
+            raise ValueError(f"hidden_size must be positive, got {hidden_size}.")
+
+        conv_in: nn.Module = nn.Conv2d(channels, hidden_size, kernel_size=1)
+        conv_out: nn.Module = nn.Conv2d(hidden_size, num_experts, kernel_size=1)
+
+        if weight_norm:
+            conv_in = nn.utils.parametrizations.weight_norm(conv_in)
+            conv_out = nn.utils.parametrizations.weight_norm(conv_out)
+
+        self.layer = nn.Sequential(
+            conv_in,
+            build_norm_2d(norm, hidden_size, norm_groups=norm_groups),
+            build_activation(activation),
+            nn.AdaptiveAvgPool2d(1),
+            conv_out,
+        )
+        self.gate = ADT.from_kwargs(num_experts=num_experts, **adt_kwargs)
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.ndim != 4:
+            raise ValueError(f"ADTRouter2d expects input shape (B, C, H, W), got {tuple(x.shape)}.")
+        if x.size(1) != self.channels:
+            raise ValueError(
+                "ADTRouter2d channel mismatch: "
+                f"got {x.size(1)}, expected {self.channels}."
+            )
+        logits = self.layer(self.dropout(x)).flatten(1)
+        return self.gate(logits)
+
+
 def build_activation(name: ActivationName) -> nn.Module:
     match name:
         case "gelu":
@@ -143,6 +206,19 @@ def build_norm_1d(name: NormName, channels: int, *, norm_groups: int | None) -> 
     match name:
         case "batch":
             return nn.BatchNorm1d(channels)
+        case "group":
+            groups = _resolve_group_count(channels, norm_groups)
+            return nn.GroupNorm(groups, channels)
+        case "identity":
+            return nn.Identity()
+        case _:
+            raise ValueError(f"Unsupported norm {name!r}.")
+
+
+def build_norm_2d(name: NormName, channels: int, *, norm_groups: int | None) -> nn.Module:
+    match name:
+        case "batch":
+            return nn.BatchNorm2d(channels)
         case "group":
             groups = _resolve_group_count(channels, norm_groups)
             return nn.GroupNorm(groups, channels)

@@ -1,5 +1,12 @@
 from .dirichlet_tempering import ADT, AdaptiveDirichletTempering, ADTConfig
-from .dynamic_conv import ADTRouter1d, DynamicConv1d, DynamicConvTranspose1d, MultiScalePool1d
+from .dynamic_conv import (
+    ADTRouter1d,
+    ADTRouter2d,
+    DynamicConv1d,
+    DynamicConv2d,
+    DynamicConvTranspose1d,
+    MultiScalePool1d,
+)
 from .quantization import (
     DEFAULT_FSQ_LEVELS,
     EmbeddingVectorQuantizer,
@@ -31,8 +38,10 @@ __all__ = [
     "ADT",
     "ADTConfig",
     "ADTRouter1d",
+    "ADTRouter2d",
     "AdaptiveDirichletTempering",
     "DynamicConv1d",
+    "DynamicConv2d",
     "DynamicConvTranspose1d",
     "EmbeddingVectorQuantizer",
     "DEFAULT_FSQ_LEVELS",

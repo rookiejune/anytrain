@@ -6,17 +6,17 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .layout import Modality, ModalityRange, TokenLayout
+from .space import IdSpace, Modality
 
 type _HeadSpecial = tuple[int, nn.Parameter]
 type _HeadBlock = tuple[int, int, int, nn.Embedding]
 
 
-class TokenEmbedding(nn.Module):
+class IdSpaceEmbedding(nn.Module):
     def __init__(
         self,
-        layout: TokenLayout,
-        dim: int | None,
+        space: IdSpace,
+        dim: int | None = None,
         *,
         special_embeddings: nn.ParameterDict | None = None,
         modality_embeddings: Mapping[Modality, nn.Embedding] | None = None,
@@ -24,10 +24,10 @@ class TokenEmbedding(nn.Module):
         dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
-        if not isinstance(layout, TokenLayout):
-            raise TypeError("layout must be a TokenLayout.")
-        if not layout.special_token_ids and not layout.modality_ranges:
-            raise ValueError("layout must contain at least one special token or modality.")
+        if not isinstance(space, IdSpace):
+            raise TypeError("space must be an IdSpace.")
+        if not space.special_token_ids and not space.modality_blocks:
+            raise ValueError("space must contain at least one special token or modality.")
         dim = _resolve_dim(dim, special_embeddings, modality_embeddings)
         device, dtype = _resolve_device_dtype(
             special_embeddings,
@@ -36,16 +36,16 @@ class TokenEmbedding(nn.Module):
             dtype=dtype,
         )
 
-        self.layout = layout
+        self.space = space
         self.special_embeddings = _init_special_embeddings(
-            layout,
+            space,
             dim,
             special_embeddings,
             device=device,
             dtype=dtype,
         )
         self.modality_embeddings = _init_modality_embeddings(
-            layout,
+            space,
             dim,
             modality_embeddings,
             device=device,
@@ -58,8 +58,16 @@ class TokenEmbedding(nn.Module):
         return self._dim
 
     @property
+    def embedding_dim(self) -> int:
+        return self._dim
+
+    @property
+    def num_embeddings(self) -> int:
+        return self.space.vocab_size
+
+    @property
     def vocab_size(self) -> int:
-        return self.layout.vocab_size
+        return self.num_embeddings
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         _validate_ids(input_ids, name="input_ids")
@@ -70,33 +78,34 @@ class TokenEmbedding(nn.Module):
         output = torch.empty((*input_ids.shape, self.dim), dtype=dtype, device=device)
         covered = torch.zeros(input_ids.shape, dtype=torch.bool, device=device)
 
-        for name, global_id in self.layout.special_token_ids.items():
+        for name, global_id in self.space.special_token_ids.items():
             mask = input_ids == global_id
             if not bool(mask.any()):
                 continue
             output[mask] = self.special_embeddings[name]
             covered |= mask
 
-        for modality_range in self.layout.modality_ranges:
-            mask = (input_ids >= modality_range.start) & (input_ids < modality_range.end) & ~covered
+        for modality_block in self.space.modality_blocks:
+            mask = (input_ids >= modality_block.start) & (input_ids < modality_block.end) & ~covered
             if not bool(mask.any()):
                 continue
-            ids = input_ids[mask] - modality_range.start
-            output[mask] = self._modality_embedding(modality_range.modality)(ids)
+            ids = input_ids[mask] - modality_block.start
+            output[mask] = self._modality_embedding(modality_block.modality)(ids)
             covered |= mask
 
         if not bool(covered.all()):
             bad_id = int(input_ids[~covered].reshape(-1)[0].detach().cpu())
-            raise ValueError(f"input_ids contains id outside layout: {bad_id}.")
+            raise ValueError(f"input_ids contains id outside space: {bad_id}.")
         return output
 
-    def dense_weight(self) -> torch.Tensor:
+    @property
+    def weight(self) -> torch.Tensor:
         device, dtype = self._weight_device_dtype()
-        weight = torch.zeros(self.vocab_size, self.dim, device=device, dtype=dtype)
-        for modality_range in self.layout.modality_ranges:
-            embed = self._modality_embedding(modality_range.modality)
-            weight[modality_range.start : modality_range.end] = embed.weight
-        for name, global_id in self.layout.special_token_ids.items():
+        weight = torch.zeros(self.num_embeddings, self.embedding_dim, device=device, dtype=dtype)
+        for modality_block in self.space.modality_blocks:
+            embed = self._modality_embedding(modality_block.modality)
+            weight[modality_block.start : modality_block.end] = embed.weight
+        for name, global_id in self.space.special_token_ids.items():
             weight[global_id] = self.special_embeddings[name]
         return weight
 
@@ -105,21 +114,21 @@ class TokenEmbedding(nn.Module):
         *,
         special_tokens: bool | Sequence[str] = True,
         modalities: Sequence[Modality] | None = None,
-    ) -> _TokenHead:
+    ) -> _IdSpaceHead:
         specials = tuple(
-            (self.layout.special_token_id(name), self.special_embeddings[name])
-            for name in _normalize_head_special_tokens(self.layout, special_tokens)
+            (self.space.special_token_id(name), self.special_embeddings[name])
+            for name in _normalize_head_special_tokens(self.space, special_tokens)
         )
 
         blocks: list[_HeadBlock] = []
-        for modality in _normalize_head_modalities(self.layout, modalities):
-            modality_range = self.layout.modality_range(modality)
+        for modality in _normalize_head_modalities(self.space, modalities):
+            modality_block = self.space.modality_block(modality)
             embed = self._modality_embedding(modality)
-            for global_start, size in _regular_blocks(self.layout, modality_range):
-                local_start = global_start - modality_range.start
+            for global_start, size in self.space.regular_blocks(modality):
+                local_start = global_start - modality_block.start
                 blocks.append((global_start, local_start, size, embed))
 
-        return _TokenHead(
+        return _IdSpaceHead(
             self.dim,
             specials,
             blocks,
@@ -135,12 +144,12 @@ class TokenEmbedding(nn.Module):
         if self.special_embeddings:
             param = next(iter(self.special_embeddings.values()))
             return param.device, param.dtype
-        modality = self.layout.modality_ranges[0].modality
+        modality = self.space.modality_blocks[0].modality
         embed = self._modality_embedding(modality)
         return embed.weight.device, embed.weight.dtype
 
 
-class _TokenHead(nn.Module):
+class _IdSpaceHead(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -154,6 +163,10 @@ class _TokenHead(nn.Module):
         self._dim: int = dim
         self._specials: tuple[_HeadSpecial, ...] = tuple(specials)
         self._blocks: tuple[_HeadBlock, ...] = tuple(blocks)
+        self._global_ids = _global_ids(self._specials, self._blocks)
+        self._head_id_by_global_id = {
+            global_id: head_id for head_id, global_id in enumerate(self._global_ids)
+        }
 
     @property
     def dim(self) -> int:
@@ -161,14 +174,11 @@ class _TokenHead(nn.Module):
 
     @property
     def vocab_size(self) -> int:
-        return len(self.global_ids)
+        return len(self._global_ids)
 
     @property
     def global_ids(self) -> tuple[int, ...]:
-        global_ids = [global_id for global_id, _ in self._specials]
-        for global_start, _, size, _ in self._blocks:
-            global_ids.extend(range(global_start, global_start + size))
-        return tuple(global_ids)
+        return self._global_ids
 
     def to_head_ids(self, ids: Sequence[int] | torch.Tensor) -> list[int] | torch.Tensor:
         if isinstance(ids, torch.Tensor):
@@ -203,21 +213,16 @@ class _TokenHead(nn.Module):
 
     def _to_head_id(self, token_id: int) -> int:
         _validate_non_negative_int(token_id, name="global_id")
-        for head_id, (global_id, _) in enumerate(self._specials):
-            if global_id == token_id:
-                return head_id
-        head_start = len(self._specials)
-        for global_start, _, size, _ in self._blocks:
-            if global_start <= token_id < global_start + size:
-                return head_start + token_id - global_start
-            head_start += size
-        raise ValueError(f"global_id is outside head: {token_id}.")
+        try:
+            return self._head_id_by_global_id[token_id]
+        except KeyError as error:
+            raise ValueError(f"global_id is outside head: {token_id}.") from error
 
     def _to_global_id(self, head_id: int) -> int:
         _validate_non_negative_int(head_id, name="head_id")
         if head_id >= self.vocab_size:
             raise ValueError(f"head_id is outside head: {head_id}.")
-        return self.global_ids[head_id]
+        return self._global_ids[head_id]
 
     def _to_head_tensor(self, ids: torch.Tensor) -> torch.Tensor:
         _validate_ids(ids, name="ids")
@@ -339,7 +344,7 @@ def _first_explicit_weight(
 
 
 def _init_special_embeddings(
-    layout: TokenLayout,
+    space: IdSpace,
     dim: int,
     special_embeddings: nn.ParameterDict | None,
     *,
@@ -351,9 +356,9 @@ def _init_special_embeddings(
 
     if not isinstance(special_embeddings, nn.ParameterDict):
         raise TypeError("special_embeddings must be an nn.ParameterDict.")
-    unknown = set(special_embeddings) - set(layout.special_token_ids)
+    unknown = set(special_embeddings) - set(space.special_token_ids)
     if unknown:
-        raise ValueError("special_embeddings keys must be layout special token names.")
+        raise ValueError("special_embeddings keys must be id space special token names.")
     for name, param in special_embeddings.items():
         if not isinstance(param, nn.Parameter):
             raise TypeError(f"special_embeddings[{name!r}] must be an nn.Parameter.")
@@ -361,7 +366,7 @@ def _init_special_embeddings(
             raise ValueError(f"special_embeddings[{name!r}] must be a 1D parameter.")
         if param.size(0) != dim:
             raise ValueError(f"special_embeddings[{name!r}] dimension must match dim.")
-    for name in layout.special_token_ids:
+    for name in space.special_token_ids:
         if name in special_embeddings:
             continue
         param = nn.Parameter(torch.empty(dim, device=device, dtype=dtype))
@@ -371,7 +376,7 @@ def _init_special_embeddings(
 
 
 def _init_modality_embeddings(
-    layout: TokenLayout,
+    space: IdSpace,
     dim: int,
     modality_embeddings: Mapping[Modality, nn.Embedding] | None,
     *,
@@ -383,47 +388,47 @@ def _init_modality_embeddings(
     elif not isinstance(modality_embeddings, Mapping):
         raise TypeError("modality_embeddings must be a mapping of Modality to nn.Embedding.")
 
-    expected = {modality_range.modality for modality_range in layout.modality_ranges}
+    expected = {modality_block.modality for modality_block in space.modality_blocks}
     for modality in modality_embeddings:
         if not isinstance(modality, Modality):
             raise TypeError("modality_embeddings keys must be Modality values.")
         if modality not in expected:
-            raise ValueError("modality_embeddings keys must be layout modalities.")
+            raise ValueError("modality_embeddings keys must be id space modalities.")
 
     modules = nn.ModuleDict()
-    for modality_range in layout.modality_ranges:
-        embed = modality_embeddings.get(modality_range.modality)
+    for modality_block in space.modality_blocks:
+        embed = modality_embeddings.get(modality_block.modality)
         if embed is None:
             embed = nn.Embedding(
-                modality_range.vocab_size,
+                modality_block.vocab_size,
                 dim,
                 device=device,
                 dtype=dtype,
             )
         if not isinstance(embed, nn.Embedding):
             raise TypeError(
-                f"modality_embeddings[{modality_range.modality!r}] must be an nn.Embedding."
+                f"modality_embeddings[{modality_block.modality!r}] must be an nn.Embedding."
             )
-        if embed.num_embeddings != modality_range.vocab_size:
+        if embed.num_embeddings != modality_block.vocab_size:
             raise ValueError(
-                f"modality_embeddings[{modality_range.modality!r}].num_embeddings must match layout."
+                f"modality_embeddings[{modality_block.modality!r}].num_embeddings must match id space."
             )
         if embed.embedding_dim != dim:
             raise ValueError(
-                f"modality_embeddings[{modality_range.modality!r}].embedding_dim must match dim."
+                f"modality_embeddings[{modality_block.modality!r}].embedding_dim must match dim."
             )
-        modules[modality_range.modality.value] = embed
+        modules[modality_block.modality.value] = embed
     return modules
 
 
 def _normalize_head_special_tokens(
-    layout: TokenLayout,
+    space: IdSpace,
     special_tokens: bool | Sequence[str],
 ) -> tuple[str, ...]:
     if isinstance(special_tokens, bool):
         if not special_tokens:
             return ()
-        return tuple(name for name, _ in sorted(layout.special_token_ids.items(), key=lambda item: item[1]))
+        return tuple(name for name, _ in sorted(space.special_token_ids.items(), key=lambda item: item[1]))
     if not isinstance(special_tokens, Sequence) or isinstance(special_tokens, str | bytes):
         raise TypeError("special_tokens must be a bool or a sequence of special token names.")
 
@@ -432,7 +437,7 @@ def _normalize_head_special_tokens(
     for index, name in enumerate(special_tokens):
         if not isinstance(name, str):
             raise TypeError(f"special_tokens[{index}] must be a string.")
-        if name not in layout.special_token_ids:
+        if name not in space.special_token_ids:
             raise KeyError(f"unknown special token {name!r}.")
         if name in seen:
             raise ValueError("special token names must be unique.")
@@ -442,11 +447,11 @@ def _normalize_head_special_tokens(
 
 
 def _normalize_head_modalities(
-    layout: TokenLayout,
+    space: IdSpace,
     modalities: Sequence[Modality] | None,
 ) -> tuple[Modality, ...]:
     if modalities is None:
-        return tuple(modality_range.modality for modality_range in layout.modality_ranges)
+        return tuple(modality_block.modality for modality_block in space.modality_blocks)
     if not isinstance(modalities, Sequence) or isinstance(modalities, str | bytes):
         raise TypeError("modalities must be a sequence of Modality values.")
 
@@ -455,7 +460,7 @@ def _normalize_head_modalities(
     for index, modality in enumerate(modalities):
         if not isinstance(modality, Modality):
             raise TypeError(f"modalities[{index}] must be a Modality.")
-        layout.modality_range(modality)
+        space.modality_block(modality)
         if modality in seen:
             raise ValueError("modalities must be unique.")
         seen.add(modality)
@@ -463,23 +468,14 @@ def _normalize_head_modalities(
     return tuple(normalized)
 
 
-def _regular_blocks(
-    layout: TokenLayout,
-    modality_range: ModalityRange,
-) -> tuple[tuple[int, int], ...]:
-    blocks: list[tuple[int, int]] = []
-    cursor = modality_range.start
-    for special_id in layout.all_special_ids:
-        if special_id < cursor:
-            continue
-        if special_id >= modality_range.end:
-            break
-        if cursor < special_id:
-            blocks.append((cursor, special_id - cursor))
-        cursor = special_id + 1
-    if cursor < modality_range.end:
-        blocks.append((cursor, modality_range.end - cursor))
-    return tuple(blocks)
+def _global_ids(
+    specials: Sequence[_HeadSpecial],
+    blocks: Sequence[_HeadBlock],
+) -> tuple[int, ...]:
+    global_ids = [global_id for global_id, _ in specials]
+    for global_start, _, size, _ in blocks:
+        global_ids.extend(range(global_start, global_start + size))
+    return tuple(global_ids)
 
 
 def _normalize_id_sequence(ids: Sequence[int], *, name: str) -> list[int]:
@@ -514,5 +510,5 @@ def _validate_non_negative_int(value: int, *, name: str) -> None:
 
 
 __all__ = [
-    "TokenEmbedding",
+    "IdSpaceEmbedding",
 ]

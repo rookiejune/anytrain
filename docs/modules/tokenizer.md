@@ -2,8 +2,8 @@
 
 ## 定位
 
-`anytrain.tokenizer` 放 tokenizer 算法组件。统一 token id space、HF tokenizer 迁移、
-multi tokenizer 组合和 token embedding/head 已独立到 [`anytrain.idspace`](idspace.md)。
+`anytrain.tokenizer` 放 tokenizer 算法组件。统一 token id space 和 token embedding/head
+已独立到 [`anytrain.idspace`](idspace.md)。
 
 当前公开对象：
 
@@ -48,7 +48,7 @@ vocab_size = bpe.vocab_size
 
 `tokenizer` 不做：
 
-- 不定义 shared special token 或多模态 global id layout。
+- 不定义 shared special token 或多模态 global id space。
 - 不管理 embedding/head。
 - 不解释多模态 batch schema。
 - 不自动处理下游模型的 padding side、label mask 或 loss。

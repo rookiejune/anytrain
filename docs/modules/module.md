@@ -73,7 +73,7 @@ Quantization 提供 task-agnostic 的 FSQ、embedding-table VQ、GVQ 和 RVQ：
 
 迁移设计见 [`docs/quantization-migration.md`](../quantization-migration.md)。第一版不迁入 audio codec、model zoo 或 deepaudio 的 projector/MoE 体系。
 
-多模态 token layout、tokenizer 组合和 embedding/head 已独立到 `anytrain.idspace`，
+多模态 token space 和 embedding/head 已独立到 `anytrain.idspace`，
 设计见 [`docs/modules/idspace.md`](idspace.md)。
 
 ## 依赖策略

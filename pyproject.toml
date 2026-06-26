@@ -35,6 +35,7 @@ longcat = [
     "huggingface-hub>=0.23",
     "longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git",
 ]
+moss-tts = ["torchaudio>=2.0", "transformers"]
 test = ["pytest>=8.0", "ruff>=0.8"]
 
 [tool.setuptools.packages.find]

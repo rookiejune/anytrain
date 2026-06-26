@@ -44,7 +44,7 @@ class LongCatAudioCodec:
 
         with _longcat_checkpoint_env(assets.ckpt_dir):
             encoder = load_encoder(str(assets.configs.encoder), resolved_device)
-            loaded_decoders = {
+            loaded_decoders: dict[LongCatDecoderName, Any] = {
                 name: load_decoder(str(assets.configs.decoder(name)), resolved_device)
                 for name in decoder_names
             }
@@ -60,10 +60,10 @@ class LongCatAudioCodec:
     def encode(
         self,
         audio: Tensor,
-        sample_rate: int | None = None,
+        sample_rate: int,
         *,
         n_acoustic_codebooks: int | None = None,
-    ) -> tuple[Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor]:
         codes = self.encoder(
             audio.to(self.device),
             sample_rate,
@@ -75,21 +75,21 @@ class LongCatAudioCodec:
     def decode(
         self,
         semantic_codes: Tensor,
-        acoustic_codes: Tensor | None,
+        acoustic_codes: Tensor,
         *,
         decoder: LongCatDecoderName = DEFAULT_DECODER,
     ) -> Tensor:
         model = self._decoder(decoder)
         return model(
             semantic_codes.to(self.device),
-            None if acoustic_codes is None else acoustic_codes.to(self.device),
+            acoustic_codes.to(self.device),
         )
 
     @torch.no_grad()
     def reconstruct(
         self,
         audio: Tensor,
-        sample_rate: int | None = None,
+        sample_rate: int,
         *,
         decoder: LongCatDecoderName = DEFAULT_DECODER,
         n_acoustic_codebooks: int | None = None,
@@ -106,7 +106,9 @@ class LongCatAudioCodec:
             return self.decoders[name]
         except KeyError as exc:
             available = ", ".join(sorted(self.decoders))
-            raise ValueError(f"Decoder {name!r} is not loaded. Available decoders: {available}.") from exc
+            raise ValueError(
+                f"Decoder {name!r} is not loaded. Available decoders: {available}."
+            ) from exc
 
 
 def _validate_decoders(decoders: Sequence[LongCatDecoderName]) -> tuple[LongCatDecoderName, ...]:

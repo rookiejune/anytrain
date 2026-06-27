@@ -10,7 +10,7 @@ from .cache import resolve_longcat_cache_dir
 
 DEFAULT_HF_REPO_ID = "meituan-longcat/LongCat-Audio-Codec"
 
-LongCatDecoderName = Literal[
+type LongCatDecoderName = Literal[
     "16k_4codebooks",
     "24k_2codebooks",
     "24k_4codebooks",
@@ -170,8 +170,7 @@ def _ensure_checkpoint(
     )
     if not target.exists():
         raise FileNotFoundError(
-            "Expected Hugging Face download to create "
-            f"{target}, but got {downloaded}."
+            f"Expected Hugging Face download to create {target}, but got {downloaded}."
         )
     return target
 
@@ -197,8 +196,10 @@ def _read_default_config(stem: str) -> dict[str, object]:
 
 def _write_yaml(path: Path, data: Mapping[str, object]) -> None:
     yaml = _require_yaml()
-    with path.open("w") as f:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with tmp.open("w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
+    os.replace(tmp, path)
 
 
 def _require_huggingface_hub():
@@ -206,8 +207,7 @@ def _require_huggingface_hub():
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
         raise ImportError(
-            "LongCat checkpoint download requires `huggingface-hub`. "
-            "Install `anytrain[longcat]`."
+            "LongCat checkpoint download requires `huggingface-hub`. Install `anytrain[longcat]`."
         ) from exc
     return hf_hub_download
 
@@ -216,5 +216,7 @@ def _require_yaml():
     try:
         import yaml
     except ImportError as exc:
-        raise ImportError("LongCat config writing requires PyYAML. Install `anytrain[longcat]`.") from exc
+        raise ImportError(
+            "LongCat config writing requires PyYAML. Install `anytrain[longcat]`."
+        ) from exc
     return yaml

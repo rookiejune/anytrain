@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from torch import nn
+
 from anytrain.codec.longcat.assets import LongCatAssets, LongCatConfigPaths
 from anytrain.codec.longcat.codec import LongCatAudioCodec
 
@@ -28,12 +30,12 @@ class LongCatCodecTest(unittest.TestCase):
             def fake_load_encoder(config_path, device):
                 self.assertEqual(config_path, str(configs.encoder))
                 self.assertEqual(os.environ["LONGCAT_AUDIO_CODEC_CKPT_DIR"], str(assets.ckpt_dir))
-                return "encoder"
+                return nn.Identity()
 
             def fake_load_decoder(config_path, device):
                 self.assertEqual(config_path, str(configs.decoder_16k_4codebooks))
                 self.assertEqual(os.environ["LONGCAT_AUDIO_CODEC_CKPT_DIR"], str(assets.ckpt_dir))
-                return "decoder"
+                return nn.Identity()
 
             def fake_ensure_assets(**kwargs):
                 self.assertEqual(kwargs["decoders"], ("16k_4codebooks",))
@@ -50,8 +52,8 @@ class LongCatCodecTest(unittest.TestCase):
                 ):
                     codec = LongCatAudioCodec.from_pretrained(device="cpu")
 
-                self.assertEqual(codec.encoder, "encoder")
-                self.assertEqual(codec.decoders["16k_4codebooks"], "decoder")
+                self.assertIsInstance(codec.encoder, nn.Identity)
+                self.assertIsInstance(codec.decoders["16k_4codebooks"], nn.Identity)
                 self.assertNotIn("LONGCAT_AUDIO_CODEC_CKPT_DIR", os.environ)
 
 

@@ -3,24 +3,31 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 
 DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
 
 
-@dataclass
-class LongCatAudioCodec:
-    encoder: Any
-    decoders: dict[LongCatDecoderName, Any]
-    device: torch.device
-    assets: LongCatAssets
+class LongCatAudioCodec(nn.Module):
+    def __init__(
+        self,
+        encoder: Any,
+        decoders: dict[str, nn.Module],
+        device: torch.device,
+        assets: LongCatAssets,
+    ) -> None:
+        super().__init__()
+
+        self.encoder = encoder
+        self.decoders = nn.ModuleDict(decoders)
+        self.device = device
+        self.assets = assets
 
     @classmethod
     def from_pretrained(
@@ -44,7 +51,7 @@ class LongCatAudioCodec:
 
         with _longcat_checkpoint_env(assets.ckpt_dir):
             encoder = load_encoder(str(assets.configs.encoder), resolved_device)
-            loaded_decoders: dict[LongCatDecoderName, Any] = {
+            loaded_decoders: dict[str, nn.Module] = {
                 name: load_decoder(str(assets.configs.decoder(name)), resolved_device)
                 for name in decoder_names
             }

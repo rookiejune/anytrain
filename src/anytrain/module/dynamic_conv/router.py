@@ -6,7 +6,7 @@ from typing import Literal
 import torch
 from torch import Tensor, nn
 
-from anytrain.module.dirichlet_tempering import ADT
+from ..dirichlet_tempering import ADT
 
 ActivationName = Literal["gelu", "identity", "relu", "silu"]
 NormName = Literal["batch", "group", "identity"]

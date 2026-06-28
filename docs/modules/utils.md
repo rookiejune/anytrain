@@ -24,7 +24,7 @@
 
 - audio/io/checker/rpc/patchifier/overlap 等领域工具。
 - 只被单个模块使用的私有 helper。
-- registry 和基础类型；它们已经分别放在 `registry.py`、`types.py`。
+- 公共注册表抽象；优先在需要它的具体模块内放局部 mapping 或 helper。
 - 静默吞错的兼容逻辑。
 - 下游项目私有工具。
 

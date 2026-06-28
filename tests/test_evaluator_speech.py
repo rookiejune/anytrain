@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -6,6 +7,7 @@ from unittest.mock import patch
 import torch
 
 import anytrain.evaluator.speech as speech
+from anytrain.env import ANYTRAIN_HOME_ENV, TORCH_HOME_ENV, WHISPER_ROOT_ENV
 from anytrain.evaluator.speech import SpeechEvaluator, UTMOSEvaluator, WhisperASREvaluator
 from anytrain.evaluator.speech.audio import load_wave_batch
 from anytrain.evaluator.speech.utmos import TorchHubUTMOSBackend
@@ -148,14 +150,17 @@ class SpeechEvaluatorTest(unittest.TestCase):
         audio = torch.zeros(2, 16000)
         model = FakeWhisperModel({"text": "hello world"})
         whisper = FakeWhisperModule(model)
-        evaluator = WhisperASREvaluator(
-            model_name="tiny",
-            device="cpu",
-            decode_options={"language": "en"},
-            load_options={"in_memory": True},
-        )
-
-        with patch.dict("sys.modules", {"whisper": whisper}):
+        with patch.dict(os.environ, {ANYTRAIN_HOME_ENV: "/tmp/anytrain"}, clear=True):
+            evaluator = WhisperASREvaluator(
+                model_name="tiny",
+                device="cpu",
+                decode_options={"language": "en"},
+                load_options={"in_memory": True},
+            )
+        with (
+            patch.dict(os.environ, {ANYTRAIN_HOME_ENV: "/tmp/anytrain"}, clear=True),
+            patch.dict("sys.modules", {"whisper": whisper}),
+        ):
             metrics = evaluator(
                 audio,
                 16000,
@@ -167,7 +172,19 @@ class SpeechEvaluatorTest(unittest.TestCase):
         self.assertEqual(metrics["bleu"], 100.0)
         self.assertEqual(metrics["wer"], 0.0)
         self.assertEqual(metrics["chrf"], 100.0)
-        self.assertEqual(whisper.calls, [("tiny", {"in_memory": True, "device": "cpu"})])
+        self.assertEqual(
+            whisper.calls,
+            [
+                (
+                    "tiny",
+                    {
+                        "in_memory": True,
+                        "device": "cpu",
+                        "download_root": "/tmp/anytrain/whisper",
+                    },
+                )
+            ],
+        )
         self.assertEqual(len(model.calls), 2)
         self.assertEqual(model.calls[0][1], {"language": "en", "temperature": 0.0})
 
@@ -191,7 +208,9 @@ class SpeechEvaluatorTest(unittest.TestCase):
             evaluator(torch.zeros(16000), 16000, reference_text=["hello", "world"])
 
     def test_whisper_asr_builds_default_loader_without_loading_model(self):
-        evaluator = WhisperASREvaluator(model_name="tiny")
+        with patch.dict(os.environ, {ANYTRAIN_HOME_ENV: "/tmp/anytrain"}, clear=True):
+            evaluator = WhisperASREvaluator(model_name="tiny")
+            self.assertEqual(os.environ[WHISPER_ROOT_ENV], "/tmp/anytrain/whisper")
 
         self.assertEqual(evaluator.model_name, "tiny")
         self.assertIsNone(evaluator._backend.model)
@@ -293,10 +312,20 @@ class SpeechEvaluatorTest(unittest.TestCase):
 
     def test_torch_hub_utmos_backend_scores_tensor_audio(self):
         model = FakeUTMOSModel(torch.tensor([3.0, 5.0]))
-        backend = TorchHubUTMOSBackend(model=model, device="cpu")
+        backend = TorchHubUTMOSBackend(device="cpu")
 
-        score = backend.score(torch.zeros(2, 16000), 16000)
+        with (
+            patch.dict(os.environ, {ANYTRAIN_HOME_ENV: "/tmp/anytrain"}, clear=True),
+            patch("torch.hub.load", return_value=model) as load,
+        ):
+            score = backend.score(torch.zeros(2, 16000), 16000)
+            self.assertEqual(os.environ[TORCH_HOME_ENV], "/tmp/anytrain/torch")
 
+        load.assert_called_once_with(
+            "tarepan/SpeechMOS:v1.2.0",
+            "utmos22_strong",
+            trust_repo=True,
+        )
         self.assertTrue(torch.equal(score, torch.tensor([3.0, 5.0])))
         self.assertEqual(len(model.calls), 1)
         self.assertEqual(model.calls[0][0].shape, torch.Size([2, 16000]))

@@ -192,6 +192,32 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         self.assertEqual(embed.modality_embeddings[Modality.AUDIO].num_embeddings, 3)
         self.assertEqual(embed.modality_embeddings[Modality.AUDIO].embedding_dim, 3)
 
+    def test_missing_special_embedding_can_fall_back_to_modality_block(self):
+        space = IdSpace(
+            {"bos": 0, "extra": 3},
+            [ModalityBlock(Modality.TEXT, 0, 2), ModalityBlock(Modality.AUDIO, 3, 1)],
+        )
+        special_embeddings = torch.nn.ParameterDict(
+            {"extra": torch.nn.Parameter(torch.tensor([3.0, 0.0]))}
+        )
+        text = torch.nn.Embedding(2, 2)
+        with torch.no_grad():
+            text.weight.copy_(torch.tensor([[1.0, 0.0], [2.0, 0.0]]))
+
+        embed = IdSpaceEmbedding(
+            space,
+            special_embeddings=special_embeddings,
+            modality_embeddings={Modality.TEXT: text},
+            init_missing_special_embeddings=False,
+        )
+
+        self.assertEqual(set(embed.special_embeddings), {"extra"})
+        self.assertIs(embed.modality_embeddings[Modality.TEXT], text)
+        self.assertTrue(torch.equal(embed(torch.tensor([0, 1, 3])), torch.tensor([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])))
+        self.assertTrue(torch.equal(embed.weight[0], text.weight[0]))
+        with self.assertRaisesRegex(ValueError, "explicit special embeddings"):
+            embed.as_head(special_tokens=["bos"])
+
     def test_init_requires_dim_without_explicit_weights(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])
 

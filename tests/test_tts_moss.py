@@ -5,7 +5,7 @@ from unittest.mock import patch
 import torch
 
 from anytrain.tts import TTSOptions, TTSOutput, TTSTokens
-from anytrain.tts.moss import MossTTS, MossTTSConfig
+from anytrain.tts.moss import DEFAULT_CODEC_MODEL, MossTTS, MossTTSConfig
 
 
 class TTSProtocolTest(unittest.TestCase):
@@ -35,6 +35,13 @@ class TTSProtocolTest(unittest.TestCase):
 
 
 class MossTTSImportTest(unittest.TestCase):
+    def test_default_model_uses_moss_tts_v15_checkpoint(self):
+        self.assertEqual(
+            MossTTSConfig().model,
+            "OpenMOSS-Team/MOSS-TTS-v1.5",
+        )
+        self.assertEqual(MossTTSConfig().codec_model, DEFAULT_CODEC_MODEL)
+
     def test_import_tts_does_not_import_transformers_dependency(self):
         sys.modules.pop("transformers", None)
 
@@ -52,191 +59,164 @@ class MossTTSImportTest(unittest.TestCase):
 
 
 class MossTTSAdapterTest(unittest.TestCase):
-    def test_from_pretrained_loads_remote_code_model_without_importing_at_module_import_time(self):
-        class FakeAutoModelForCausalLM:
+    def test_from_pretrained_loads_v15_model_and_processor(self):
+        class FakeAutoModel:
             @classmethod
             def from_pretrained(cls, model, **kwargs):
                 return FakeMossModel(load_args=(model, kwargs))
 
+        class FakeAutoProcessor:
+            calls = []
+
+            @classmethod
+            def from_pretrained(cls, model, **kwargs):
+                cls.calls.append((model, kwargs))
+                return FakeMossProcessor()
+
         with patch(
             "anytrain.tts.moss.tts.load_transformers_auto_model_class",
-            return_value=FakeAutoModelForCausalLM,
+            return_value=FakeAutoModel,
+        ), patch(
+            "anytrain.tts.moss.tts.load_transformers_auto_processor_class",
+            return_value=FakeAutoProcessor,
         ):
             tts = MossTTS.from_pretrained(
-                "fake-model",
+                "OpenMOSS-Team/MOSS-TTS-v1.5",
                 cache_dir="storage/moss",
+                codec_model="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
                 device="cpu",
                 local_files_only=True,
                 sample_rate=16000,
-                speaker="spk",
-                language="zh",
+                language="Chinese",
                 revision="main",
-                runtime_kwargs={"style": "clear"},
-                torch_dtype="float32",
-            )
-
-        self.assertEqual(tts.config.model, "fake-model")
-        self.assertEqual(tts.sample_rate, 16000)
-        self.assertEqual(tts.model.load_args[0], "fake-model")
-        self.assertEqual(
-            tts.model.load_args[1],
-            {
-                "cache_dir": "storage/moss",
-                "local_files_only": True,
-                "revision": "main",
-                "torch_dtype": "float32",
-            },
-        )
-        self.assertEqual(tts.config.runtime_kwargs, {"style": "clear"})
-        self.assertEqual(tts.model_loaded_from, "transformers")
-
-    def test_from_pretrained_sets_transformers_remote_code_kwargs(self):
-        class FakeAutoModelForCausalLM:
-            @classmethod
-            def from_pretrained(cls, model, **kwargs):
-                return FakeMossModel(load_args=(model, kwargs))
-
-        with patch(
-            "anytrain.tts.moss.tts.load_transformers_auto_model_class",
-            return_value=FakeAutoModelForCausalLM,
-        ):
-            tts = MossTTS.from_pretrained(
-                "OpenMOSS-Team/MOSS-TTS-Nano",
-                device="cpu",
-                local_files_only=True,
                 trust_remote_code=True,
-                torch_dtype="float32",
+                runtime_kwargs={"do_sample": False},
+                torch_dtype="bfloat16",
             )
 
+        self.assertEqual(tts.config.model, "OpenMOSS-Team/MOSS-TTS-v1.5")
+        self.assertEqual(tts.config.codec_model, "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano")
+        self.assertEqual(tts.sample_rate, 16000)
+        self.assertEqual(tts.config.runtime_kwargs, {"do_sample": False})
         self.assertEqual(tts.model_loaded_from, "transformers")
-        self.assertEqual(tts.model.load_args[0], "OpenMOSS-Team/MOSS-TTS-Nano")
         self.assertEqual(
-            tts.model.load_args[1],
-            {
-                "local_files_only": True,
-                "torch_dtype": "float32",
-                "trust_remote_code": True,
-            },
+            tts.model.load_args,
+            (
+                "OpenMOSS-Team/MOSS-TTS-v1.5",
+                {
+                    "cache_dir": "storage/moss",
+                    "local_files_only": True,
+                    "revision": "main",
+                    "torch_dtype": "bfloat16",
+                    "trust_remote_code": True,
+                },
+            ),
+        )
+        self.assertEqual(
+            FakeAutoProcessor.calls,
+            [
+                (
+                    "OpenMOSS-Team/MOSS-TTS-v1.5",
+                    {
+                        "cache_dir": "storage/moss",
+                        "codec_path": "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
+                        "local_files_only": True,
+                        "revision": "main",
+                        "trust_remote_code": True,
+                    },
+                )
+            ],
         )
 
-    def test_synthesize_runs_tokenize_generate_decode(self):
+    def test_synthesize_uses_processor_generation(self):
         model = FakeMossModel()
+        processor = FakeMossProcessor()
         tts = MossTTS(
             model=model,
-            config=MossTTSConfig(sample_rate=24000, speaker="default", language="zh"),
+            processor=processor,
+            config=MossTTSConfig(sample_rate=24000, language="Chinese"),
+            device="cpu",
         )
 
         output = tts.synthesize(
             "hello",
             TTSOptions(
-                speaker="alice",
-                max_new_tokens=8,
-                temperature=0.7,
-                top_p=0.9,
-                extra={"style": "clear"},
+                max_new_tokens=13,
+                temperature=0.8,
+                top_p=0.95,
+                seed=7,
+                extra={"prompt_audio_path": "assets/audio/zh_1.wav"},
             ),
         )
 
-        self.assertEqual(tuple(output.waveform.shape), (1, 4))
+        self.assertEqual(tuple(output.waveform.shape), (1, 5))
         self.assertEqual(output.sample_rate, 24000)
-        self.assertAlmostEqual(output.duration, 4 / 24000)
-        self.assertEqual([call[0] for call in model.calls], ["tokenize", "generate", "decode"])
-        self.assertEqual(model.calls[0][2]["speaker"], "alice")
-        self.assertEqual(model.calls[0][2]["language"], "zh")
-        self.assertEqual(model.calls[0][2]["style"], "clear")
-        self.assertEqual(model.calls[1][1]["max_new_tokens"], 8)
-        self.assertEqual(model.calls[1][1]["temperature"], 0.7)
-        self.assertEqual(model.calls[1][1]["top_p"], 0.9)
-        self.assertTrue(torch.equal(model.calls[2][1], torch.tensor([[7, 8]])))
+        self.assertEqual(output.meta["backend"], "OpenMOSS-Team/MOSS-TTS-v1.5")
+        self.assertEqual(
+            processor.messages,
+            [
+                {
+                    "language": "Chinese",
+                    "reference": ["assets/audio/zh_1.wav"],
+                    "text": "hello",
+                }
+            ],
+        )
+        self.assertEqual(processor.batch_modes, ["generation"])
+        self.assertEqual(model.calls[0]["max_new_tokens"], 13)
+        self.assertEqual(model.calls[0]["temperature"], 0.8)
+        self.assertEqual(model.calls[0]["top_p"], 0.95)
+        self.assertEqual(model.calls[0]["do_sample"], True)
+        self.assertTrue(torch.equal(model.calls[0]["input_ids"], torch.tensor([[1, 2]])))
 
     def test_runtime_kwargs_do_not_leak_load_kwargs(self):
         model = FakeMossModel()
+        processor = FakeMossProcessor()
         tts = MossTTS(
             model=model,
+            processor=processor,
             config=MossTTSConfig(
                 load_kwargs={"torch_dtype": "float32"},
-                runtime_kwargs={"style": "clear"},
+                runtime_kwargs={"do_sample": False},
             ),
         )
 
         tts.synthesize("hello", prompt_audio_path="assets/prompt.wav")
 
-        self.assertEqual(model.calls[0][2]["style"], "clear")
-        self.assertEqual(model.calls[0][2]["prompt_audio_path"], "assets/prompt.wav")
-        self.assertNotIn("torch_dtype", model.calls[0][2])
-
-    def test_explicit_none_option_overrides_config_value(self):
-        model = FakeMossModel()
-        tts = MossTTS(
-            model=model,
-            config=MossTTSConfig(speaker="default", language="zh"),
-        )
-
-        tts.synthesize("hello", TTSOptions(speaker=None))
-
-        self.assertNotIn("speaker", model.calls[0][2])
-        self.assertEqual(model.calls[0][2]["language"], "zh")
+        self.assertEqual(processor.messages[0]["reference"], ["assets/prompt.wav"])
+        self.assertEqual(model.calls[0]["do_sample"], False)
+        self.assertNotIn("torch_dtype", model.calls[0])
 
     def test_explicit_extra_overrides_config_runtime_kwargs(self):
         model = FakeMossModel()
+        processor = FakeMossProcessor()
         tts = MossTTS(
             model=model,
-            config=MossTTSConfig(runtime_kwargs={"style": "clear", "speed": 1.0}),
+            processor=processor,
+            config=MossTTSConfig(runtime_kwargs={"do_sample": False, "max_new_tokens": 12}),
         )
 
         tts.synthesize("hello", TTSOptions(extra={}), prompt_audio_path="assets/prompt.wav")
 
-        self.assertNotIn("style", model.calls[0][2])
-        self.assertNotIn("speed", model.calls[0][2])
-        self.assertEqual(model.calls[0][2]["prompt_audio_path"], "assets/prompt.wav")
+        self.assertNotIn("do_sample", model.calls[0])
+        self.assertNotIn("max_new_tokens", model.calls[0])
+        self.assertEqual(processor.messages[0]["reference"], ["assets/prompt.wav"])
 
-    def test_synthesize_uses_hf_inference_when_model_exposes_it(self):
-        model = FakeInferenceMossModel()
-        tts = MossTTS(
-            model=model,
-            config=MossTTSConfig(model="OpenMOSS-Team/MOSS-TTS-Nano", sample_rate=48000),
-            device="cpu",
-        )
+    def test_v15_rejects_speaker_ids(self):
+        tts = MossTTS(model=FakeMossModel(), processor=FakeMossProcessor())
 
-        output = tts.synthesize(
-            "hello",
-            TTSOptions(
-                max_new_tokens=71,
-                temperature=0.8,
-                top_p=0.95,
-                seed=7,
-                extra={
-                    "audio_tokenizer_pretrained_name_or_path": "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
-                },
-            ),
-            output_audio_path="outputs/moss.wav",
-            prompt_audio_path="assets/audio/zh_1.wav",
-        )
+        with self.assertRaisesRegex(ValueError, "speaker"):
+            tts.synthesize("hello", TTSOptions(speaker="alice"))
 
-        self.assertEqual(tuple(output.waveform.shape), (2, 480))
-        self.assertEqual(output.sample_rate, 48000)
-        self.assertEqual(output.meta["audio_token_frames"], 71)
-        self.assertEqual([call[0] for call in model.calls], ["inference"])
-        _, text, output_audio_path, kwargs = model.calls[0]
-        self.assertEqual(text, "hello")
-        self.assertEqual(str(output_audio_path), "outputs/moss.wav")
-        self.assertEqual(kwargs["mode"], "voice_clone")
-        self.assertEqual(kwargs["max_new_frames"], 71)
-        self.assertEqual(kwargs["do_sample"], True)
-        self.assertEqual(kwargs["text_temperature"], 0.8)
-        self.assertEqual(kwargs["audio_temperature"], 0.8)
-        self.assertEqual(kwargs["text_top_p"], 0.95)
-        self.assertEqual(kwargs["audio_top_p"], 0.95)
-        self.assertEqual(kwargs["device"], torch.device("cpu"))
-        self.assertEqual(kwargs["prompt_audio_path"], "assets/audio/zh_1.wav")
+    def test_v15_rejects_legacy_file_output(self):
+        tts = MossTTS(model=FakeMossModel(), processor=FakeMossProcessor())
 
-    def test_seeded_inference_restores_global_rng_state(self):
-        model = FakeRandomInferenceMossModel()
-        tts = MossTTS(
-            model=model,
-            config=MossTTSConfig(model="OpenMOSS-Team/MOSS-TTS-Nano"),
-            device="cpu",
-        )
+        with self.assertRaisesRegex(ValueError, "output_audio_path"):
+            tts.synthesize("hello", output_audio_path="outputs/moss.wav")
+
+    def test_seeded_generation_restores_global_rng_state(self):
+        model = FakeRandomMossModel()
+        tts = MossTTS(model=model, processor=FakeMossProcessor())
         torch.manual_seed(1234)
         state = torch.random.get_rng_state()
 
@@ -248,9 +228,21 @@ class MossTTSAdapterTest(unittest.TestCase):
         self.assertTrue(torch.equal(first.waveform, second.waveform))
 
     def test_config_hash_is_stable_and_uses_generation_identity(self):
-        first = MossTTS(model=FakeMossModel(), config=MossTTSConfig(speaker="a"))
-        second = MossTTS(model=FakeMossModel(), config=MossTTSConfig(speaker="a"))
-        changed = MossTTS(model=FakeMossModel(), config=MossTTSConfig(speaker="b"))
+        first = MossTTS(
+            model=FakeMossModel(),
+            processor=FakeMossProcessor(),
+            config=MossTTSConfig(language="Chinese"),
+        )
+        second = MossTTS(
+            model=FakeMossModel(),
+            processor=FakeMossProcessor(),
+            config=MossTTSConfig(language="Chinese"),
+        )
+        changed = MossTTS(
+            model=FakeMossModel(),
+            processor=FakeMossProcessor(),
+            config=MossTTSConfig(language="English"),
+        )
 
         self.assertEqual(first.config_hash(), second.config_hash())
         self.assertNotEqual(first.config_hash(), changed.config_hash())
@@ -261,43 +253,52 @@ class FakeMossModel:
         self.load_args = load_args
         self.calls = []
 
-    def tokenize(self, text, **kwargs):
-        self.calls.append(("tokenize", text, kwargs))
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return torch.tensor([[9, 10]])
+
+
+class FakeRandomMossModel:
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return torch.rand(1, 4)
+
+
+class FakeProcessorMessage:
+    def __init__(self, audio: torch.Tensor) -> None:
+        self.audio_codes_list = [audio]
+
+
+class FakeProcessorConfig:
+    sampling_rate = 24000
+
+
+class FakeMossProcessor:
+    model_config = FakeProcessorConfig()
+
+    def __init__(self):
+        self.messages = []
+        self.batch_modes = []
+
+    def build_user_message(self, **kwargs):
+        self.messages.append(kwargs)
+        return kwargs
+
+    def __call__(self, conversations, **kwargs):
+        self.batch_modes.append(kwargs["mode"])
         return {
             "input_ids": torch.tensor([[1, 2]]),
             "attention_mask": torch.tensor([[1, 1]]),
         }
 
-    def generate(self, **kwargs):
-        self.calls.append(("generate", kwargs))
-        return torch.tensor([[7, 8]])
-
-    def decode(self, generation, **kwargs):
-        self.calls.append(("decode", generation, kwargs))
-        return {
-            "waveform": torch.arange(4, dtype=torch.float32),
-            "sample_rate": kwargs["sample_rate"],
-            "meta": {"backend": "fake"},
-        }
-
-
-class FakeInferenceMossModel:
-    def __init__(self):
-        self.calls = []
-
-    def inference(self, text, output_audio_path, **kwargs):
-        self.calls.append(("inference", text, output_audio_path, kwargs))
-        return {
-            "audio_path": str(output_audio_path),
-            "audio_token_ids": torch.zeros(71, 16, dtype=torch.long),
-            "sample_rate": 48000,
-            "waveform": torch.ones(2, 480),
-        }
-
-
-class FakeRandomInferenceMossModel:
-    def inference(self, text, output_audio_path, **kwargs):
-        return {"waveform": torch.rand(1, 4)}
+    def decode(self, value):
+        self.decoded = value
+        if isinstance(value, torch.Tensor) and value.ndim == 2 and value.shape[-1] == 4:
+            return [FakeProcessorMessage(value[0])]
+        return [FakeProcessorMessage(torch.arange(5, dtype=torch.float32))]
 
 
 if __name__ == "__main__":

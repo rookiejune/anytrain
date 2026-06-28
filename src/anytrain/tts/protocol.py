@@ -195,24 +195,6 @@ class TTSBackend(Protocol):
 
     def config_hash(self) -> str: ...
 
-    def tokenize(
-        self,
-        text: str,
-        options: TTSOptions | None = None,
-    ) -> TTSTokens: ...
-
-    def generate(
-        self,
-        tokens: TTSTokens,
-        options: TTSOptions | None = None,
-    ) -> TTSGeneration: ...
-
-    def decode(
-        self,
-        generation: TTSGeneration,
-        options: TTSOptions | None = None,
-    ) -> TTSOutput: ...
-
     def synthesize(
         self,
         text: str,

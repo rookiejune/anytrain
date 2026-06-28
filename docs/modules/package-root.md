@@ -2,25 +2,25 @@
 
 ## 定位
 
-`anytrain.__init__` 是包的轻量公开入口，只导出不触发训练依赖初始化的基础支撑类型。它不承担训练入口、组件注册或 optional dependency 加载。
+`anytrain.__init__` 是包的轻量空入口，不触发训练依赖初始化。它不承担训练入口、组件注册或 optional dependency 加载。
 
 ## 当前实现
 
-当前公开导出：
+当前不做根包快捷导出：
 
 ```python
-from anytrain import AutoNameEnum, Registry
+import anytrain
+
+assert anytrain.__all__ == []
 ```
 
 对应源码：
 
 - `src/anytrain/__init__.py`
-- `src/anytrain/registry.py`
-- `src/anytrain/types.py`
 
 ## 设计原则
 
-- 根包 import 应保持轻量，不隐式导入 Lightning、torchmetrics、plot/audio/text 等重依赖。
+- 根包 import 应保持轻量，不隐式导入 Lightning、torchmetrics、plot/audio/text 等重依赖，也不导出跨模块快捷别名。
 - 训练入口由下游项目自己维护，根包不提供快捷启动函数。
 - 用户需要 Lightning helper 时显式使用 `anytrain.lightning`。
 - 用户需要 loss/evaluator/plotter/framework 时显式使用对应子模块。
@@ -36,4 +36,4 @@ from anytrain import AutoNameEnum, Registry
 
 ## 后续演进
 
-可考虑增加 `__version__`，但不应把训练入口或 optional backend 放到根包导出里。如果未来有更多轻量基础类型，也需要先确认不会扩大根包 import 成本。
+可考虑增加 `__version__`，但不应把训练入口、optional backend 或跨模块 helper 放到根包导出里。

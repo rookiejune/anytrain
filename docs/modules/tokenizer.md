@@ -22,7 +22,7 @@
 - `encode_units(units)`
 - `expand_ids(token_ids)`
 - `expand_with_counts(token_ids)`
-- `repeat_interleave(x, token_ids, dim=...)`
+- `repeat_interleave(x, token_ids, mask=None, dim=...)`
 - `eval(corpus)`
 - `save_pretrained(path)` / `from_pretrained(path)`
 
@@ -37,6 +37,14 @@ unit_ids = bpe.expand_ids(token_ids)
 stats = bpe.eval([[1, 2, 1, 2, 3]])
 vocab_size = bpe.vocab_size
 ```
+
+`repeat_interleave` 用于把 BPE token 级张量展开到原始 unit 粒度：
+
+- `token_ids` 是 1D 时保持简单行为，返回 `expanded_x, expanded_unit_ids`。
+- `token_ids` 是 2D 时返回 batch padded 结果：
+  `expanded_x, expanded_unit_ids, expanded_mask`。
+- 2D 输入可传 `mask` 标记有效 token。展开时只使用有效 token，输出按 batch 内最长展开长度重新 pad。
+- 输出 `expanded_unit_ids` 的 padding id 从 `input_ids[~mask]` 推断；若 padding 位存在多个不同值会报错。若需要输出 padding 但无法推断 padding id，也会报错。
 
 `IntBPE` 保留输入 int id 语义，不把 token id 压成从 0 开始连续的 compact vocab index。
 因此 `tokens` 的 key 可能有洞，`vocab_size` 表示可索引范围 `max(token_id) + 1`。

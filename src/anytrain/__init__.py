@@ -1,7 +1,1 @@
-from .registry import Registry
-from .types import AutoNameEnum
-
-__all__ = [
-    "AutoNameEnum",
-    "Registry",
-]
+__all__: list[str] = []

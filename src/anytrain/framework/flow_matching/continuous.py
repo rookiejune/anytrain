@@ -3,11 +3,18 @@ from __future__ import annotations
 from torch import Tensor, nn
 
 from ._deps import CondOTProbPath
-from .objective import ContinuousVelocityObjective
+from .objective import ContinuousVelocityObjective, mse_velocity_loss
 from .sampler import ODESampler
 from .source import GaussianSource
 from .time import LogitNormalTimeSampler
-from .types import FlowSampleOutput, ModelCaller, Source, TimeSampler, default_call_model
+from .types import (
+    FlowLossFn,
+    FlowSampleOutput,
+    ModelCaller,
+    Source,
+    TimeSampler,
+    default_call_model,
+)
 
 
 class ContinuousFlowMatcher(nn.Module):
@@ -19,6 +26,7 @@ class ContinuousFlowMatcher(nn.Module):
         time_sampler: TimeSampler | None = None,
         sampler: ODESampler | None = None,
         call_model: ModelCaller = default_call_model,
+        loss_fn: FlowLossFn = mse_velocity_loss,
     ):
         super().__init__()
         self.source = GaussianSource() if source is None else source
@@ -28,6 +36,7 @@ class ContinuousFlowMatcher(nn.Module):
             source=self.source,
             time_sampler=self.time_sampler,
             call_model=call_model,
+            loss_fn=loss_fn,
         )
         self.sampler = ODESampler(call_model=call_model) if sampler is None else sampler
 

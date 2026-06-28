@@ -144,7 +144,9 @@ UTMOS backend 细节从 `anytrain.evaluator.speech.utmos` 显式导入。
 
 默认 backend 都是延迟加载：构造 evaluator 不会下载或加载模型，第一次 `evaluate()` /
 `transcribe()` 才会访问模型依赖。需要真实 speech evaluator 时安装 `anytrain[speech]`。
-需要控制 checkpoint、cache 或 device 时，优先通过 evaluator 的显式配置项传入。
+需要控制 checkpoint、cache 或 device 时，优先通过系统环境变量或 evaluator 的显式配置项传入。
+如果未设置，anytrain 会把 `HF_HOME`、`TORCH_HOME`、`ANYTRAIN_WHISPER_ROOT`
+默认到 `${ANYTRAIN_HOME:-~/.anytrain}` 下。
 默认 torch backend 会在调用前将模型 `requires_grad_(False)`、`eval()`，并在
 `torch.inference_mode()` 内执行模型前向或转写。
 

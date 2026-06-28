@@ -6,6 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 import torch
 from torch import Tensor
 
+from ...env import torch_home
 from ..abc import EvaluatorABC, MetricDict
 from ._torch import freeze_model
 from .audio import load_wave_batch, validate_sample_rate
@@ -39,6 +40,7 @@ class TorchHubUTMOSBackend:
         if self.model is not None:
             return self.model
 
+        torch_home()
         load_options = dict(self.load_options)
         load_options.setdefault("trust_repo", True)
         self.model = torch.hub.load(self.repo, self.model_name, **load_options)

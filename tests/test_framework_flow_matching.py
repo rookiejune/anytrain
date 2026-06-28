@@ -96,6 +96,53 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
 
+    def test_continuous_loss_accepts_custom_masked_loss(self):
+        from anytrain.framework.flow_matching import ContinuousFlowMatcher
+
+        class ZeroVelocity(nn.Module):
+            def forward(self, x_t, t, mask=None):
+                del t, mask
+                return torch.zeros_like(x_t)
+
+        def masked_loss(prediction, target, extras):
+            mask = extras["mask"].to(device=prediction.device, dtype=prediction.dtype)
+            weights = mask.unsqueeze(-1)
+            return ((prediction - target).square() * weights).sum() / (
+                weights.sum() * prediction.size(-1)
+            )
+
+        matcher = ContinuousFlowMatcher(loss_fn=masked_loss)
+        x_1 = torch.tensor(
+            [
+                [[1.0, 2.0], [10.0, 20.0]],
+                [[3.0, 4.0], [30.0, 40.0]],
+            ]
+        )
+        x_0 = torch.zeros_like(x_1)
+        mask = torch.tensor([[True, False], [True, False]])
+
+        loss = matcher.loss(ZeroVelocity(), x_1, x_0=x_0, mask=mask)
+
+        expected = torch.tensor([1.0, 2.0, 3.0, 4.0]).square().mean()
+        self.assertTrue(torch.equal(loss, expected))
+
+    def test_continuous_custom_loss_must_return_scalar(self):
+        from anytrain.framework.flow_matching import ContinuousFlowMatcher
+
+        class ZeroVelocity(nn.Module):
+            def forward(self, x_t, t):
+                del t
+                return torch.zeros_like(x_t)
+
+        def vector_loss(prediction, target, extras):
+            del extras
+            return (prediction - target).square().mean(dim=-1)
+
+        matcher = ContinuousFlowMatcher(loss_fn=vector_loss)
+
+        with self.assertRaisesRegex(ValueError, "scalar"):
+            matcher.loss(ZeroVelocity(), torch.randn(2, 3, 4))
+
     def test_ode_sampler_expands_scalar_time_to_batch(self):
         from anytrain.framework.flow_matching import ODESampler
 

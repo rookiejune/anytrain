@@ -25,7 +25,6 @@
 - `anytrain.evaluator`：通用 evaluator 接口和组合器。
 - `anytrain.optim`：optimizer、scheduler 和 LLM/Muon helper。
 - `anytrain.module`：task-agnostic `torch.nn.Module` 积木。
-- `anytrain.registry` / `anytrain.types`：轻量支撑层。
 
 Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 
@@ -34,6 +33,7 @@ Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 这些组件不绑定具体领域，但需要额外依赖：
 
 - `plotter`：matplotlib/plotly/seaborn 等可视化。
+- `chat`：环境变量驱动的大模型调用入口，用于训练工程里的实验总结、日志解释和 LLM 辅助评估原型。
 - metrics evaluator：基于 torchmetrics 的通用分类/回归指标。
 - third-party logger backend：wandb、mlflow 等。
 
@@ -110,6 +110,10 @@ class MyPLModule(pl.LightningModule):
 
 提供训练期可视化组件，通常依赖 `plot` extra。plotter 返回图形对象，logging 由下游 LightningModule 负责。
 
+### `chat`
+
+提供环境变量驱动的大模型调用入口，通常依赖 `chat` extra。它负责把显式 prompt 和实例内消息上下文发给指定 provider，不接管 prompt 模板、任务 schema、provider cache 观测或训练流程。
+
 ### `framework`
 
 提供跨项目复用的训练范式，作为 optional/experimental 层，不进入 core。这里的 `framework` 是研究范式组件层，例如 flow matching、MAE 或 GAN helper；不是训练工程入口。
@@ -128,16 +132,15 @@ src/anytrain/
   loss/
   evaluator/
   optim/
+  chat/
   plotter/
   framework/
   module/
     dynamic_conv/
     quantization/
-  registry.py
-  types.py
 ```
 
-`lightning`、`loss`、`evaluator`、`optim` 和 `module` 是核心体验；`plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。
+`lightning`、`loss`、`evaluator`、`optim` 和 `module` 是核心体验；`chat`、`plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。
 
 ## 边界
 
@@ -148,5 +151,5 @@ src/anytrain/
 - 替用户规定 batch schema。
 - 把 optimizer/scheduler 作为顶层硬配置自动注入。
 - 把模型 zoo 或预训练下载逻辑放进 core。
-- 把所有 audio/text/speech/plot/framework 依赖放进默认安装。
+- 把所有 audio/text/speech/chat/plot/framework 依赖放进默认安装。
 - 静默兼容缺失依赖；optional 子模块应明确提示安装对应 extra。

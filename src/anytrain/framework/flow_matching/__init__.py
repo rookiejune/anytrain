@@ -2,11 +2,16 @@
 
 from .continuous import ContinuousFlowMatcher
 from .discrete import DiscreteFlowMatcher
-from .objective import ContinuousVelocityObjective, DiscreteGeneralizedKLObjective
+from .objective import (
+    ContinuousVelocityObjective,
+    DiscreteGeneralizedKLObjective,
+    mse_velocity_loss,
+)
 from .sampler import DiscreteEulerSampler, ODESampler
 from .source import GaussianSource, MaskTokenSource, UniformSource, UniformTokenSource
 from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler, UniformTimeSampler
 from .types import (
+    FlowLossFn,
     FlowSampleOutput,
     ModelCaller,
     ModelExtras,
@@ -23,6 +28,7 @@ __all__ = [
     "DiscreteFlowMatcher",
     "DiscreteGeneralizedKLObjective",
     "FlowSampleOutput",
+    "FlowLossFn",
     "GaussianSource",
     "MaskTokenSource",
     "ModelCaller",
@@ -35,4 +41,5 @@ __all__ = [
     "UniformTimeSampler",
     "UniformTokenSource",
     "default_call_model",
+    "mse_velocity_loss",
 ]

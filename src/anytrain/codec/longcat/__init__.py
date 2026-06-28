@@ -2,6 +2,7 @@ from .assets import (
     DEFAULT_HF_REPO_ID,
     LongCatAssets,
     LongCatConfigPaths,
+    LongCatDecoderName,
     ensure_longcat_assets,
 )
 from .cache import (
@@ -9,15 +10,17 @@ from .cache import (
     HF_HOME_ENV,
     resolve_longcat_cache_dir,
 )
-from .codec import LongCatAudioCodec
+from .codec import DEFAULT_DECODER, LongCatAudioCodec
 
 __all__ = [
+    "DEFAULT_DECODER",
     "DEFAULT_HF_HOME",
     "DEFAULT_HF_REPO_ID",
     "HF_HOME_ENV",
     "LongCatAssets",
     "LongCatAudioCodec",
     "LongCatConfigPaths",
+    "LongCatDecoderName",
     "ensure_longcat_assets",
     "resolve_longcat_cache_dir",
 ]

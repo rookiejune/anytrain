@@ -29,12 +29,14 @@ checkpoint 自动下载到缓存目录。路径优先级：
 
 1. 显式传入 `cache_dir=...`
 2. `HF_HOME/longcat-audio-codec`
-3. `~/.cache/huggingface/longcat-audio-codec`
+3. 如果 `HF_HOME` 未设置，anytrain 会设置
+   `HF_HOME=${ANYTRAIN_HOME:-~/.anytrain}/huggingface`，再使用
+   `$HF_HOME/longcat-audio-codec`
 
 远程服务器上推荐：
 
 ```bash
-export HF_HOME=/mnt/pami14/zhuyin/cache/huggingface
+export ANYTRAIN_HOME=/mnt/pami202/zhuyin/.anytrain
 ```
 
 下载后的 LongCat 权重在 `$HF_HOME/longcat-audio-codec/ckpts`，生成的 patched
@@ -60,7 +62,22 @@ audio_24k = codec.decode(
     acoustic_codes,
     decoder="24k_4codebooks",
 )
+
+acoustic_features = codec.acoustic_codes_to_features(
+    acoustic_codes,
+    decoder="24k_4codebooks",
+)
+audio_from_features = codec.decode_features(
+    semantic_codes,
+    acoustic_features,
+    decoder="24k_4codebooks",
+)
 ```
+
+`acoustic_codes_to_features()` 显式调用 LongCat decoder 的 acoustic dequantizer，
+对外返回 `[batch, time, dim]` 的连续 acoustic features。`decode_features()` 接收同样
+形状的连续 features，再交给 LongCat decoder 合成波形。下游 DiT 或 flow sampler 应该接
+这个 feature 边界；只有原始 codec roundtrip 才直接使用离散 `acoustic_codes`。
 
 默认从 Hugging Face 仓库 `meituan-longcat/LongCat-Audio-Codec` 下载：
 

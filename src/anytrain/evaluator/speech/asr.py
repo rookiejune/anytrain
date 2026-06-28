@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 
+from ...env import whisper_root
 from ..abc import EvaluatorABC, MetricDict
 from ..text import TextComparisonEvaluator, TextInput
 from ..text.normalization import coerce_text_batch
@@ -45,7 +46,8 @@ class _OpenAIWhisperBackend:
     ) -> None:
         self.model_name = self._validate_model_name(model_name)
         self.device = device
-        self.download_root = str(download_root) if download_root is not None else None
+        root = Path(download_root).expanduser() if download_root is not None else whisper_root()
+        self.download_root = str(root)
         self.model: Any | None = None
         self.load_options = self._validate_load_options(load_options)
 
@@ -138,13 +140,13 @@ class WhisperASREvaluator(EvaluatorABC):
         super().__init__()
         self.model_name = model_name
         self.device = device
-        self.download_root = download_root
         self._backend = _OpenAIWhisperBackend(
             model_name=model_name,
             device=device,
             download_root=download_root,
             load_options=load_options,
         )
+        self.download_root = self._backend.download_root
         self.text_evaluator = self._resolve_text_evaluator(text_evaluator)
         self.decode_options = self._validate_decode_options(decode_options)
 

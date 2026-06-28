@@ -18,6 +18,7 @@ class TimeSampler(Protocol):
 
 ModelExtras = Mapping[str, object]
 ModelCaller = Callable[[nn.Module, Tensor, Tensor, ModelExtras], Tensor]
+FlowLossFn = Callable[[Tensor, Tensor, ModelExtras], Tensor]
 
 
 @dataclass(eq=False)
@@ -38,6 +39,7 @@ def default_call_model(
 
 __all__ = [
     "FlowSampleOutput",
+    "FlowLossFn",
     "ModelCaller",
     "ModelExtras",
     "Source",

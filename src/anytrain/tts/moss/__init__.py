@@ -1,5 +1,6 @@
 from .tts import (
     DEFAULT_MODEL,
+    DEFAULT_CODEC_MODEL,
     DEFAULT_SAMPLE_RATE,
     MossLoadKwargs,
     MossRuntimeKwargs,
@@ -9,6 +10,7 @@ from .tts import (
 
 __all__ = [
     "DEFAULT_MODEL",
+    "DEFAULT_CODEC_MODEL",
     "DEFAULT_SAMPLE_RATE",
     "MossLoadKwargs",
     "MossRuntimeKwargs",

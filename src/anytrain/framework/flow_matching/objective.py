@@ -12,7 +12,7 @@ from ._deps import (
 )
 from .source import GaussianSource, UniformTokenSource
 from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler
-from .types import ModelCaller, Source, TimeSampler, default_call_model
+from .types import FlowLossFn, ModelCaller, ModelExtras, Source, TimeSampler, default_call_model
 
 
 def _require_batch(x: Tensor, name: str) -> None:
@@ -20,6 +20,21 @@ def _require_batch(x: Tensor, name: str) -> None:
         raise ValueError(f"{name} must include a batch dimension.")
     if x.shape[0] <= 0:
         raise ValueError(f"{name} batch size must be positive.")
+
+
+def mse_velocity_loss(
+    prediction: Tensor,
+    target: Tensor,
+    extras: ModelExtras,
+) -> Tensor:
+    del extras
+    return F.mse_loss(prediction, target)
+
+
+def _require_scalar_loss(loss: Tensor) -> Tensor:
+    if loss.ndim != 0:
+        raise ValueError("flow matching loss_fn must return a scalar tensor.")
+    return loss
 
 
 class ContinuousVelocityObjective(nn.Module):
@@ -30,12 +45,14 @@ class ContinuousVelocityObjective(nn.Module):
         source: Source | None = None,
         time_sampler: TimeSampler | None = None,
         call_model: ModelCaller = default_call_model,
+        loss_fn: FlowLossFn = mse_velocity_loss,
     ):
         super().__init__()
         self.path = CondOTProbPath() if path is None else path
         self.source = GaussianSource() if source is None else source
         self.time_sampler = LogitNormalTimeSampler() if time_sampler is None else time_sampler
         self.call_model = call_model
+        self.loss_fn = loss_fn
 
     def forward(
         self,
@@ -53,7 +70,9 @@ class ContinuousVelocityObjective(nn.Module):
         t = self.time_sampler.sample(x_1.shape[0], x_1.device)
         path_sample = self.path.sample(x_0=x_0, x_1=x_1, t=t)
         prediction = self.call_model(model, path_sample.x_t, path_sample.t, model_extras)
-        return F.mse_loss(prediction, path_sample.dx_t)
+        return _require_scalar_loss(
+            self.loss_fn(prediction, path_sample.dx_t, model_extras)
+        )
 
 
 class DiscreteGeneralizedKLObjective(nn.Module):
@@ -114,4 +133,5 @@ class DiscreteGeneralizedKLObjective(nn.Module):
 __all__ = [
     "ContinuousVelocityObjective",
     "DiscreteGeneralizedKLObjective",
+    "mse_velocity_loss",
 ]

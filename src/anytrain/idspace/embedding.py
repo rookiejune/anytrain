@@ -20,6 +20,7 @@ class IdSpaceEmbedding(nn.Module):
         *,
         special_embeddings: nn.ParameterDict | None = None,
         modality_embeddings: Mapping[Modality, nn.Embedding] | None = None,
+        init_missing_special_embeddings: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -41,6 +42,7 @@ class IdSpaceEmbedding(nn.Module):
             space,
             dim,
             special_embeddings,
+            init_missing=init_missing_special_embeddings,
             device=device,
             dtype=dtype,
         )
@@ -79,6 +81,8 @@ class IdSpaceEmbedding(nn.Module):
         covered = torch.zeros(input_ids.shape, dtype=torch.bool, device=device)
 
         for name, global_id in self.space.special_token_ids.items():
+            if name not in self.special_embeddings:
+                continue
             mask = input_ids == global_id
             if not bool(mask.any()):
                 continue
@@ -106,6 +110,8 @@ class IdSpaceEmbedding(nn.Module):
             embed = self._modality_embedding(modality_block.modality)
             weight[modality_block.start : modality_block.end] = embed.weight
         for name, global_id in self.space.special_token_ids.items():
+            if name not in self.special_embeddings:
+                continue
             weight[global_id] = self.special_embeddings[name]
         return weight
 
@@ -115,10 +121,11 @@ class IdSpaceEmbedding(nn.Module):
         special_tokens: bool | Sequence[str] = True,
         modalities: Sequence[Modality] | None = None,
     ) -> _IdSpaceHead:
-        specials = tuple(
-            (self.space.special_token_id(name), self.special_embeddings[name])
-            for name in _normalize_head_special_tokens(self.space, special_tokens)
-        )
+        special_names = _normalize_head_special_tokens(self.space, special_tokens)
+        missing = [name for name in special_names if name not in self.special_embeddings]
+        if missing:
+            raise ValueError("head special tokens must have explicit special embeddings.")
+        specials = tuple((self.space.special_token_id(name), self.special_embeddings[name]) for name in special_names)
 
         blocks: list[_HeadBlock] = []
         for modality in _normalize_head_modalities(self.space, modalities):
@@ -348,6 +355,7 @@ def _init_special_embeddings(
     dim: int,
     special_embeddings: nn.ParameterDict | None,
     *,
+    init_missing: bool,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
 ) -> nn.ParameterDict:
@@ -366,6 +374,9 @@ def _init_special_embeddings(
             raise ValueError(f"special_embeddings[{name!r}] must be a 1D parameter.")
         if param.size(0) != dim:
             raise ValueError(f"special_embeddings[{name!r}] dimension must match dim.")
+    if not init_missing:
+        _validate_missing_special_embeddings_are_covered(space, special_embeddings)
+        return special_embeddings
     for name in space.special_token_ids:
         if name in special_embeddings:
             continue
@@ -373,6 +384,17 @@ def _init_special_embeddings(
         nn.init.normal_(param)
         special_embeddings[name] = param
     return special_embeddings
+
+
+def _validate_missing_special_embeddings_are_covered(
+    space: IdSpace,
+    special_embeddings: nn.ParameterDict,
+) -> None:
+    for name, token_id in space.special_token_ids.items():
+        if name in special_embeddings:
+            continue
+        if not any(block.contains(token_id) for block in space.modality_blocks):
+            raise ValueError("special tokens without explicit embeddings must be inside a modality block.")
 
 
 def _init_modality_embeddings(

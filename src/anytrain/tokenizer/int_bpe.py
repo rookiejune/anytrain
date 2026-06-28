@@ -14,8 +14,11 @@ if TYPE_CHECKING:
     from tokenizers.models import BPE as TokenizersBPE
 
 
-PRIVATE_USE_START = 0xE000
-PRIVATE_USE_END = 0xF8FF
+PRIVATE_USE_RANGES = (
+    (0xE000, 0xF8FF),
+    (0xF0000, 0xFFFFD),
+    (0x100000, 0x10FFFD),
+)
 
 
 class _TokenizersBPEKwargs(TypedDict):
@@ -55,6 +58,11 @@ class CompressionStats:
     compression_ratio: float
     compression_factor: float
     compression_gain: float
+
+
+RepeatInterleaveOutput = tuple[torch.Tensor, torch.Tensor] | tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor
+]
 
 
 class _CoreBPE:
@@ -204,18 +212,40 @@ class _CoreBPE:
         self,
         x: torch.Tensor,
         token_ids: torch.Tensor,
+        mask: torch.Tensor | None = None,
         *,
         dim: int = -2,
         strict: bool | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if token_ids.dim() != 1:
-            raise ValueError("token_ids must be a 1D tensor")
+    ) -> RepeatInterleaveOutput:
         if x.dim() == 0:
             raise ValueError("x must have at least one dimension")
-        if token_ids.dtype == torch.bool or torch.is_floating_point(token_ids) or torch.is_complex(token_ids):
-            raise TypeError("token_ids must contain integer ids")
+        self._validate_token_ids(token_ids)
 
         dim = self._normalize_dim(dim, x.dim())
+        if token_ids.dim() == 1:
+            if mask is not None:
+                raise ValueError("mask is only supported for 2D token_ids")
+            return self._repeat_interleave_1d(x, token_ids, dim=dim, strict=strict)
+
+        if token_ids.dim() == 2:
+            return self._repeat_interleave_2d(
+                x,
+                token_ids,
+                mask,
+                dim=dim,
+                strict=strict,
+            )
+
+        raise ValueError("token_ids must be a 1D or 2D tensor")
+
+    def _repeat_interleave_1d(
+        self,
+        x: torch.Tensor,
+        token_ids: torch.Tensor,
+        *,
+        dim: int,
+        strict: bool | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if x.size(dim) != token_ids.numel():
             raise ValueError("x and token_ids must align on the sequence dimension")
 
@@ -227,6 +257,112 @@ class _CoreBPE:
         expanded_x = torch.repeat_interleave(x, repeats, dim=dim)
         expanded_ids = torch.tensor(unit_ids, dtype=token_ids.dtype, device=token_ids.device)
         return expanded_x, expanded_ids
+
+    def _repeat_interleave_2d(
+        self,
+        x: torch.Tensor,
+        token_ids: torch.Tensor,
+        mask: torch.Tensor | None,
+        *,
+        dim: int,
+        strict: bool | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if dim == 0:
+            raise ValueError("batched repeat_interleave expects a non-batch sequence dim")
+
+        batch_size, seq_len = token_ids.shape
+        if x.size(0) != batch_size:
+            raise ValueError("x and token_ids must align on the batch dimension")
+        if x.size(dim) != seq_len:
+            raise ValueError("x and token_ids must align on the sequence dimension")
+
+        token_mask = self._normalize_mask(mask, token_ids)
+        pad_id = self._pad_id(token_ids, token_mask)
+
+        row_dim = dim - 1
+        expanded_rows: list[torch.Tensor] = []
+        expanded_id_rows: list[torch.Tensor] = []
+        for row in range(batch_size):
+            positions = token_mask[row].nonzero(as_tuple=False).flatten()
+            row_x = x.select(0, row).index_select(row_dim, positions.to(device=x.device))
+            row_token_ids = token_ids[row].index_select(0, positions)
+            expanded_x, expanded_ids = self._repeat_interleave_1d(
+                row_x,
+                row_token_ids,
+                dim=row_dim,
+                strict=strict,
+            )
+            expanded_rows.append(expanded_x)
+            expanded_id_rows.append(expanded_ids)
+
+        max_len = max(row.numel() for row in expanded_id_rows)
+        if all(row.numel() == max_len for row in expanded_id_rows):
+            return (
+                torch.stack(expanded_rows, dim=0),
+                torch.stack(expanded_id_rows, dim=0),
+                torch.ones(
+                    (batch_size, max_len),
+                    dtype=torch.bool,
+                    device=token_ids.device,
+                ),
+            )
+
+        if pad_id is None:
+            raise ValueError("cannot infer padding id from token_ids and mask")
+
+        out_shape = list(x.shape)
+        out_shape[dim] = max_len
+        expanded_x = x.new_zeros(out_shape)
+        expanded_ids = token_ids.new_full((batch_size, max_len), pad_id)
+        expanded_mask = torch.zeros(
+            (batch_size, max_len),
+            dtype=torch.bool,
+            device=token_ids.device,
+        )
+
+        for row, (row_x, row_ids) in enumerate(zip(expanded_rows, expanded_id_rows, strict=True)):
+            length = row_ids.numel()
+            row_target = expanded_x.select(0, row)
+            slices = [slice(None)] * row_target.dim()
+            slices[row_dim] = slice(0, length)
+            row_target[tuple(slices)] = row_x
+            expanded_ids[row, :length] = row_ids
+            expanded_mask[row, :length] = True
+
+        return expanded_x, expanded_ids, expanded_mask
+
+    @staticmethod
+    def _validate_token_ids(token_ids: torch.Tensor) -> None:
+        if (
+            token_ids.dtype == torch.bool
+            or torch.is_floating_point(token_ids)
+            or torch.is_complex(token_ids)
+        ):
+            raise TypeError("token_ids must contain integer ids")
+
+    @staticmethod
+    def _normalize_mask(mask: torch.Tensor | None, token_ids: torch.Tensor) -> torch.Tensor:
+        if mask is None:
+            return torch.ones_like(token_ids, dtype=torch.bool)
+        if mask.shape != token_ids.shape:
+            raise ValueError("mask must have the same shape as token_ids")
+        if mask.device != token_ids.device:
+            raise ValueError("mask and token_ids must be on the same device")
+        if torch.is_floating_point(mask) or torch.is_complex(mask):
+            raise TypeError("mask must contain boolean or integer values")
+        if mask.dtype != torch.bool and not torch.all((mask == 0) | (mask == 1)):
+            raise ValueError("integer mask values must be 0 or 1")
+        return mask.to(dtype=torch.bool)
+
+    @staticmethod
+    def _pad_id(token_ids: torch.Tensor, mask: torch.Tensor) -> int | None:
+        pad_values = token_ids.masked_select(~mask)
+        if pad_values.numel() == 0:
+            return None
+        unique = torch.unique(pad_values)
+        if unique.numel() != 1:
+            raise ValueError("token_ids padding values must be identical")
+        return int(unique.item())
 
     @staticmethod
     def _build_unit_to_id(tokens: Mapping[int, tuple[int, ...]]) -> dict[int, int]:
@@ -479,11 +615,12 @@ class IntBPE:
         self,
         x: torch.Tensor,
         token_ids: torch.Tensor,
+        mask: torch.Tensor | None = None,
         *,
         dim: int = -2,
         strict: bool | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.core.repeat_interleave(x, token_ids, dim=dim, strict=strict)
+    ) -> RepeatInterleaveOutput:
+        return self.core.repeat_interleave(x, token_ids, mask, dim=dim, strict=strict)
 
     def to_dict(self) -> IntBPEState:
         return {
@@ -533,10 +670,10 @@ class IntBPE:
     @staticmethod
     def _build_unit_tokens(core: _CoreBPE) -> dict[int, str]:
         units = sorted(core.unit_to_id)
-        if len(units) > PRIVATE_USE_END - PRIVATE_USE_START + 1:
+        if len(units) > _private_use_capacity():
             raise ValueError("too many units for IntBPE")
         return {
-            unit: chr(PRIVATE_USE_START + index)
+            unit: _private_use_char(index)
             for index, unit in enumerate(units)
         }
 
@@ -616,6 +753,19 @@ def _require_tokenizer() -> type[Tokenizer]:
     except ImportError as error:
         raise ImportError("IntBPE.tokenizer() requires the `tokenizers` package") from error
     return Tokenizer
+
+
+def _private_use_capacity() -> int:
+    return sum(end - start + 1 for start, end in PRIVATE_USE_RANGES)
+
+
+def _private_use_char(index: int) -> str:
+    for start, end in PRIVATE_USE_RANGES:
+        size = end - start + 1
+        if index < size:
+            return chr(start + index)
+        index -= size
+    raise ValueError("private-use character index out of range")
 
 
 def _eval(

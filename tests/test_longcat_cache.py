@@ -9,6 +9,7 @@ from anytrain.codec.longcat.cache import (
     HF_HOME_ENV,
     resolve_longcat_cache_dir,
 )
+from anytrain.env import ANYTRAIN_HOME_ENV
 
 
 class LongCatCacheTest(unittest.TestCase):
@@ -31,6 +32,16 @@ class LongCatCacheTest(unittest.TestCase):
             self.assertEqual(path, root / "hf" / "longcat-audio-codec")
 
     def test_default_cache_dir_uses_default_hf_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {ANYTRAIN_HOME_ENV: str(root)}
+
+            with patch.dict(os.environ, env, clear=True):
+                path = resolve_longcat_cache_dir()
+
+        self.assertEqual(path, root / "huggingface" / "longcat-audio-codec")
+
+    def test_default_cache_dir_uses_packaged_default_home(self):
         with patch.dict(os.environ, {}, clear=True):
             path = resolve_longcat_cache_dir()
 

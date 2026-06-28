@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from enum import auto
-
-from anytrain.types import AutoNameEnum
+from enum import StrEnum, auto
 
 
-class QuantizerType(AutoNameEnum):
+class QuantizerType(StrEnum):
     AGRVQ = auto()
     FSQ = auto()
     GVQ = auto()

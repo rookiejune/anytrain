@@ -12,10 +12,9 @@
 - [`anytrain.module`](module.md)：task-agnostic `torch.nn.Module` 积木。
 - [`anytrain.idspace`](idspace.md)：统一 token space 和 embedding/head 设计。
 - [`anytrain.tokenizer`](tokenizer.md)：int BPE。
+- [`anytrain.chat`](chat.md)：环境变量驱动的可选大模型调用入口。
 - [`anytrain.plotter`](plotter.md)：可视化组件边界和 optional plot 依赖约定。
 - [`anytrain.framework`](framework.md)：可选研究框架层。
-- [`anytrain.registry`](registry.md)：轻量 registry 支撑层。
-- [`anytrain.types`](types.md)：通用基础类型。
 - [`anytrain.utils`](utils.md)：跨模块小工具边界。
 
 ## 关联文档

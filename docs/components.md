@@ -2,7 +2,7 @@
 
 ## 设计原则
 
-`anytrain` 的组件是给用户写 PyTorch/Lightning 训练代码时使用的积木，尤其服务普通 `LightningModule` 的实现。下游项目负责训练入口和配置装配；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、optim、plotter 和 framework。
+`anytrain` 的组件是给用户写 PyTorch/Lightning 训练代码时使用的积木，尤其服务普通 `LightningModule` 的实现。下游项目负责训练入口和配置装配；用户仍然控制训练逻辑，但可以选择 `anytrain` 提供的 module、loss、evaluator、optim、chat、plotter 和 framework。
 
 组件应该是显式可组合的对象，而不是隐藏在自定义 `LightningModule` 基类里的行为。一个组件如果会改变训练流程、文件系统状态或日志行为，应通过明确的 helper、callback 或 `pl_module.__init__` 参数暴露。
 
@@ -115,6 +115,16 @@ plotter 是 optional general 组件，依赖 `plot` extra。
 - 下游 LightningModule 负责把图记录到 Lightning logger。
 - audio/image/MoE 等具体 plotter 放 optional 子模块。
 
+## Chat
+
+chat 是 optional general 组件，依赖 `chat` extra。
+
+建议边界：
+
+- chat 只负责按环境变量解析 provider 配置，并把显式 prompt 和实例内消息上下文发给指定 provider。
+- 下游项目负责 prompt 模板、任务 schema、provider cache 观测和结果记录。
+- 缺少环境变量或 provider 后端不可用时直接抛出明确错误。
+
 ## Framework
 
 framework 是 optional/experimental 组件。这里的 framework 指研究训练范式组件，不是默认训练 app 层。
@@ -142,5 +152,6 @@ framework 是 optional/experimental 组件。这里的 framework 指研究训练
 - `import anytrain.module` 可以假设 torch/einops 已安装；需要额外依赖的后续组件再要求 `module` extra。
 - `import anytrain.loss.spectral` 和 `import anytrain.loss.temporal` 当前只依赖 core torch。
 - `import anytrain.optim` 可以假设 torch 已安装。
+- `import anytrain.chat` 不应要求 chat extra；真实 provider 请求路径可以要求 `chat` extra。
 - `import anytrain.plotter` 可以要求 plot extra。
 - optional 缺依赖时抛出明确错误，例如提示安装对应 extra。

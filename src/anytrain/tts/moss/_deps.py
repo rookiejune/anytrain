@@ -9,10 +9,21 @@ INSTALL_HINT = (
 
 def load_transformers_auto_model_class() -> type[Any]:
     try:
-        from transformers import AutoModelForCausalLM
+        from transformers import AutoModel
     except ImportError as exc:
         raise ImportError(
             "`anytrain.tts.moss` requires `transformers` to load remote-code "
             f"MOSS-TTS checkpoints. {INSTALL_HINT}"
         ) from exc
-    return AutoModelForCausalLM
+    return AutoModel
+
+
+def load_transformers_auto_processor_class() -> type[Any]:
+    try:
+        from transformers import AutoProcessor
+    except ImportError as exc:
+        raise ImportError(
+            "`anytrain.tts.moss` requires `transformers` to load remote-code "
+            f"MOSS-TTS processors. {INSTALL_HINT}"
+        ) from exc
+    return AutoProcessor

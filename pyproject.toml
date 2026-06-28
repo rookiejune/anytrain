@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 audio = ["torchcodec>=0.2", "torchaudio>=2.0"]
+chat = ["openai>=1.0", "zai-sdk>=0.2.3"]
 data = []
 logger = ["wandb>=0.16"]
 module = ["transformers"]

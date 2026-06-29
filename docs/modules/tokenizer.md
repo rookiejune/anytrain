@@ -77,6 +77,10 @@ frames = bpe.expand_ids(token_ids)
 corpus 中不同 frame 数量更多，最终 compact vocab 会保留完整 alphabet 并可能大于
 传入值。`special_tokens`、`limit_alphabet` 和 `initial_alphabet` 这类文本 tokenizer
 参数暂不暴露，因为 `CodecBPE` 的每个 token 都必须能无损还原成 codec frame。
+训练会两遍扫描 corpus：第一遍收集完整 observed alphabet 并校验 frame，第二遍交给
+`BpeTrainer` 学习 merges。传入的 corpus 必须是可重放 iterable，或 callable 且每次返回
+新的 iterator。`show_progress=True` 时第一遍 alphabet scan 和第二遍 BPE trainer
+各自显示独立进度。
 frame 长度必须等于 `len(codebook_sizes)`，每个 code id 必须在对应 book size 范围内。
 单 codebook 也必须通过 `[id]` 表达，不保留 1D unit 入口。
 

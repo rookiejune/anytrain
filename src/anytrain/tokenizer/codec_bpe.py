@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
+from typing import TYPE_CHECKING, NotRequired, Self, TypeVar, TypedDict
 
 import torch
 
@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 Frame = tuple[int, ...]
 FrameInput = Sequence[int]
 FrameState = list[int]
+BaseCorpus = Iterable[Sequence[int]]
+BaseCorpusFactory = Callable[[], BaseCorpus]
+FrameCorpus = Iterable[Sequence[FrameInput]]
+FrameCorpusFactory = Callable[[], FrameCorpus]
+CorpusT = TypeVar("CorpusT", bound=Iterable[object])
 
 PRIVATE_USE_RANGES = (
     (0xE000, 0xF8FF),
@@ -141,7 +146,7 @@ class _CoreBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[int]],
+        corpus: BaseCorpus | BaseCorpusFactory,
         *,
         vocab_size: int = 30_000,
         min_frequency: int = 0,
@@ -149,29 +154,23 @@ class _CoreBPE:
         max_token_length: int | None = None,
         strict: bool = True,
     ) -> Self:
-        sequences = [
-            tuple(_normalize_base_id(base_id) for base_id in seq)
-            for seq in corpus
-        ]
-        if not sequences:
-            raise ValueError("corpus must not be empty")
-        if strict and any(len(seq) == 0 for seq in sequences):
-            raise ValueError("corpus must not contain empty sequences")
-        sequences = [seq for seq in sequences if seq]
-        if not sequences:
-            raise ValueError("corpus must contain at least one frame")
-
-        base = sorted({base_id for seq in sequences for base_id in seq})
+        corpus_factory = _corpus_factory(corpus)
+        base, num_training_sequences = _scan_base_corpus(
+            corpus_factory,
+            strict=strict,
+            show_progress=show_progress,
+        )
         base_tokens = {
             base_id: _private_use_char(index)
-            for index, base_id in enumerate(base)
+            for index, base_id in enumerate(sorted(base))
         }
         tokenizer = _train_tokenizers_bpe(
-            ("".join(base_tokens[base_id] for base_id in seq) for seq in sequences),
+            _text_corpus(corpus_factory, base_tokens, strict=strict),
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             show_progress=show_progress,
             max_token_length=max_token_length,
+            length=num_training_sequences,
         )
         tokens, merges = _core_state_from_tokenizer(tokenizer, base_tokens)
         return cls(tokens, merges, strict=strict)
@@ -525,7 +524,7 @@ class CodecBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[FrameInput]],
+        corpus: FrameCorpus | FrameCorpusFactory,
         *,
         codebook_sizes: Sequence[int],
         vocab_size: int = 30_000,
@@ -543,8 +542,9 @@ class CodecBPE:
         ignore_merges: bool = False,
     ) -> Self:
         codec = _FrameCodec(codebook_sizes)
+        corpus_factory = _corpus_factory(corpus)
         core = _CoreBPE.train(
-            _encoded_corpus(corpus, codec),
+            lambda: _encoded_corpus(corpus_factory(), codec),
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             show_progress=show_progress,
@@ -840,6 +840,7 @@ def _train_tokenizers_bpe(
     min_frequency: int,
     show_progress: bool,
     max_token_length: int | None,
+    length: int | None,
 ) -> Tokenizer:
     try:
         from tokenizers.models import BPE
@@ -855,7 +856,7 @@ def _train_tokenizers_bpe(
         show_progress=show_progress,
         max_token_length=max_token_length,
     )
-    tokenizer.train_from_iterator(corpus, trainer=trainer)
+    tokenizer.train_from_iterator(corpus, trainer=trainer, length=length)
     return tokenizer
 
 
@@ -929,12 +930,76 @@ def _normalize_base_id(base_id: int) -> int:
     return base_id
 
 
+def _corpus_factory(corpus: CorpusT | Callable[[], CorpusT]) -> Callable[[], CorpusT]:
+    if callable(corpus):
+        return corpus
+    if isinstance(corpus, Iterator):
+        raise TypeError("corpus must be re-iterable or a callable returning a fresh iterator")
+    return lambda: corpus
+
+
+def _scan_base_corpus(
+    corpus_factory: BaseCorpusFactory,
+    *,
+    strict: bool,
+    show_progress: bool,
+) -> tuple[set[int], int]:
+    base: set[int] = set()
+    num_sequences = 0
+    num_training_sequences = 0
+    for seq in _progress(corpus_factory(), enabled=show_progress, desc="CodecBPE alphabet"):
+        ids = tuple(_normalize_base_id(base_id) for base_id in seq)
+        num_sequences += 1
+        if not ids:
+            if strict:
+                raise ValueError("corpus must not contain empty sequences")
+            continue
+        num_training_sequences += 1
+        base.update(ids)
+
+    if num_sequences == 0:
+        raise ValueError("corpus must not be empty")
+    if not base:
+        raise ValueError("corpus must contain at least one frame")
+    return base, num_training_sequences
+
+
+def _text_corpus(
+    corpus_factory: BaseCorpusFactory,
+    base_tokens: Mapping[int, str],
+    *,
+    strict: bool,
+) -> Iterable[str]:
+    for seq in corpus_factory():
+        ids = tuple(_normalize_base_id(base_id) for base_id in seq)
+        if not ids:
+            if strict:
+                raise ValueError("corpus must not contain empty sequences")
+            continue
+        yield "".join(base_tokens[base_id] for base_id in ids)
+
+
 def _encoded_corpus(
     corpus: Iterable[Sequence[FrameInput]],
     codec: _FrameCodec,
 ) -> Iterable[list[int]]:
     for frames in corpus:
         yield [codec.encode(frame) for frame in frames]
+
+
+def _progress(
+    iterable: Iterable[Sequence[int]],
+    *,
+    enabled: bool,
+    desc: str,
+) -> Iterable[Sequence[int]]:
+    if not enabled:
+        return iterable
+    try:
+        from tqdm.auto import tqdm
+    except ImportError as error:
+        raise ImportError("CodecBPE progress requires the `tqdm` package") from error
+    return tqdm(iterable, desc=desc)
 
 
 def _id_tensor(

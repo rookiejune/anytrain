@@ -219,6 +219,41 @@ class BPETest(unittest.TestCase):
 
         self.assertEqual(with_progress.to_dict(), plain.to_dict())
 
+    def test_train_scans_reiterable_corpus_twice(self):
+        class Corpus:
+            def __init__(self) -> None:
+                self.iterations = 0
+
+            def __iter__(self):
+                self.iterations += 1
+                return iter([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
+
+        corpus = Corpus()
+
+        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+
+        self.assertEqual(corpus.iterations, 2)
+        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
+
+    def test_train_accepts_corpus_factory(self):
+        calls = 0
+
+        def corpus():
+            nonlocal calls
+            calls += 1
+            return iter([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
+
+        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
+
+    def test_train_rejects_one_shot_iterator(self):
+        corpus = iter([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
+
+        with self.assertRaisesRegex(TypeError, "re-iterable"):
+            CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+
     def test_expand_with_counts_returns_frames_and_lengths(self):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],

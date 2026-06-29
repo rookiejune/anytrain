@@ -202,8 +202,13 @@ class _CoreBPE:
             token_ids = self._merge(token_ids, (merge.left, merge.right), merge.token_id)
         return token_ids
 
-    def eval(self, corpus: Iterable[Sequence[int]]) -> CompressionStats:
-        return _eval(corpus, self.encode_ids)
+    def eval(
+        self,
+        corpus: Iterable[Sequence[int]],
+        *,
+        show_progress: bool = True,
+    ) -> CompressionStats:
+        return _eval(corpus, self.encode_ids, show_progress=show_progress)
 
     def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
         base_ids, _ = self.expand_with_counts(token_ids, strict=strict)
@@ -632,8 +637,18 @@ class CodecBPE:
         text = self._ids_text(base_ids, base_tokens)
         return [token.id for token in self.model.tokenize(text)]
 
-    def eval(self, corpus: Iterable[Sequence[FrameInput]]) -> CompressionStats:
-        return _eval_frames(corpus, self._require_codec(), self.encode_frames)
+    def eval(
+        self,
+        corpus: Iterable[Sequence[FrameInput]],
+        *,
+        show_progress: bool = True,
+    ) -> CompressionStats:
+        return _eval_frames(
+            corpus,
+            self._require_codec(),
+            self.encode_frames,
+            show_progress=show_progress,
+        )
 
     def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Frame]:
         codec = self._require_codec()
@@ -1027,11 +1042,13 @@ def _private_use_char(index: int) -> str:
 def _eval(
     corpus: Iterable[Sequence[int]],
     encode_ids: Callable[[Sequence[int]], Sequence[int]],
+    *,
+    show_progress: bool,
 ) -> CompressionStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
-    for seq in corpus:
+    for seq in _progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
         ids = tuple(_normalize_base_id(base_id) for base_id in seq)
         num_sequences += 1
         original_tokens += len(ids)
@@ -1060,11 +1077,13 @@ def _eval_frames(
     corpus: Iterable[Sequence[FrameInput]],
     codec: _FrameCodec,
     encode_frames: Callable[[Sequence[FrameInput]], Sequence[int]],
+    *,
+    show_progress: bool,
 ) -> CompressionStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
-    for seq in corpus:
+    for seq in _progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
         frames = tuple(codec.normalize(frame) for frame in seq)
         num_sequences += 1
         original_tokens += len(frames)

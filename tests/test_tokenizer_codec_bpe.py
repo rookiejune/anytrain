@@ -617,7 +617,10 @@ class BPETest(unittest.TestCase):
             vocab_size=5,
         )
 
-        stats = bpe.eval([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
+        stats = bpe.eval(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            show_progress=False,
+        )
 
         self.assertEqual(stats.num_sequences, 2)
         self.assertEqual(stats.original_tokens, 8)
@@ -628,11 +631,25 @@ class BPETest(unittest.TestCase):
         self.assertAlmostEqual(stats.compression_factor, 8 / 3)
         self.assertAlmostEqual(stats.compression_gain, 5 / 8)
 
+    def test_eval_progress_keeps_same_result(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+            show_progress=False,
+        )
+        corpus = [[[1], [2], [1], [2], [3]], [[1], [2], [3]]]
+
+        plain = bpe.eval(corpus, show_progress=False)
+        with_progress = bpe.eval(corpus, show_progress=True)
+
+        self.assertEqual(with_progress, plain)
+
     def test_eval_rejects_empty_corpus(self):
         bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "corpus"):
-            bpe.eval([])
+            bpe.eval([], show_progress=False)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
@@ -12,7 +11,6 @@ import torch
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
     from tokenizers.models import BPE as TokenizersBPE
-    from tqdm.std import tqdm as Tqdm
 
 Frame = tuple[int, ...]
 FrameInput = Sequence[int]
@@ -145,28 +143,15 @@ class _CoreBPE:
         cls,
         corpus: Iterable[Sequence[int]],
         *,
-        vocab_size: int | None = None,
-        num_merges: int | None = None,
-        min_count: int = 2,
+        vocab_size: int = 30_000,
+        min_frequency: int = 0,
+        show_progress: bool = True,
+        max_token_length: int | None = None,
         strict: bool = True,
-        progress: bool = False,
     ) -> Self:
-        if vocab_size is not None and vocab_size <= 0:
-            raise ValueError("vocab_size must be positive")
-        if num_merges is not None and num_merges < 0:
-            raise ValueError("num_merges must be non-negative")
-        if min_count <= 0:
-            raise ValueError("min_count must be positive")
-
-        corpus_iter = _progress_iter(
-            corpus,
-            progress=progress,
-            desc="CodecBPE corpus",
-            unit="seq",
-        )
         sequences = [
             tuple(_normalize_base_id(base_id) for base_id in seq)
-            for seq in corpus_iter
+            for seq in corpus
         ]
         if not sequences:
             raise ValueError("corpus must not be empty")
@@ -177,55 +162,18 @@ class _CoreBPE:
             raise ValueError("corpus must contain at least one frame")
 
         base = sorted({base_id for seq in sequences for base_id in seq})
-        base_to_id = {base_id: token_id for token_id, base_id in enumerate(base)}
-        tokens: dict[int, tuple[int, ...]] = {
-            token_id: (base_id,)
-            for base_id, token_id in base_to_id.items()
+        base_tokens = {
+            base_id: _private_use_char(index)
+            for index, base_id in enumerate(base)
         }
-        encoded = [[base_to_id[base_id] for base_id in seq] for seq in sequences]
-        merges: list[Merge] = []
-        next_id = len(base)
-        if vocab_size is not None and next_id > vocab_size:
-            raise ValueError("vocab_size must be at least the number of unique corpus frames")
-
-        progress_bar = _progress_bar(
-            progress=progress,
-            total=cls._merge_progress_total(next_id, vocab_size, num_merges),
-            desc="CodecBPE merges",
-            unit="merge",
+        tokenizer = _train_tokenizers_bpe(
+            ("".join(base_tokens[base_id] for base_id in seq) for seq in sequences),
+            vocab_size=vocab_size,
+            min_frequency=min_frequency,
+            show_progress=show_progress,
+            max_token_length=max_token_length,
         )
-        stop_reason = "limit"
-        try:
-            while cls._can_merge(next_id, merges, vocab_size, num_merges):
-                pair_counts = cls._count_pairs(encoded)
-                if not pair_counts:
-                    stop_reason = "no_pairs"
-                    break
-
-                best_count = max(pair_counts.values())
-                if best_count < min_count:
-                    stop_reason = "min_count"
-                    break
-
-                pair = min(pair for pair, count in pair_counts.items() if count == best_count)
-                left, right = pair
-                token_id = next_id
-                next_id += 1
-
-                tokens[token_id] = tokens[left] + tokens[right]
-                merges.append(Merge(left=left, right=right, token_id=token_id))
-                encoded = [cls._merge(seq, pair, token_id) for seq in encoded]
-                if progress_bar is not None:
-                    progress_bar.set_postfix(count=best_count, vocab=next_id)
-                    progress_bar.update()
-        finally:
-            if progress_bar is not None:
-                if stop_reason != "limit" and progress_bar.total is not None:
-                    progress_bar.total = progress_bar.n
-                progress_bar.set_postfix_str(f"stop={stop_reason}, vocab={next_id}")
-                progress_bar.refresh()
-                progress_bar.close()
-
+        tokens, merges = _core_state_from_tokenizer(tokenizer, base_tokens)
         return cls(tokens, merges, strict=strict)
 
     def base_ids(self, token_id: int, *, strict: bool | None = None) -> tuple[int, ...]:
@@ -455,37 +403,6 @@ class _CoreBPE:
         return base_to_id
 
     @staticmethod
-    def _can_merge(
-        next_id: int,
-        merges: Sequence[Merge],
-        vocab_size: int | None,
-        num_merges: int | None,
-    ) -> bool:
-        if vocab_size is not None and next_id >= vocab_size:
-            return False
-        return num_merges is None or len(merges) < num_merges
-
-    @staticmethod
-    def _merge_progress_total(
-        next_id: int,
-        vocab_size: int | None,
-        num_merges: int | None,
-    ) -> int | None:
-        vocab_merges = None if vocab_size is None else max(vocab_size - next_id, 0)
-        if num_merges is None:
-            return vocab_merges
-        if vocab_merges is None:
-            return num_merges
-        return min(vocab_merges, num_merges)
-
-    @staticmethod
-    def _count_pairs(seqs: Sequence[Sequence[int]]) -> Counter[tuple[int, int]]:
-        counts: Counter[tuple[int, int]] = Counter()
-        for seq in seqs:
-            counts.update(zip(seq, seq[1:], strict=False))
-        return counts
-
-    @staticmethod
     def _merge(seq: Sequence[int], pair: tuple[int, int], token_id: int) -> list[int]:
         left, right = pair
         merged: list[int] = []
@@ -611,11 +528,11 @@ class CodecBPE:
         corpus: Iterable[Sequence[FrameInput]],
         *,
         codebook_sizes: Sequence[int],
-        vocab_size: int | None = None,
-        num_merges: int | None = None,
-        min_count: int = 2,
+        vocab_size: int = 30_000,
+        min_frequency: int = 0,
+        show_progress: bool = True,
+        max_token_length: int | None = None,
         strict: bool = True,
-        progress: bool = False,
         cache_capacity: int | None = None,
         dropout: float | None = None,
         unk_token: str | None = None,
@@ -629,10 +546,10 @@ class CodecBPE:
         core = _CoreBPE.train(
             _encoded_corpus(corpus, codec),
             vocab_size=vocab_size,
-            num_merges=num_merges,
-            min_count=min_count,
+            min_frequency=min_frequency,
+            show_progress=show_progress,
+            max_token_length=max_token_length,
             strict=strict,
-            progress=progress,
         )
         bpe = cls(
             cache_capacity=cache_capacity,
@@ -916,39 +833,54 @@ def _require_tokenizer() -> type[Tokenizer]:
     return Tokenizer
 
 
-def _progress_iter[T](
-    iterable: Iterable[T],
+def _train_tokenizers_bpe(
+    corpus: Iterable[str],
     *,
-    progress: bool,
-    desc: str,
-    unit: str,
-) -> Iterable[T]:
-    if not progress:
-        return iterable
-    tqdm = _require_tqdm()
-    total = len(iterable) if isinstance(iterable, Sized) else None
-    return tqdm(iterable, total=total, desc=desc, unit=unit)
-
-
-def _progress_bar(
-    *,
-    progress: bool,
-    total: int | None,
-    desc: str,
-    unit: str,
-) -> Tqdm | None:
-    if not progress:
-        return None
-    tqdm = _require_tqdm()
-    return tqdm(total=total, desc=desc, unit=unit)
-
-
-def _require_tqdm() -> type[Tqdm]:
+    vocab_size: int,
+    min_frequency: int,
+    show_progress: bool,
+    max_token_length: int | None,
+) -> Tokenizer:
     try:
-        from tqdm.auto import tqdm
+        from tokenizers.models import BPE
+        from tokenizers.trainers import BpeTrainer
     except ImportError as error:
-        raise ImportError("CodecBPE progress requires the `tqdm` package") from error
-    return tqdm
+        raise ImportError("CodecBPE.train() requires the `tokenizers` package") from error
+
+    tokenizer_type = _require_tokenizer()
+    tokenizer = tokenizer_type(BPE())
+    trainer = BpeTrainer(
+        vocab_size=vocab_size,
+        min_frequency=min_frequency,
+        show_progress=show_progress,
+        max_token_length=max_token_length,
+    )
+    tokenizer.train_from_iterator(corpus, trainer=trainer)
+    return tokenizer
+
+
+def _core_state_from_tokenizer(
+    tokenizer: Tokenizer,
+    base_tokens: Mapping[int, str],
+) -> tuple[dict[int, tuple[int, ...]], list[Merge]]:
+    model = json.loads(tokenizer.to_str())["model"]
+    char_to_base = {text: base_id for base_id, text in base_tokens.items()}
+    vocab = {text: int(token_id) for text, token_id in model["vocab"].items()}
+    tokens = {
+        token_id: tuple(char_to_base[char] for char in text)
+        for text, token_id in vocab.items()
+    }
+    merges: list[Merge] = []
+    for left_text, right_text in model["merges"]:
+        token_text = left_text + right_text
+        merges.append(
+            Merge(
+                left=vocab[left_text],
+                right=vocab[right_text],
+                token_id=vocab[token_text],
+            )
+        )
+    return tokens, merges
 
 
 def _normalize_codebook_sizes(codebook_sizes: Sequence[int]) -> tuple[int, ...]:

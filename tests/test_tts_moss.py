@@ -149,8 +149,8 @@ class MossTTSAdapterTest(unittest.TestCase):
                 temperature=0.8,
                 top_p=0.95,
                 seed=7,
-                extra={"prompt_audio_path": "assets/audio/zh_1.wav"},
             ),
+            reference_audio_path="assets/audio/zh_1.wav",
         )
 
         self.assertEqual(tuple(output.waveform.shape), (1, 5))
@@ -185,7 +185,8 @@ class MossTTSAdapterTest(unittest.TestCase):
 
         outputs = tts.synthesize(
             ["hello", "world"],
-            TTSOptions(max_new_tokens=13, extra={"prompt_audio_path": "assets/prompt.wav"}),
+            TTSOptions(max_new_tokens=13),
+            reference_audio_paths=["assets/source.wav", "assets/target.wav"],
         )
 
         self.assertEqual(len(outputs), 2)
@@ -194,7 +195,7 @@ class MossTTSAdapterTest(unittest.TestCase):
         self.assertEqual([message["text"] for message in processor.messages], ["hello", "world"])
         self.assertEqual(
             [message["reference"] for message in processor.messages],
-            [["assets/prompt.wav"], ["assets/prompt.wav"]],
+            [["assets/source.wav"], ["assets/target.wav"]],
         )
         self.assertEqual(processor.batch_modes, ["generation"])
         self.assertEqual(tuple(model.calls[0]["input_ids"].shape), (2, 2))
@@ -212,6 +213,12 @@ class MossTTSAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "text batch length"):
             tts.synthesize(["hello", "world"])
 
+    def test_synthesize_batch_rejects_reference_length_mismatch(self):
+        tts = MossTTS(model=FakeBatchMossModel(), processor=FakeMossProcessor())
+
+        with self.assertRaisesRegex(ValueError, "reference_audio_paths length"):
+            tts.synthesize(["hello", "world"], reference_audio_paths=["assets/one.wav"])
+
     def test_runtime_kwargs_do_not_leak_load_kwargs(self):
         model = FakeMossModel()
         processor = FakeMossProcessor()
@@ -224,7 +231,7 @@ class MossTTSAdapterTest(unittest.TestCase):
             ),
         )
 
-        tts.synthesize("hello", prompt_audio_path="assets/prompt.wav")
+        tts.synthesize("hello", reference_audio_path="assets/prompt.wav")
 
         self.assertEqual(processor.messages[0]["reference"], ["assets/prompt.wav"])
         self.assertEqual(model.calls[0]["do_sample"], False)
@@ -239,7 +246,11 @@ class MossTTSAdapterTest(unittest.TestCase):
             config=MossTTSConfig(runtime_kwargs={"do_sample": False, "max_new_tokens": 12}),
         )
 
-        tts.synthesize("hello", TTSOptions(extra={}), prompt_audio_path="assets/prompt.wav")
+        tts.synthesize(
+            "hello",
+            TTSOptions(extra={}),
+            reference_audio_path="assets/prompt.wav",
+        )
 
         self.assertNotIn("do_sample", model.calls[0])
         self.assertNotIn("max_new_tokens", model.calls[0])
@@ -251,11 +262,11 @@ class MossTTSAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "speaker"):
             tts.synthesize("hello", TTSOptions(speaker="alice"))
 
-    def test_v15_rejects_legacy_file_output(self):
+    def test_v15_rejects_reference_runtime_kwargs(self):
         tts = MossTTS(model=FakeMossModel(), processor=FakeMossProcessor())
 
-        with self.assertRaisesRegex(ValueError, "output_audio_path"):
-            tts.synthesize("hello", output_audio_path="outputs/moss.wav")
+        with self.assertRaisesRegex(TypeError, "unsupported"):
+            tts.synthesize("hello", prompt_audio_path="assets/prompt.wav")
 
     def test_seeded_generation_restores_global_rng_state(self):
         model = FakeRandomMossModel()

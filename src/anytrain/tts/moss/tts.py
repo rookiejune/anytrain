@@ -11,6 +11,7 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from os import PathLike
 from pathlib import Path
 from typing import Any, Protocol, TypedDict, Unpack, cast, overload
 
@@ -18,6 +19,7 @@ import torch
 from torch import Tensor, nn
 
 from anytrain.tts import (
+    AudioReference,
     TTSOptions,
     TTSOutput,
     validate_text,
@@ -43,9 +45,6 @@ class MossLoadKwargs(TypedDict, total=False):
 class MossRuntimeKwargs(TypedDict, total=False):
     do_sample: bool
     max_new_tokens: int
-    output_audio_path: str | Path
-    prompt_audio_path: str | Path
-    reference_audio_path: str | Path
     temperature: float
     tokens: object
     top_p: float
@@ -216,6 +215,7 @@ class MossTTS:
         self,
         text: str,
         options: TTSOptions | None = None,
+        reference_audio_path: AudioReference | None = None,
         **runtime_kwargs: Unpack[MossRuntimeKwargs],
     ) -> TTSOutput: ...
 
@@ -224,6 +224,7 @@ class MossTTS:
         self,
         text: Sequence[str],
         options: TTSOptions | None = None,
+        reference_audio_paths: Sequence[AudioReference] | None = None,
         **runtime_kwargs: Unpack[MossRuntimeKwargs],
     ) -> list[TTSOutput]: ...
 
@@ -232,17 +233,32 @@ class MossTTS:
         self,
         text: str | Sequence[str],
         options: TTSOptions | None = None,
+        reference_audio_path: AudioReference | None = None,
+        reference_audio_paths: Sequence[AudioReference] | None = None,
         **runtime_kwargs: Unpack[MossRuntimeKwargs],
     ) -> TTSOutput | list[TTSOutput]:
         resolved = self._options(options, runtime_kwargs)
         _validate_v15_options(resolved)
         if isinstance(text, str):
-            return self._synthesize_one(text, resolved)
-        return self._synthesize_batch(text, resolved)
+            if reference_audio_paths is not None:
+                raise TypeError("single text requires reference_audio_path.")
+            return self._synthesize_one(text, resolved, reference_audio_path)
+        if reference_audio_path is not None:
+            raise TypeError("text batches require reference_audio_paths.")
+        return self._synthesize_batch(text, resolved, reference_audio_paths)
 
-    def _synthesize_one(self, text: str, options: TTSOptions) -> TTSOutput:
+    def _synthesize_one(
+        self,
+        text: str,
+        options: TTSOptions,
+        reference_audio_path: AudioReference | None,
+    ) -> TTSOutput:
         text = validate_text(text)
-        decoded = self._generate_for_texts([text], options)
+        decoded = self._generate_for_texts(
+            [text],
+            options,
+            [None if reference_audio_path is None else _audio_reference(reference_audio_path)],
+        )
         return _normalize_processor_output(
             decoded,
             sample_rate=_processor_sample_rate(
@@ -251,9 +267,18 @@ class MossTTS:
             ),
         )
 
-    def _synthesize_batch(self, text: Sequence[str], options: TTSOptions) -> list[TTSOutput]:
+    def _synthesize_batch(
+        self,
+        text: Sequence[str],
+        options: TTSOptions,
+        reference_audio_paths: Sequence[AudioReference] | None,
+    ) -> list[TTSOutput]:
         texts = _validate_text_batch(text)
-        decoded = self._generate_for_texts(texts, options)
+        decoded = self._generate_for_texts(
+            texts,
+            options,
+            _audio_references(reference_audio_paths, expected_count=len(texts)),
+        )
         return _normalize_processor_outputs(
             decoded,
             expected_count=len(texts),
@@ -263,10 +288,19 @@ class MossTTS:
             ),
         )
 
-    def _generate_for_texts(self, texts: Sequence[str], options: TTSOptions) -> object:
+    def _generate_for_texts(
+        self,
+        texts: Sequence[str],
+        options: TTSOptions,
+        references: Sequence[str | None],
+    ) -> object:
         conversations = [
-            [self.processor.build_user_message(**_processor_message_kwargs(text, options))]
-            for text in texts
+            [
+                self.processor.build_user_message(
+                    **_processor_message_kwargs(text, options, reference)
+                )
+            ]
+            for text, reference in zip(texts, references, strict=True)
         ]
         batch = self.processor(conversations, mode="generation")
         inputs = _processor_batch_inputs(batch, self.device)
@@ -351,20 +385,43 @@ def _resolve_pretrained_source(
         return raw
 
 
-def _processor_message_kwargs(text: str, options: TTSOptions) -> dict[str, object]:
+def _processor_message_kwargs(
+    text: str,
+    options: TTSOptions,
+    reference_audio_path: str | None,
+) -> dict[str, object]:
     kwargs: dict[str, object] = {"text": text}
     if options.language is not None:
         kwargs["language"] = options.language
-    prompt_audio_path = options.extra.get(
-        "prompt_audio_path",
-        options.extra.get("reference_audio_path"),
-    )
-    if prompt_audio_path is not None:
-        kwargs["reference"] = [prompt_audio_path]
+    if reference_audio_path is not None:
+        kwargs["reference"] = [reference_audio_path]
     tokens = options.extra.get("tokens")
     if tokens is not None:
         kwargs["tokens"] = tokens
     return kwargs
+
+
+def _audio_reference(value: AudioReference) -> str:
+    if not isinstance(value, str | PathLike):
+        raise TypeError("reference audio path must be a string or path-like object.")
+    return str(value)
+
+
+def _audio_references(
+    values: Sequence[AudioReference] | None,
+    *,
+    expected_count: int,
+) -> list[str | None]:
+    if values is None:
+        return [None] * expected_count
+    if isinstance(values, str | bytes | PathLike):
+        raise TypeError("reference_audio_paths must be a sequence of paths.")
+    if len(values) != expected_count:
+        raise ValueError(
+            "reference_audio_paths length must match text batch length: "
+            f"got {len(values)}, expected {expected_count}."
+        )
+    return [_audio_reference(value) for value in values]
 
 
 def _validate_text_batch(text: Sequence[str]) -> list[str]:
@@ -614,10 +671,6 @@ def _validate_runtime_kwargs(value: Mapping[str, object], name: str) -> None:
     if unsupported:
         names = ", ".join(sorted(unsupported))
         raise TypeError(f"unsupported MOSS-TTS v1.5 runtime options: {names}.")
-    if value.get("output_audio_path") is not None:
-        raise ValueError(
-            "MOSS-TTS v1.5 synthesize() returns audio in memory; output_audio_path is unsupported."
-        )
 
 
 def _validate_kwargs(value: Mapping[str, object], name: str) -> None:

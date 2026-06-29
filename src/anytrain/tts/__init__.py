@@ -1,4 +1,5 @@
 from .protocol import (
+    AudioReference,
     TTSBackend,
     TTSGeneration,
     TTSKwargs,
@@ -10,6 +11,7 @@ from .protocol import (
 )
 
 __all__ = [
+    "AudioReference",
     "TTSBackend",
     "TTSGeneration",
     "TTSKwargs",

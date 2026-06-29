@@ -28,8 +28,8 @@ all texts and keeps each variable-length waveform as a separate output item.
 The MOSS adapter intentionally targets only MOSS-TTS v1.5. It loads the
 Hugging Face remote-code model and processor, then runs the v1.5 processor
 generation path. Keyword arguments passed to `from_pretrained()` are load-time
-options, while runtime conditioning belongs in `TTSOptions(extra=...)`,
-`runtime_kwargs=...`, or direct `synthesize()` keyword arguments:
+options, generation settings belong in `TTSOptions` or `runtime_kwargs`, and
+reference audio paths are passed directly to `synthesize()`:
 
 ```python
 tts = MossTTS.from_pretrained(
@@ -41,13 +41,14 @@ tts = MossTTS.from_pretrained(
 audio = tts.synthesize(
     "你好",
     TTSOptions(seed=7),
-    prompt_audio_path="assets/audio/zh_1.wav",
+    reference_audio_path="assets/audio/zh_1.wav",
 )
 ```
 
 The v1.5 adapter returns audio in memory and does not support legacy
-`output_audio_path`, `speaker`, `model.inference()`, or
-`tokenize -> generate -> decode` compatibility paths.
+`prompt_audio_path`, `reference_audio_path` as a runtime kwarg,
+`output_audio_path`, `speaker`, `model.inference()`, or `tokenize -> generate ->
+decode` compatibility paths.
 
 When merging `TTSOptions`, explicitly passed fields override defaults even when
 the value is `None`; omitted fields inherit the backend config.

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from os import PathLike
 from typing import Protocol, TypedDict, Unpack, overload
 
 import torch
 from torch import Tensor
+
+type AudioReference = str | PathLike[str]
 
 
 class TTSKwargs(TypedDict, total=False):
@@ -200,6 +203,7 @@ class TTSBackend(Protocol):
         self,
         text: str,
         options: TTSOptions | None = None,
+        reference_audio_path: AudioReference | None = None,
     ) -> TTSOutput: ...
 
     @overload
@@ -207,12 +211,15 @@ class TTSBackend(Protocol):
         self,
         text: Sequence[str],
         options: TTSOptions | None = None,
+        reference_audio_paths: Sequence[AudioReference] | None = None,
     ) -> list[TTSOutput]: ...
 
     def synthesize(
         self,
         text: str | Sequence[str],
         options: TTSOptions | None = None,
+        reference_audio_path: AudioReference | None = None,
+        reference_audio_paths: Sequence[AudioReference] | None = None,
     ) -> TTSOutput | list[TTSOutput]: ...
 
 

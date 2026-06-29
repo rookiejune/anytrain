@@ -1,7 +1,5 @@
-import io
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 
 import torch
 
@@ -55,7 +53,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,7 +72,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         self.assertEqual(bpe.vocab_size, 5)
@@ -97,18 +95,21 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.expand_ids(encoded), [(0,), (4096,), (8191,)])
         self.assertEqual(len(bpe.token_text(8191)), 1)
 
-    def test_train_interprets_vocab_size_as_compact_size(self):
-        with self.assertRaisesRegex(ValueError, "unique"):
-            CodecBPE.train(
-                [[[100], [101], [102]]],
-                codebook_sizes=(128,),
-                vocab_size=2,
-            )
+    def test_train_keeps_alphabet_when_vocab_size_is_smaller(self):
+        bpe = CodecBPE.train(
+            [[[100], [101], [102]]],
+            codebook_sizes=(128,),
+            vocab_size=2,
+            show_progress=False,
+        )
+
+        self.assertEqual(bpe.vocab_size, 3)
+        self.assertEqual(bpe.encode_frames([[100], [101], [102]]), [0, 1, 2])
 
         bpe = CodecBPE.train(
             [[[100], [101], [100], [101]]],
             codebook_sizes=(128,),
-            vocab_size=4,
+            vocab_size=3,
         )
 
         self.assertEqual(bpe.vocab_size, 3)
@@ -127,13 +128,38 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.vocab_size, 3)
         self.assertEqual(bpe.encode_frames([[100], [101], [100], [101]]), [2, 2])
 
+    def test_train_respects_min_frequency(self):
+        bpe = CodecBPE.train(
+            [[[1], [2]]],
+            codebook_sizes=(16,),
+            vocab_size=3,
+            min_frequency=2,
+            show_progress=False,
+        )
+
+        self.assertEqual(bpe.vocab_size, 2)
+        self.assertEqual(bpe.encode_frames([[1], [2]]), [0, 1])
+
+    def test_train_respects_max_token_length(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+            max_token_length=2,
+            show_progress=False,
+        )
+
+        self.assertEqual(bpe.vocab_size, 4)
+        self.assertEqual(bpe.tokens[3], ((1,), (2,)))
+        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [3, 2])
+
     def test_train_merges_multi_codebook_frames_and_round_trips(self):
         corpus = [
             [[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]],
             [[1, 4], [2, 7], [3, 8]],
         ]
 
-        bpe = CodecBPE.train(corpus, codebook_sizes=(4, 16), num_merges=2)
+        bpe = CodecBPE.train(corpus, codebook_sizes=(4, 16), vocab_size=5)
 
         self.assertEqual(bpe.vocab_size, 5)
         self.assertEqual(bpe.tokens[0], ((1, 4),))
@@ -150,7 +176,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1, 4], [2, 7], [1, 4], [2, 7]]],
             codebook_sizes=(4, 16),
-            num_merges=1,
+            vocab_size=3,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -183,25 +209,21 @@ class BPETest(unittest.TestCase):
     def test_train_progress_keeps_same_result(self):
         corpus = [[[1], [2], [1], [2], [3]], [[1], [2], [3]]]
 
-        plain = CodecBPE.train(corpus, codebook_sizes=(16,), num_merges=2)
-        progress_output = io.StringIO()
-        with redirect_stderr(progress_output):
-            with_progress = CodecBPE.train(
-                corpus,
-                codebook_sizes=(16,),
-                num_merges=2,
-                progress=True,
-            )
+        plain = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+        with_progress = CodecBPE.train(
+            corpus,
+            codebook_sizes=(16,),
+            vocab_size=5,
+            show_progress=True,
+        )
 
         self.assertEqual(with_progress.to_dict(), plain.to_dict())
-        self.assertIn("CodecBPE corpus", progress_output.getvalue())
-        self.assertIn("CodecBPE merges", progress_output.getvalue())
 
     def test_expand_with_counts_returns_frames_and_lengths(self):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         frames, counts = bpe.expand_with_counts([3, 4])
@@ -213,7 +235,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
         x = torch.tensor([[10.0, 11.0], [20.0, 21.0]])
         token_ids = torch.tensor([3, 4])
@@ -239,7 +261,7 @@ class BPETest(unittest.TestCase):
                 [[1, 4], [2, 7], [3, 8]],
             ],
             codebook_sizes=(4, 16),
-            num_merges=2,
+            vocab_size=5,
         )
         x = torch.tensor([[10.0, 11.0], [20.0, 21.0]])
         token_ids = torch.tensor([3, 4])
@@ -275,7 +297,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
         x = torch.tensor(
             [
@@ -337,7 +359,7 @@ class BPETest(unittest.TestCase):
                 [[1, 4], [2, 7], [3, 8]],
             ],
             codebook_sizes=(4, 16),
-            num_merges=2,
+            vocab_size=5,
         )
         x = torch.tensor(
             [
@@ -386,7 +408,7 @@ class BPETest(unittest.TestCase):
                 [[2, 7], [3, 8]],
             ],
             codebook_sizes=(4, 16),
-            num_merges=1,
+            vocab_size=4,
         )
         x = torch.tensor(
             [
@@ -426,7 +448,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
         x = torch.tensor(
             [
@@ -448,7 +470,7 @@ class BPETest(unittest.TestCase):
         self.assertTrue(torch.equal(expanded_mask, torch.ones((2, 5), dtype=torch.bool)))
 
     def test_strict_rejects_empty_inputs_and_unknown_ids(self):
-        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), num_merges=1)
+        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "empty"):
             CodecBPE.train([], codebook_sizes=(16,))
@@ -463,7 +485,7 @@ class BPETest(unittest.TestCase):
 
     def test_train_rejects_negative_frame_ids(self):
         with self.assertRaisesRegex(ValueError, "non-negative"):
-            CodecBPE.train([[[-1], [0], [-1], [0]]], codebook_sizes=(16,), num_merges=1)
+            CodecBPE.train([[[-1], [0], [-1], [0]]], codebook_sizes=(16,), vocab_size=3)
 
         with self.assertRaisesRegex(ValueError, "non-negative"):
             CodecBPE.from_dict(
@@ -476,7 +498,7 @@ class BPETest(unittest.TestCase):
             )
 
     def test_non_strict_allows_empty_input_but_not_unknown_frames(self):
-        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), num_merges=1, strict=False)
+        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4, strict=False)
 
         self.assertEqual(bpe.encode_frames([]), [])
         with self.assertRaisesRegex(KeyError, "unknown frame"):
@@ -488,7 +510,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         with self.assertRaisesRegex(ValueError, "mask"):
@@ -529,7 +551,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         self.assertEqual(bpe.tokens[3], ((1,), (2,)))
@@ -540,7 +562,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
         frames = [[1], [2], [1], [2], [3]]
         base_ids = [1, 2, 1, 2, 3]
@@ -557,7 +579,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
-            num_merges=2,
+            vocab_size=5,
         )
 
         stats = bpe.eval([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
@@ -572,7 +594,7 @@ class BPETest(unittest.TestCase):
         self.assertAlmostEqual(stats.compression_gain, 5 / 8)
 
     def test_eval_rejects_empty_corpus(self):
-        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), num_merges=1)
+        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "corpus"):
             bpe.eval([])

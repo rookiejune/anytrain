@@ -1,7 +1,5 @@
-import io
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 
 import torch
 
@@ -20,7 +18,7 @@ def corpus():
 @unittest.skipIf(tokenizers is None, "tokenizers is not installed")
 class CodecBPERegressionTest(unittest.TestCase):
     def test_from_pretrained_accepts_state_file(self):
-        bpe = CodecBPE.train(corpus(), codebook_sizes=(16,), num_merges=2)
+        bpe = CodecBPE.train(corpus(), codebook_sizes=(16,), vocab_size=5)
 
         with tempfile.TemporaryDirectory() as tmp:
             out = bpe.save_pretrained(tmp)
@@ -29,22 +27,18 @@ class CodecBPERegressionTest(unittest.TestCase):
         self.assertEqual(loaded.to_dict(), bpe.to_dict())
 
     def test_progress_keeps_same_result(self):
-        plain = CodecBPE.train(corpus(), codebook_sizes=(16,), num_merges=2)
-        progress_output = io.StringIO()
-        with redirect_stderr(progress_output):
-            with_progress = CodecBPE.train(
-                corpus(),
-                codebook_sizes=(16,),
-                num_merges=2,
-                progress=True,
-            )
+        plain = CodecBPE.train(corpus(), codebook_sizes=(16,), vocab_size=5, show_progress=False)
+        with_progress = CodecBPE.train(
+            corpus(),
+            codebook_sizes=(16,),
+            vocab_size=5,
+            show_progress=True,
+        )
 
         self.assertEqual(with_progress.to_dict(), plain.to_dict())
-        self.assertIn("CodecBPE corpus", progress_output.getvalue())
-        self.assertIn("CodecBPE merges", progress_output.getvalue())
 
     def test_repeat_interleave_uses_expansion_counts(self):
-        bpe = CodecBPE.train(corpus(), codebook_sizes=(16,), num_merges=2)
+        bpe = CodecBPE.train(corpus(), codebook_sizes=(16,), vocab_size=5)
         x = torch.tensor([[10.0, 11.0], [20.0, 21.0]])
         token_ids = torch.tensor([3, 4])
 

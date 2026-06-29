@@ -13,14 +13,16 @@
 
 ## CodecBPE
 
-`CodecBPE` 用于在离散 unit sequence 上训练和评估 BPE。unit 可以是 `int`，
-也可以是固定长度的 `Sequence[int]`，用于多 codebook codec frame。它内部持有
-`tokenizers.models.BPE`，用于和 Hugging Face `tokenizers.Tokenizer(model=...)` 对接。
+`CodecBPE` 用于在离散 codec frame sequence 上训练和评估 BPE。公开入口只接受
+2D 语义的 frame 序列：单 codebook 也写作 `[[id], ...]`，多 codebook 写作
+`[[codebook_0_id, codebook_1_id, ...], ...]`。它内部把 frame 按 `codebook_sizes`
+mixed-radix 编码成统一的 int sequence，再训练 compact BPE vocab，并持有
+`tokenizers.models.BPE` 用于和 Hugging Face `tokenizers.Tokenizer(model=...)` 对接。
 
 它支持：
 
-- `train(corpus, ..., progress=False)`
-- `encode_units(units)`
+- `train(corpus, codebook_sizes=..., ..., progress=False)`
+- `encode_frames(frames)`
 - `expand_ids(token_ids)`
 - `expand_with_counts(token_ids)`
 - `repeat_interleave(x, token_ids, mask=None, dim=...)`
@@ -34,36 +36,45 @@
 ```python
 from anytrain.tokenizer import CodecBPE
 
-bpe = CodecBPE.train([[1, 2, 1, 2, 3], [1, 2, 3]], vocab_size=8)
-token_ids = bpe.encode_units([1, 2, 1, 2, 3])
-unit_ids = bpe.expand_ids(token_ids)
-stats = bpe.eval([[1, 2, 1, 2, 3]])
+bpe = CodecBPE.train(
+    [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+    codebook_sizes=(8192,),
+    vocab_size=8,
+)
+token_ids = bpe.encode_frames([[1], [2], [1], [2], [3]])
+frames = bpe.expand_ids(token_ids)
+stats = bpe.eval([[[1], [2], [1], [2], [3]]])
 vocab_size = bpe.vocab_size
 ```
 
 多 codebook codec frame 用同一个入口：
 
 ```python
-bpe = CodecBPE.train([[(1, 4), (2, 7), (1, 4), (2, 7)]], vocab_size=8)
-token_ids = bpe.encode_units([(1, 4), (2, 7)])
+bpe = CodecBPE.train(
+    [[[1, 4], [2, 7], [1, 4], [2, 7]]],
+    codebook_sizes=(4, 16),
+    vocab_size=8,
+)
+token_ids = bpe.encode_frames([[1, 4], [2, 7]])
 frames = bpe.expand_ids(token_ids)
 ```
 
-`repeat_interleave` 用于把 BPE token 级张量展开到原始 unit 粒度：
+`repeat_interleave` 用于把 BPE token 级张量展开到原始 frame 粒度：
 
-- `token_ids` 是 1D 时保持简单行为，返回 `expanded_x, expanded_unit_ids`。
+- `token_ids` 是 1D 时保持简单行为，返回 `expanded_x, expanded_frames`。
 - `token_ids` 是 2D 时返回 batch padded 结果：
-  `expanded_x, expanded_unit_ids, expanded_mask`。
+  `expanded_x, expanded_frames, expanded_mask`。
 - 2D 输入可传 `mask` 标记有效 token。展开时只使用有效 token，输出按 batch 内最长展开长度重新 pad。
-- 输出 `expanded_unit_ids` 的 padding id 从 `input_ids[~mask]` 推断；若 padding 位存在多个不同值会报错。若需要输出 padding 但无法推断 padding id，也会报错。
-- 对 tuple unit，`expanded_unit_ids` 的末维是 unit 维度，例如 `[T, num_codebooks]`
+- 输出 `expanded_frames` 的 padding id 从 `input_ids[~mask]` 推断；若 padding 位存在多个不同值会报错。若需要输出 padding 但无法推断 padding id，也会报错。
+- `expanded_frames` 的末维总是 codebook 维度，例如 `[T, 1]`、`[B, T, 1]`
   或 `[B, T, num_codebooks]`。
 
-`CodecBPE` 的 BPE token id 是内部 compact vocab index。原始 unit id 或 codec frame
+`CodecBPE` 的 BPE token id 是内部 compact vocab index。原始 codec frame
 只通过 `expand_ids()` / `expand_with_counts()` 还原，不保证和 BPE token id 相同。
 训练时传 `progress=True` 会显示 corpus 读取和 merge 轮次两个 `tqdm` 进度条。
 若传入 `vocab_size`，它按 compact BPE vocab 大小解释，必须不小于 corpus 中不同
-unit 的数量。tuple unit 必须在同一个 tokenizer 内保持固定长度，不能和 int unit 混用。
+frame 的数量。frame 长度必须等于 `len(codebook_sizes)`，每个 code id 必须在对应
+book size 范围内。单 codebook 也必须通过 `[id]` 表达，不保留 1D unit 入口。
 
 `tokenizers` 不进入 package root import 链；只有使用 `CodecBPE` 需要构造底层 BPE model 时才要求安装。
 

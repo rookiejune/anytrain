@@ -1,8 +1,6 @@
 import unittest
 
 import torch
-from torch import nn
-
 from anytrain.module.dynamic_conv import (
     ADTRouter1d,
     ADTRouter2d,
@@ -17,6 +15,7 @@ from anytrain.module.dynamic_conv.shape import (
     infer_padding_2d,
     validate_dynamic_conv1d_args,
 )
+from torch import nn
 
 
 class SimpleRouter(nn.Module):
@@ -520,7 +519,9 @@ class ADTRouter2dTest(unittest.TestCase):
 
 class DynamicConvShapeTest(unittest.TestCase):
     def test_effective_kernel_and_padding(self):
-        self.assertEqual(effective_kernel_size_1d(torch.Size([3]), torch.Size([2])), torch.Size([5]))
+        self.assertEqual(
+            effective_kernel_size_1d(torch.Size([3]), torch.Size([2])), torch.Size([5])
+        )
         self.assertEqual(infer_padding_1d(torch.Size([5]), torch.Size([1])), torch.Size([2]))
         self.assertEqual(infer_padding_1d(torch.Size([4]), torch.Size([2])), torch.Size([1]))
         self.assertEqual(

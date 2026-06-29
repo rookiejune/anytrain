@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     from tokenizers.models import BPE as TokenizersBPE
     from tqdm.std import tqdm as Tqdm
 
-Unit = int | tuple[int, ...]
-UnitInput = int | Sequence[int]
-UnitState = int | list[int]
+Frame = tuple[int, ...]
+FrameInput = Sequence[int]
+FrameState = list[int]
 
 PRIVATE_USE_RANGES = (
     (0xE000, 0xF8FF),
@@ -39,7 +39,8 @@ class _TokenizersBPEKwargs(TypedDict):
 
 
 class CodecBPEState(TypedDict):
-    tokens: dict[str, list[UnitState]]
+    codebook_sizes: list[int]
+    tokens: dict[str, list[FrameState]]
     merges: list[dict[str, int]]
     strict: bool
 
@@ -69,10 +70,43 @@ RepeatInterleaveOutput = tuple[torch.Tensor, torch.Tensor] | tuple[
 ]
 
 
+class _FrameCodec:
+    def __init__(self, codebook_sizes: Sequence[int]) -> None:
+        self.codebook_sizes = _normalize_codebook_sizes(codebook_sizes)
+        self.num_codebooks = len(self.codebook_sizes)
+
+        strides: list[int] = []
+        stride = 1
+        for size in self.codebook_sizes:
+            strides.append(stride)
+            stride *= size
+        self.strides = tuple(strides)
+        self.vocab_size = stride
+
+    def normalize(self, frame: FrameInput) -> Frame:
+        return _normalize_frame(frame, self.codebook_sizes)
+
+    def encode(self, frame: FrameInput) -> int:
+        values = self.normalize(frame)
+        return sum(value * stride for value, stride in zip(values, self.strides, strict=True))
+
+    def decode(self, frame_id: int) -> Frame:
+        frame_id = _normalize_base_id(frame_id)
+        if frame_id >= self.vocab_size:
+            raise ValueError("frame id is outside the configured codebook space")
+
+        values: list[int] = []
+        remaining = frame_id
+        for size in self.codebook_sizes:
+            values.append(remaining % size)
+            remaining //= size
+        return tuple(values)
+
+
 class _CoreBPE:
     def __init__(
         self,
-        tokens: Mapping[int, Sequence[UnitInput]],
+        tokens: Mapping[int, Sequence[int]],
         merges: Sequence[Merge | tuple[int, int, int]] = (),
         *,
         strict: bool = True,
@@ -82,15 +116,14 @@ class _CoreBPE:
 
         self.strict = strict
         self.tokens = {
-            int(token_id): tuple(_normalize_unit(unit) for unit in units)
-            for token_id, units in tokens.items()
+            int(token_id): tuple(_normalize_base_id(base_id) for base_id in base_ids)
+            for token_id, base_ids in tokens.items()
         }
-        self.unit_dim = _unit_dim_from_token_units(self.tokens.values())
-        for token_id, units in self.tokens.items():
+        for token_id, base_ids in self.tokens.items():
             if token_id < 0:
                 raise ValueError("token ids must be non-negative")
-            if not units:
-                raise ValueError(f"token {token_id} must contain at least one unit")
+            if not base_ids:
+                raise ValueError(f"token {token_id} must contain at least one frame")
 
         parsed: list[Merge] = []
         for merge in merges:
@@ -101,7 +134,7 @@ class _CoreBPE:
                 parsed.append(Merge(left=left, right=right, token_id=token_id))
         self.merges = tuple(parsed)
 
-        self.unit_to_id = self._build_unit_to_id(self.tokens)
+        self.base_to_id = self._build_base_to_id(self.tokens)
 
     @property
     def vocab_size(self) -> int:
@@ -110,7 +143,7 @@ class _CoreBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[UnitInput]],
+        corpus: Iterable[Sequence[int]],
         *,
         vocab_size: int | None = None,
         num_merges: int | None = None,
@@ -131,27 +164,29 @@ class _CoreBPE:
             desc="CodecBPE corpus",
             unit="seq",
         )
-        units = [tuple(_normalize_unit(unit) for unit in seq) for seq in corpus_iter]
-        if not units:
+        sequences = [
+            tuple(_normalize_base_id(base_id) for base_id in seq)
+            for seq in corpus_iter
+        ]
+        if not sequences:
             raise ValueError("corpus must not be empty")
-        if strict and any(len(seq) == 0 for seq in units):
+        if strict and any(len(seq) == 0 for seq in sequences):
             raise ValueError("corpus must not contain empty sequences")
-        units = [seq for seq in units if seq]
-        if not units:
-            raise ValueError("corpus must contain at least one unit")
-        _unit_dim_from_sequences(units)
+        sequences = [seq for seq in sequences if seq]
+        if not sequences:
+            raise ValueError("corpus must contain at least one frame")
 
-        base = sorted({unit for seq in units for unit in seq})
-        unit_to_id = {unit: token_id for token_id, unit in enumerate(base)}
-        tokens: dict[int, tuple[Unit, ...]] = {
-            token_id: (unit,)
-            for unit, token_id in unit_to_id.items()
+        base = sorted({base_id for seq in sequences for base_id in seq})
+        base_to_id = {base_id: token_id for token_id, base_id in enumerate(base)}
+        tokens: dict[int, tuple[int, ...]] = {
+            token_id: (base_id,)
+            for base_id, token_id in base_to_id.items()
         }
-        encoded = [[unit_to_id[unit] for unit in seq] for seq in units]
+        encoded = [[base_to_id[base_id] for base_id in seq] for seq in sequences]
         merges: list[Merge] = []
         next_id = len(base)
         if vocab_size is not None and next_id > vocab_size:
-            raise ValueError("vocab_size must be at least the number of unique corpus units")
+            raise ValueError("vocab_size must be at least the number of unique corpus frames")
 
         progress_bar = _progress_bar(
             progress=progress,
@@ -193,69 +228,59 @@ class _CoreBPE:
 
         return cls(tokens, merges, strict=strict)
 
-    def unit_ids(self, token_id: int, *, strict: bool | None = None) -> tuple[Unit, ...]:
+    def base_ids(self, token_id: int, *, strict: bool | None = None) -> tuple[int, ...]:
         use_strict = self.strict if strict is None else strict
         if token_id in self.tokens:
             return self.tokens[token_id]
         if use_strict:
             raise KeyError(f"unknown token_id: {token_id}")
-        if self.unit_dim is not None:
-            raise KeyError(f"unknown token_id cannot be expanded for tuple units: {token_id}")
-        return (token_id,)
+        raise KeyError(f"unknown token_id cannot be expanded with compact vocab: {token_id}")
 
-    def encode_units(self, units: Sequence[UnitInput], *, strict: bool | None = None) -> list[int]:
+    def encode_ids(self, base_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
         use_strict = self.strict if strict is None else strict
-        if not units:
+        if not base_ids:
             if use_strict:
-                raise ValueError("units must not be empty")
+                raise ValueError("frames must not be empty")
             return []
 
         token_ids: list[int] = []
-        normalized = tuple(_normalize_unit(unit) for unit in units)
-        _validate_unit_dim(normalized, self.unit_dim)
-        for unit in normalized:
-            token_id = self.unit_to_id.get(unit)
+        normalized = tuple(_normalize_base_id(base_id) for base_id in base_ids)
+        for base_id in normalized:
+            token_id = self.base_to_id.get(base_id)
             if token_id is None:
-                if use_strict:
-                    raise KeyError(f"unknown unit: {unit}")
-                if self.unit_dim is not None:
-                    raise KeyError(f"unknown tuple unit cannot be encoded: {unit}")
-                if unit in self.tokens:
-                    raise ValueError(f"unknown unit collides with token_id: {unit}")
-                token_ids.append(unit)
-            else:
-                token_ids.append(token_id)
+                raise KeyError(f"unknown frame id: {base_id}")
+            token_ids.append(token_id)
 
         for merge in self.merges:
             token_ids = self._merge(token_ids, (merge.left, merge.right), merge.token_id)
         return token_ids
 
-    def eval(self, corpus: Iterable[Sequence[UnitInput]]) -> CompressionStats:
-        return _eval(corpus, self.encode_units)
+    def eval(self, corpus: Iterable[Sequence[int]]) -> CompressionStats:
+        return _eval(corpus, self.encode_ids)
 
-    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Unit]:
-        unit_ids, _ = self.expand_with_counts(token_ids, strict=strict)
-        return unit_ids
+    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
+        base_ids, _ = self.expand_with_counts(token_ids, strict=strict)
+        return base_ids
 
     def expand_with_counts(
         self,
         token_ids: Sequence[int],
         *,
         strict: bool | None = None,
-    ) -> tuple[list[Unit], list[int]]:
+    ) -> tuple[list[int], list[int]]:
         use_strict = self.strict if strict is None else strict
         if not token_ids:
             if use_strict:
                 raise ValueError("token_ids must not be empty")
             return [], []
 
-        unit_ids: list[Unit] = []
+        base_ids: list[int] = []
         counts: list[int] = []
         for token_id in token_ids:
-            units = self.unit_ids(token_id, strict=use_strict)
-            unit_ids.extend(units)
-            counts.append(len(units))
-        return unit_ids, counts
+            ids = self.base_ids(token_id, strict=use_strict)
+            base_ids.extend(ids)
+            counts.append(len(ids))
+        return base_ids, counts
 
     def repeat_interleave(
         self,
@@ -298,13 +323,13 @@ class _CoreBPE:
         if x.size(dim) != token_ids.numel():
             raise ValueError("x and token_ids must align on the sequence dimension")
 
-        unit_ids, counts = self.expand_with_counts(
+        base_ids, counts = self.expand_with_counts(
             [int(token_id) for token_id in token_ids.tolist()],
             strict=strict,
         )
         repeats = torch.tensor(counts, dtype=torch.long, device=x.device)
         expanded_x = torch.repeat_interleave(x, repeats, dim=dim)
-        expanded_ids = _unit_tensor(unit_ids, dtype=token_ids.dtype, device=token_ids.device)
+        expanded_ids = _id_tensor(base_ids, dtype=token_ids.dtype, device=token_ids.device)
         return expanded_x, expanded_ids
 
     def _repeat_interleave_2d(
@@ -326,7 +351,7 @@ class _CoreBPE:
             raise ValueError("x and token_ids must align on the sequence dimension")
 
         token_mask = self._normalize_mask(mask, token_ids)
-        pad_id = self._pad_id(token_ids, token_mask)
+        pad_token_id = self._pad_token_id(token_ids, token_mask)
 
         row_dim = dim - 1
         expanded_rows: list[torch.Tensor] = []
@@ -344,7 +369,7 @@ class _CoreBPE:
             expanded_rows.append(expanded_x)
             expanded_id_rows.append(expanded_ids)
 
-        row_lengths = [self._expanded_length(row) for row in expanded_id_rows]
+        row_lengths = [row.numel() for row in expanded_id_rows]
         max_len = max(row_lengths)
         if all(length == max_len for length in row_lengths):
             return (
@@ -357,16 +382,14 @@ class _CoreBPE:
                 ),
             )
 
-        if pad_id is None:
+        if pad_token_id is None:
             raise ValueError("cannot infer padding id from token_ids and mask")
+        pad_base_id = self._pad_base_id(pad_token_id, strict=strict)
 
         out_shape = list(x.shape)
         out_shape[dim] = max_len
         expanded_x = x.new_zeros(out_shape)
-        ids_shape = (batch_size, max_len)
-        if self.unit_dim is not None:
-            ids_shape = (*ids_shape, self.unit_dim)
-        expanded_ids = token_ids.new_full(ids_shape, pad_id)
+        expanded_ids = token_ids.new_full((batch_size, max_len), pad_base_id)
         expanded_mask = torch.zeros(
             (batch_size, max_len),
             dtype=torch.bool,
@@ -374,20 +397,15 @@ class _CoreBPE:
         )
 
         for row, (row_x, row_ids) in enumerate(zip(expanded_rows, expanded_id_rows, strict=True)):
-            length = self._expanded_length(row_ids)
+            length = row_ids.numel()
             row_target = expanded_x.select(0, row)
             slices = [slice(None)] * row_target.dim()
             slices[row_dim] = slice(0, length)
             row_target[tuple(slices)] = row_x
-            expanded_ids[row, :length, ...] = row_ids
+            expanded_ids[row, :length] = row_ids
             expanded_mask[row, :length] = True
 
         return expanded_x, expanded_ids, expanded_mask
-
-    def _expanded_length(self, unit_ids: torch.Tensor) -> int:
-        if self.unit_dim is None:
-            return unit_ids.numel()
-        return unit_ids.size(0)
 
     @staticmethod
     def _validate_token_ids(token_ids: torch.Tensor) -> None:
@@ -413,7 +431,7 @@ class _CoreBPE:
         return mask.to(dtype=torch.bool)
 
     @staticmethod
-    def _pad_id(token_ids: torch.Tensor, mask: torch.Tensor) -> int | None:
+    def _pad_token_id(token_ids: torch.Tensor, mask: torch.Tensor) -> int | None:
         pad_values = token_ids.masked_select(~mask)
         if pad_values.numel() == 0:
             return None
@@ -422,13 +440,19 @@ class _CoreBPE:
             raise ValueError("token_ids padding values must be identical")
         return int(unique.item())
 
+    def _pad_base_id(self, token_id: int, *, strict: bool | None) -> int:
+        base_ids = self.base_ids(token_id, strict=strict)
+        if len(base_ids) != 1:
+            raise ValueError("padding token_id must expand to exactly one frame")
+        return base_ids[0]
+
     @staticmethod
-    def _build_unit_to_id(tokens: Mapping[int, tuple[Unit, ...]]) -> dict[Unit, int]:
-        unit_to_id: dict[Unit, int] = {}
-        for token_id, units in tokens.items():
-            if len(units) == 1:
-                unit_to_id[units[0]] = token_id
-        return unit_to_id
+    def _build_base_to_id(tokens: Mapping[int, tuple[int, ...]]) -> dict[int, int]:
+        base_to_id: dict[int, int] = {}
+        for token_id, base_ids in tokens.items():
+            if len(base_ids) == 1:
+                base_to_id[base_ids[0]] = token_id
+        return base_to_id
 
     @staticmethod
     def _can_merge(
@@ -506,8 +530,9 @@ class CodecBPE:
         self.byte_fallback = byte_fallback
         self.ignore_merges = ignore_merges
 
+        self._codec: _FrameCodec | None = None
         self._core: _CoreBPE | None = None
-        self._unit_tokens: dict[Unit, str] | None = None
+        self._base_tokens: dict[int, str] | None = None
         self._token_texts: dict[int, str] | None = None
         self._model: TokenizersBPE | None = None
 
@@ -535,9 +560,10 @@ class CodecBPE:
             byte_fallback=byte_fallback,
             ignore_merges=ignore_merges,
         )
+        codec = _FrameCodec(state["codebook_sizes"])
         tokens = {
-            int(token_id): tuple(_unit_from_state(unit) for unit in units)
-            for token_id, units in state["tokens"].items()
+            int(token_id): tuple(codec.encode(frame) for frame in frames)
+            for token_id, frames in state["tokens"].items()
         }
         merges = [
             (
@@ -548,7 +574,7 @@ class CodecBPE:
             for merge in state["merges"]
         ]
         strict = bool(state["strict"])
-        bpe._bind_core(_CoreBPE(tokens, merges, strict=strict))
+        bpe._bind_core(_CoreBPE(tokens, merges, strict=strict), codec)
         return bpe
 
     @classmethod
@@ -582,8 +608,9 @@ class CodecBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[UnitInput]],
+        corpus: Iterable[Sequence[FrameInput]],
         *,
+        codebook_sizes: Sequence[int],
         vocab_size: int | None = None,
         num_merges: int | None = None,
         min_count: int = 2,
@@ -598,8 +625,9 @@ class CodecBPE:
         byte_fallback: bool = False,
         ignore_merges: bool = False,
     ) -> Self:
+        codec = _FrameCodec(codebook_sizes)
         core = _CoreBPE.train(
-            corpus,
+            _encoded_corpus(corpus, codec),
             vocab_size=vocab_size,
             num_merges=num_merges,
             min_count=min_count,
@@ -616,7 +644,7 @@ class CodecBPE:
             byte_fallback=byte_fallback,
             ignore_merges=ignore_merges,
         )
-        bpe._bind_core(core)
+        bpe._bind_core(core, codec)
         return bpe
 
     @property
@@ -628,8 +656,20 @@ class CodecBPE:
         return self._require_model()
 
     @property
-    def tokens(self) -> Mapping[int, tuple[Unit, ...]]:
-        return self.core.tokens
+    def codebook_sizes(self) -> tuple[int, ...]:
+        return self._require_codec().codebook_sizes
+
+    @property
+    def num_codebooks(self) -> int:
+        return self._require_codec().num_codebooks
+
+    @property
+    def tokens(self) -> Mapping[int, tuple[Frame, ...]]:
+        codec = self._require_codec()
+        return {
+            token_id: tuple(codec.decode(base_id) for base_id in base_ids)
+            for token_id, base_ids in self.core.tokens.items()
+        }
 
     @property
     def merges(self) -> tuple[Merge, ...]:
@@ -647,10 +687,10 @@ class CodecBPE:
         tokenizer_type = _require_tokenizer()
         return tokenizer_type(self.model)
 
-    def units_text(self, units: Sequence[UnitInput]) -> str:
-        normalized = tuple(_normalize_unit(unit) for unit in units)
-        _validate_unit_dim(normalized, self.core.unit_dim)
-        return self._units_text(normalized, self._require_unit_tokens())
+    def frames_text(self, frames: Sequence[FrameInput]) -> str:
+        codec = self._require_codec()
+        base_ids = tuple(codec.encode(frame) for frame in frames)
+        return self._ids_text(base_ids, self._require_base_tokens())
 
     def token_text(self, token_id: int) -> str:
         token_texts = self._require_token_texts()
@@ -658,35 +698,42 @@ class CodecBPE:
             raise KeyError(f"unknown token_id: {token_id}")
         return token_texts[token_id]
 
-    def encode_units(self, units: Sequence[UnitInput]) -> list[int]:
+    def encode_frames(self, frames: Sequence[FrameInput]) -> list[int]:
         core = self.core
-        if not units:
+        if not frames:
             if core.strict:
-                raise ValueError("units must not be empty")
+                raise ValueError("frames must not be empty")
             return []
 
-        normalized = tuple(_normalize_unit(unit) for unit in units)
-        _validate_unit_dim(normalized, core.unit_dim)
-        unit_tokens = self._require_unit_tokens()
-        if not core.strict and any(unit not in unit_tokens for unit in normalized):
-            return core.encode_units(units, strict=False)
+        codec = self._require_codec()
+        base_ids = tuple(codec.encode(frame) for frame in frames)
+        base_tokens = self._require_base_tokens()
+        if any(base_id not in base_tokens for base_id in base_ids):
+            missing = next(base_id for base_id in base_ids if base_id not in base_tokens)
+            raise KeyError(f"unknown frame: {codec.decode(missing)}")
 
-        text = self._units_text(normalized, unit_tokens)
+        text = self._ids_text(base_ids, base_tokens)
         return [token.id for token in self.model.tokenize(text)]
 
-    def eval(self, corpus: Iterable[Sequence[UnitInput]]) -> CompressionStats:
-        return _eval(corpus, self.encode_units)
+    def eval(self, corpus: Iterable[Sequence[FrameInput]]) -> CompressionStats:
+        return _eval_frames(corpus, self._require_codec(), self.encode_frames)
 
-    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Unit]:
-        return self.core.expand_ids(token_ids, strict=strict)
+    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Frame]:
+        codec = self._require_codec()
+        return [
+            codec.decode(base_id)
+            for base_id in self.core.expand_ids(token_ids, strict=strict)
+        ]
 
     def expand_with_counts(
         self,
         token_ids: Sequence[int],
         *,
         strict: bool | None = None,
-    ) -> tuple[list[Unit], list[int]]:
-        return self.core.expand_with_counts(token_ids, strict=strict)
+    ) -> tuple[list[Frame], list[int]]:
+        codec = self._require_codec()
+        base_ids, counts = self.core.expand_with_counts(token_ids, strict=strict)
+        return [codec.decode(base_id) for base_id in base_ids], counts
 
     def repeat_interleave(
         self,
@@ -697,13 +744,23 @@ class CodecBPE:
         dim: int = -2,
         strict: bool | None = None,
     ) -> RepeatInterleaveOutput:
-        return self.core.repeat_interleave(x, token_ids, mask, dim=dim, strict=strict)
+        expanded = self.core.repeat_interleave(x, token_ids, mask, dim=dim, strict=strict)
+        if len(expanded) == 2:
+            expanded_x, base_ids = expanded
+            return expanded_x, self._frames_tensor(base_ids)
+        expanded_x, base_ids, expanded_mask = expanded
+        return expanded_x, self._frames_tensor(base_ids, mask=expanded_mask), expanded_mask
 
     def to_dict(self) -> CodecBPEState:
+        codec = self._require_codec()
         return {
+            "codebook_sizes": list(codec.codebook_sizes),
             "tokens": {
-                str(token_id): [_unit_to_state(unit) for unit in units]
-                for token_id, units in sorted(self.tokens.items())
+                str(token_id): [
+                    list(codec.decode(base_id))
+                    for base_id in base_ids
+                ]
+                for token_id, base_ids in sorted(self.core.tokens.items())
             },
             "merges": [
                 {
@@ -726,12 +783,12 @@ class CodecBPE:
         self.tokenizer().save(str(out / "tokenizer.json"))
         return out
 
-    def _bind_core(self, core: _CoreBPE) -> None:
+    def _bind_core(self, core: _CoreBPE, codec: _FrameCodec) -> None:
         tokenizers_bpe = _require_tokenizers_bpe()
-        unit_tokens = self._build_unit_tokens(core)
+        base_tokens = self._build_base_tokens(core)
         token_texts = {
-            token_id: self._units_text(units, unit_tokens)
-            for token_id, units in core.tokens.items()
+            token_id: self._ids_text(base_ids, base_tokens)
+            for token_id, base_ids in core.tokens.items()
         }
         vocab = {text: token_id for token_id, text in token_texts.items()}
         merges = [
@@ -739,20 +796,47 @@ class CodecBPE:
             for merge in core.merges
         ]
 
+        self._codec = codec
         self._core = core
-        self._unit_tokens = unit_tokens
+        self._base_tokens = base_tokens
         self._token_texts = token_texts
         self._model = tokenizers_bpe(**self._tokenizers_kwargs(vocab, merges))
 
     @staticmethod
-    def _build_unit_tokens(core: _CoreBPE) -> dict[Unit, str]:
-        units = sorted(core.unit_to_id)
-        if len(units) > _private_use_capacity():
-            raise ValueError("too many units for CodecBPE")
+    def _build_base_tokens(core: _CoreBPE) -> dict[int, str]:
+        base_ids = sorted(core.base_to_id)
+        if len(base_ids) > _private_use_capacity():
+            raise ValueError("too many observed frames for CodecBPE")
         return {
-            unit: _private_use_char(index)
-            for index, unit in enumerate(units)
+            base_id: _private_use_char(index)
+            for index, base_id in enumerate(base_ids)
         }
+
+    def _frames_tensor(self, base_ids: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        codec = self._require_codec()
+        if codec.num_codebooks == 1:
+            return base_ids.unsqueeze(-1)
+
+        if mask is None:
+            mask = torch.ones_like(base_ids, dtype=torch.bool)
+        frames: list[Frame] = []
+        flat_ids = [int(value) for value in base_ids.detach().cpu().reshape(-1).tolist()]
+        flat_mask = [bool(value) for value in mask.detach().cpu().reshape(-1).tolist()]
+        for base_id, valid in zip(flat_ids, flat_mask, strict=True):
+            if valid:
+                frames.append(codec.decode(base_id))
+            else:
+                frames.append(codec.decode(base_id))
+        return torch.tensor(
+            frames,
+            dtype=base_ids.dtype,
+            device=base_ids.device,
+        ).reshape(*base_ids.shape, codec.num_codebooks)
+
+    def _require_codec(self) -> _FrameCodec:
+        if self._codec is None:
+            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+        return self._codec
 
     def _require_core(self) -> _CoreBPE:
         if self._core is None:
@@ -764,10 +848,10 @@ class CodecBPE:
             raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
         return self._model
 
-    def _require_unit_tokens(self) -> Mapping[Unit, str]:
-        if self._unit_tokens is None:
+    def _require_base_tokens(self) -> Mapping[int, str]:
+        if self._base_tokens is None:
             raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
-        return self._unit_tokens
+        return self._base_tokens
 
     def _require_token_texts(self) -> Mapping[int, str]:
         if self._token_texts is None:
@@ -807,12 +891,12 @@ class CodecBPE:
         return state_path
 
     @staticmethod
-    def _units_text(units: Sequence[Unit], unit_tokens: Mapping[Unit, str]) -> str:
+    def _ids_text(base_ids: Sequence[int], base_tokens: Mapping[int, str]) -> str:
         pieces: list[str] = []
-        for unit in units:
-            if unit not in unit_tokens:
-                raise KeyError(f"unknown unit: {unit}")
-            pieces.append(unit_tokens[unit])
+        for base_id in base_ids:
+            if base_id not in base_tokens:
+                raise KeyError(f"unknown frame id: {base_id}")
+            pieces.append(base_tokens[base_id])
         return "".join(pieces)
 
 
@@ -867,67 +951,67 @@ def _require_tqdm() -> type[Tqdm]:
     return tqdm
 
 
-def _normalize_unit(unit: UnitInput) -> Unit:
-    if isinstance(unit, int):
-        if unit < 0:
-            raise ValueError("unit ids must be non-negative")
-        return unit
-    if isinstance(unit, str):
-        raise TypeError("tuple units must contain integer ids")
+def _normalize_codebook_sizes(codebook_sizes: Sequence[int]) -> tuple[int, ...]:
+    if not codebook_sizes:
+        raise ValueError("codebook_sizes must not be empty")
 
-    values = tuple(int(value) for value in unit)
-    if not values:
-        raise ValueError("tuple units must not be empty")
-    if any(value < 0 for value in values):
-        raise ValueError("unit ids must be non-negative")
+    sizes: list[int] = []
+    for size in codebook_sizes:
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise TypeError("codebook_sizes must contain integer sizes")
+        if size <= 0:
+            raise ValueError("codebook sizes must be positive")
+        sizes.append(size)
+    return tuple(sizes)
+
+
+def _normalize_frame(frame: FrameInput, codebook_sizes: Sequence[int]) -> Frame:
+    if isinstance(frame, int | str):
+        raise TypeError("frames must be integer sequences; use [id] for single-codebook frames")
+
+    values = tuple(_normalize_code_id(value) for value in frame)
+    if len(values) != len(codebook_sizes):
+        raise ValueError("frames must match the configured number of codebooks")
+
+    for index, (value, size) in enumerate(zip(values, codebook_sizes, strict=True)):
+        if value >= size:
+            raise ValueError(
+                f"frame code id at codebook {index} must be in [0, {size})"
+            )
     return values
 
 
-def _unit_dim_from_sequences(seqs: Sequence[Sequence[Unit]]) -> int | None:
-    return _unit_dim(unit for seq in seqs for unit in seq)
+def _normalize_code_id(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("frame code ids must be integers")
+    if value < 0:
+        raise ValueError("frame code ids must be non-negative")
+    return value
 
 
-def _unit_dim_from_token_units(token_units: Iterable[Sequence[Unit]]) -> int | None:
-    return _unit_dim(unit for units in token_units for unit in units)
+def _normalize_base_id(base_id: int) -> int:
+    if isinstance(base_id, bool) or not isinstance(base_id, int):
+        raise TypeError("frame ids must be integers")
+    if base_id < 0:
+        raise ValueError("frame ids must be non-negative")
+    return base_id
 
 
-def _unit_dim(units: Iterable[Unit]) -> int | None:
-    dim: int | None = None
-    initialized = False
-    for unit in units:
-        current = len(unit) if isinstance(unit, tuple) else None
-        if not initialized:
-            dim = current
-            initialized = True
-            continue
-        if dim != current:
-            raise ValueError("units must be all ints or fixed-length integer sequences")
-    return dim
+def _encoded_corpus(
+    corpus: Iterable[Sequence[FrameInput]],
+    codec: _FrameCodec,
+) -> Iterable[list[int]]:
+    for frames in corpus:
+        yield [codec.encode(frame) for frame in frames]
 
 
-def _validate_unit_dim(units: Sequence[Unit], dim: int | None) -> None:
-    inferred = _unit_dim(units)
-    if inferred != dim:
-        raise ValueError("units must match the tokenizer unit shape")
-
-
-def _unit_to_state(unit: Unit) -> UnitState:
-    if isinstance(unit, tuple):
-        return list(unit)
-    return unit
-
-
-def _unit_from_state(unit: UnitState) -> Unit:
-    return _normalize_unit(unit)
-
-
-def _unit_tensor(
-    units: Sequence[Unit],
+def _id_tensor(
+    ids: Sequence[int],
     *,
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor:
-    return torch.tensor(units, dtype=dtype, device=device)
+    return torch.tensor(ids, dtype=dtype, device=device)
 
 
 def _private_use_capacity() -> int:
@@ -944,22 +1028,55 @@ def _private_use_char(index: int) -> str:
 
 
 def _eval(
-    corpus: Iterable[Sequence[UnitInput]],
-    encode_units: Callable[[Sequence[UnitInput]], Sequence[int]],
+    corpus: Iterable[Sequence[int]],
+    encode_ids: Callable[[Sequence[int]], Sequence[int]],
 ) -> CompressionStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
     for seq in corpus:
-        units = tuple(_normalize_unit(unit) for unit in seq)
+        ids = tuple(_normalize_base_id(base_id) for base_id in seq)
         num_sequences += 1
-        original_tokens += len(units)
-        encoded_tokens += len(encode_units(units))
+        original_tokens += len(ids)
+        encoded_tokens += len(encode_ids(ids))
 
     if num_sequences == 0:
         raise ValueError("corpus must not be empty")
     if original_tokens == 0:
-        raise ValueError("corpus must contain at least one unit")
+        raise ValueError("corpus must contain at least one frame")
+
+    compression_ratio = encoded_tokens / original_tokens
+    compression_factor = original_tokens / encoded_tokens if encoded_tokens else float("inf")
+    return CompressionStats(
+        num_sequences=num_sequences,
+        original_tokens=original_tokens,
+        encoded_tokens=encoded_tokens,
+        mean_original_length=original_tokens / num_sequences,
+        mean_encoded_length=encoded_tokens / num_sequences,
+        compression_ratio=compression_ratio,
+        compression_factor=compression_factor,
+        compression_gain=1.0 - compression_ratio,
+    )
+
+
+def _eval_frames(
+    corpus: Iterable[Sequence[FrameInput]],
+    codec: _FrameCodec,
+    encode_frames: Callable[[Sequence[FrameInput]], Sequence[int]],
+) -> CompressionStats:
+    num_sequences = 0
+    original_tokens = 0
+    encoded_tokens = 0
+    for seq in corpus:
+        frames = tuple(codec.normalize(frame) for frame in seq)
+        num_sequences += 1
+        original_tokens += len(frames)
+        encoded_tokens += len(encode_frames(frames))
+
+    if num_sequences == 0:
+        raise ValueError("corpus must not be empty")
+    if original_tokens == 0:
+        raise ValueError("corpus must contain at least one frame")
 
     compression_ratio = encoded_tokens / original_tokens
     compression_factor = original_tokens / encoded_tokens if encoded_tokens else float("inf")

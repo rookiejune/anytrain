@@ -2,8 +2,12 @@ import unittest
 
 import torch
 import torch.nn.functional as F
-
-from anytrain.idspace import IdSpace, IdSpaceEmbedding, Modality, ModalityBlock
+from anytrain.idspace import (
+    IdSpace,
+    IdSpaceEmbedding,
+    Modality,
+    ModalityBlock,
+)
 
 
 class IdSpaceEmbeddingTest(unittest.TestCase):
@@ -23,9 +27,7 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
 
         y = embed(torch.tensor([[0, 2, 4, 1, 3]]))
 
-        expected = torch.tensor(
-            [[[1.0, 0.0], [0.0, 3.0], [5.0, 5.0], [2.0, 0.0], [0.0, 4.0]]]
-        )
+        expected = torch.tensor([[[1.0, 0.0], [0.0, 3.0], [5.0, 5.0], [2.0, 0.0], [0.0, 4.0]]])
         self.assertTrue(torch.equal(y, expected))
 
     def test_head_matches_compact_weight_without_registering_params(self):
@@ -43,8 +45,8 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
                         [4.0, 0.0],
                         [5.0, 0.0],
                     ]
+                )
             )
-        )
         head = embed.as_head()
         parent = torch.nn.Module()
         parent.embed = embed
@@ -56,7 +58,9 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         self.assertEqual(head.vocab_size, 5)
         self.assertEqual(head.to_head_ids([0, 1, 2, 3, 4]), [0, 2, 3, 1, 4])
         self.assertEqual(head.to_global_ids([0, 1, 2, 3, 4]), [0, 3, 1, 2, 4])
-        self.assertTrue(torch.equal(head.to_head_ids(torch.tensor([0, 3, 4])), torch.tensor([0, 1, 4])))
+        self.assertTrue(
+            torch.equal(head.to_head_ids(torch.tensor([0, 3, 4])), torch.tensor([0, 1, 4]))
+        )
         self.assertTrue(
             torch.equal(head.to_global_ids(torch.tensor([0, 1, 4])), torch.tensor([0, 3, 4]))
         )
@@ -213,7 +217,11 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
 
         self.assertEqual(set(embed.special_embeddings), {"extra"})
         self.assertIs(embed.modality_embeddings[Modality.TEXT], text)
-        self.assertTrue(torch.equal(embed(torch.tensor([0, 1, 3])), torch.tensor([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])))
+        self.assertTrue(
+            torch.equal(
+                embed(torch.tensor([0, 1, 3])), torch.tensor([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
+            )
+        )
         self.assertTrue(torch.equal(embed.weight[0], text.weight[0]))
         with self.assertRaisesRegex(ValueError, "explicit special embeddings"):
             embed.as_head(special_tokens=["bos"])

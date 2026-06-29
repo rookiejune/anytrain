@@ -1,8 +1,6 @@
 import unittest
 
 import torch
-from torch import nn
-
 from anytrain.loss import (
     FixedWeightLossBalancer,
     LossABC,
@@ -23,6 +21,7 @@ from anytrain.loss.spectral import (
 )
 from anytrain.loss.task import CodecLoss, CodecLossPreset
 from anytrain.loss.temporal import SDRLoss
+from torch import nn
 
 
 class DetailLoss(LossABC):

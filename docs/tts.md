@@ -16,10 +16,14 @@ tts = MossTTS.from_pretrained(
     torch_dtype="auto",
 )
 audio = tts.synthesize("hello")
+batch_audio = tts.synthesize(["hello", "你好"])
 ```
 
 `synthesize()` is the high-level `text -> waveform` entry point.
 `TTSOutput.waveform` is a float tensor with shape `[channels, time]`.
+Passing a single string returns one `TTSOutput`; passing a sequence of strings
+returns `list[TTSOutput]`. Batch synthesis shares one `TTSOptions` object across
+all texts and keeps each variable-length waveform as a separate output item.
 
 The MOSS adapter intentionally targets only MOSS-TTS v1.5. It loads the
 Hugging Face remote-code model and processor, then runs the v1.5 processor

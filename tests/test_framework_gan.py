@@ -2,9 +2,8 @@ import sys
 import unittest
 
 import torch
-from torch import nn
-
 from anytrain.framework.gan import GAN, Loss, Preset, Reduction
+from torch import nn
 
 
 class IdentityDiscriminator(nn.Module):
@@ -254,7 +253,9 @@ class LossTest(unittest.TestCase):
 
         self.assertEqual(len(output), 2)
         self.assertTrue(all(len(branch) > 1 for branch in output))
-        self.assertTrue(all(isinstance(tensor, torch.Tensor) for branch in output for tensor in branch))
+        self.assertTrue(
+            all(isinstance(tensor, torch.Tensor) for branch in output for tensor in branch)
+        )
 
     def test_from_preset_requires_preset_enum(self):
         with self.assertRaisesRegex(TypeError, "Preset"):

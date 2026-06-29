@@ -7,7 +7,10 @@ import torch
 
 class ExampleAssetsTest(unittest.TestCase):
     def test_paths_exist(self):
-        from anytrain.example.resources import color_your_night_path, vctk_path
+        from anytrain.example.resources import (
+            color_your_night_path,
+            vctk_path,
+        )
 
         speech = vctk_path()
         music = color_your_night_path()
@@ -20,7 +23,10 @@ class ExampleAssetsTest(unittest.TestCase):
         self.assertGreater(music.stat().st_size, 1024)
 
     def test_list_example_audio(self):
-        from anytrain.example.resources import ExampleAudio, list_example_audio
+        from anytrain.example.resources import (
+            ExampleAudio,
+            list_example_audio,
+        )
 
         self.assertEqual(
             list_example_audio(),
@@ -86,7 +92,10 @@ class ExampleAssetsTest(unittest.TestCase):
             load_example_audio(Path("dummy.wav"), duration=0)
 
     def test_audio_range_error_does_not_fallback(self):
-        from anytrain.example.audio import _AudioRangeError, load_example_audio
+        from anytrain.example.audio import (
+            _AudioRangeError,
+            load_example_audio,
+        )
 
         with (
             mock.patch(

@@ -1,8 +1,11 @@
 import unittest
 
 import torch
-
-from anytrain.module.quantization import ResidualVectorQuantizer, RVQConfig, VQConfig
+from anytrain.module.quantization import (
+    ResidualVectorQuantizer,
+    RVQConfig,
+    VQConfig,
+)
 
 
 class ResidualVectorQuantizerTest(unittest.TestCase):

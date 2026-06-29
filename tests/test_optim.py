@@ -1,12 +1,9 @@
 import unittest
 from tempfile import TemporaryDirectory
 
+import anytrain.optim as optim_api
 import torch
 from lightning.pytorch import LightningModule, Trainer
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
-
-import anytrain.optim as optim_api
 from anytrain.optim import (
     AdamWDecayPolicy,
     CompositeOptimizer,
@@ -19,13 +16,16 @@ from anytrain.optim import (
     split_muon_params,
 )
 from anytrain.optim import llm as llm_optim
-from anytrain.optim.config import AdamWConfig, MuonAdamWConfig, MuonAdjustLRFn, MuonConfig
+from anytrain.optim.config import (
+    AdamWConfig,
+    MuonAdamWConfig,
+    MuonAdjustLRFn,
+    MuonConfig,
+)
 from anytrain.optim.llm import (
     LightningOptimizerConfig as LLMLightningOptimizerConfig,
 )
-from anytrain.optim.llm import (
-    OptimizationConfig as LLMOptimizationConfig,
-)
+from anytrain.optim.llm import OptimizationConfig as LLMOptimizationConfig
 from anytrain.optim.llm import (
     create_lightning_optimizers_from_config as create_llm_lightning_optimizers_from_config,
 )
@@ -39,6 +39,8 @@ from anytrain.optim.scheduler import (
     create_scheduler_from_config,
     make_scheduler_config,
 )
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 
 def _param_ids(params: list[nn.Parameter]) -> set[int]:
@@ -46,11 +48,7 @@ def _param_ids(params: list[nn.Parameter]) -> set[int]:
 
 
 def _group_param_ids(optimizer: torch.optim.Optimizer) -> set[int]:
-    return {
-        id(param)
-        for group in optimizer.param_groups
-        for param in group["params"]
-    }
+    return {id(param) for group in optimizer.param_groups for param in group["params"]}
 
 
 class TinyLLM(nn.Module):
@@ -297,7 +295,9 @@ class AdamWOptimizerTest(unittest.TestCase):
 
         decay_params, no_decay_params = split_adamw_decay_params(model)
 
-        self.assertEqual(_param_ids(decay_params), {id(model.proj.weight), id(model.lm_head.weight)})
+        self.assertEqual(
+            _param_ids(decay_params), {id(model.proj.weight), id(model.lm_head.weight)}
+        )
         self.assertEqual(
             _param_ids(no_decay_params),
             {
@@ -443,9 +443,7 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
 
         self.assertIsInstance(optimizer, CompositeOptimizer)
         adamw_optimizer = optimizer.optimizers["adamw"]
-        self.assertTrue(
-            all(group["weight_decay"] == 0.0 for group in adamw_optimizer.param_groups)
-        )
+        self.assertTrue(all(group["weight_decay"] == 0.0 for group in adamw_optimizer.param_groups))
 
     def test_composite_optimizer_scheduler_updates_child_param_groups(self):
         model = TinyLLM()
@@ -861,11 +859,7 @@ class LLMOptimizerTest(unittest.TestCase):
 
     def test_scheduler_config_rejects_infinite_non_constant_phase(self):
         with self.assertRaisesRegex(ValueError, "constant"):
-            SchedulerConfig(
-                phases=(
-                    SchedulerPhaseConfig(shape="cosine", duration_steps=-1),
-                )
-            )
+            SchedulerConfig(phases=(SchedulerPhaseConfig(shape="cosine", duration_steps=-1),))
 
     def test_llm_muon_defaults_reuse_adamw_lr_and_weight_decay(self):
         model = TinyLLM()

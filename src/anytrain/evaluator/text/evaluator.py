@@ -21,6 +21,7 @@ class TextComparisonEvaluator(EvaluatorABC):
         collapse_whitespace: bool = True,
         remove_punctuation: bool = True,
         lowercase: bool = False,
+        chinese: str | None = "simplified",
         bleu_smoothing: bool = True,
     ) -> None:
         super().__init__()
@@ -29,6 +30,7 @@ class TextComparisonEvaluator(EvaluatorABC):
             collapse_whitespace=collapse_whitespace,
             remove_punctuation=remove_punctuation,
             lowercase=lowercase,
+            chinese=chinese,
         )
         self.bleu_smoothing = bleu_smoothing
 

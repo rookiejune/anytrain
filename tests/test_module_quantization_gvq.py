@@ -2,8 +2,11 @@ import unittest
 from dataclasses import fields
 
 import torch
-
-from anytrain.module.quantization import GroupedVectorQuantizer, GVQConfig, QuantizationLoss
+from anytrain.module.quantization import (
+    GroupedVectorQuantizer,
+    GVQConfig,
+    QuantizationLoss,
+)
 
 
 class GroupedVectorQuantizerTest(unittest.TestCase):
@@ -86,7 +89,11 @@ class GroupedVectorQuantizerTest(unittest.TestCase):
         output = quantizer(torch.tensor([[9.0, 0.0, 0.0, 9.0], [1.0, 0.0, 0.0, 1.0]]))
 
         self.assertTrue(torch.equal(output.indices, torch.tensor([3, 0])))
-        self.assertTrue(torch.equal(quantizer.indices_to_group_indices(output.indices), torch.tensor([[1, 1], [0, 0]])))
+        self.assertTrue(
+            torch.equal(
+                quantizer.indices_to_group_indices(output.indices), torch.tensor([[1, 1], [0, 0]])
+            )
+        )
 
     def test_invalid_config_fails_clearly(self):
         with self.assertRaisesRegex(ValueError, "group_sizes"):

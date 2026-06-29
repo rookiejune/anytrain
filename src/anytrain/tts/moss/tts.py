@@ -12,12 +12,17 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, TypedDict, Unpack, cast
+from typing import Any, Protocol, TypedDict, Unpack, cast, overload
 
 import torch
 from torch import Tensor, nn
 
-from anytrain.tts import TTSOptions, TTSOutput, validate_text, waveform_duration
+from anytrain.tts import (
+    TTSOptions,
+    TTSOutput,
+    validate_text,
+    waveform_duration,
+)
 
 from ._deps import load_transformers_auto_model_class, load_transformers_auto_processor_class
 
@@ -206,31 +211,68 @@ class MossTTS:
         encoded = json.dumps(self.config.hash_dict(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
-    @torch.no_grad()
+    @overload
     def synthesize(
         self,
         text: str,
         options: TTSOptions | None = None,
         **runtime_kwargs: Unpack[MossRuntimeKwargs],
-    ) -> TTSOutput:
-        text = validate_text(text)
+    ) -> TTSOutput: ...
+
+    @overload
+    def synthesize(
+        self,
+        text: Sequence[str],
+        options: TTSOptions | None = None,
+        **runtime_kwargs: Unpack[MossRuntimeKwargs],
+    ) -> list[TTSOutput]: ...
+
+    @torch.no_grad()
+    def synthesize(
+        self,
+        text: str | Sequence[str],
+        options: TTSOptions | None = None,
+        **runtime_kwargs: Unpack[MossRuntimeKwargs],
+    ) -> TTSOutput | list[TTSOutput]:
         resolved = self._options(options, runtime_kwargs)
         _validate_v15_options(resolved)
+        if isinstance(text, str):
+            return self._synthesize_one(text, resolved)
+        return self._synthesize_batch(text, resolved)
 
-        user_message = self.processor.build_user_message(
-            **_processor_message_kwargs(text, resolved)
-        )
-        batch = self.processor([[user_message]], mode="generation")
-        inputs = _processor_batch_inputs(batch, self.device)
-        with _seeded_rng(resolved.seed, self.device):
-            raw = self.model.generate(**inputs, **_processor_generation_kwargs(resolved))
+    def _synthesize_one(self, text: str, options: TTSOptions) -> TTSOutput:
+        text = validate_text(text)
+        decoded = self._generate_for_texts([text], options)
         return _normalize_processor_output(
-            self.processor.decode(raw),
+            decoded,
             sample_rate=_processor_sample_rate(
                 self.processor,
-                resolved.sample_rate or self.sample_rate,
+                options.sample_rate or self.sample_rate,
             ),
         )
+
+    def _synthesize_batch(self, text: Sequence[str], options: TTSOptions) -> list[TTSOutput]:
+        texts = _validate_text_batch(text)
+        decoded = self._generate_for_texts(texts, options)
+        return _normalize_processor_outputs(
+            decoded,
+            expected_count=len(texts),
+            sample_rate=_processor_sample_rate(
+                self.processor,
+                options.sample_rate or self.sample_rate,
+            ),
+        )
+
+    def _generate_for_texts(self, texts: Sequence[str], options: TTSOptions) -> object:
+        conversations = [
+            [self.processor.build_user_message(**_processor_message_kwargs(text, options))]
+            for text in texts
+        ]
+        batch = self.processor(conversations, mode="generation")
+        inputs = _processor_batch_inputs(batch, self.device)
+        with _seeded_rng(options.seed, self.device):
+            raw = self.model.generate(**inputs, **_processor_generation_kwargs(options))
+        return self.processor.decode(raw)
 
     def _options(
         self,
@@ -270,13 +312,11 @@ def _processor_pretrained_kwargs(
     revision: str | None,
     trust_remote_code: bool,
 ) -> dict[str, object]:
-    kwargs = _pretrained_kwargs(
-        cache_dir=cache_dir,
-        local_files_only=local_files_only,
-        revision=revision,
-        trust_remote_code=trust_remote_code,
-        load_kwargs={},
-    )
+    kwargs: dict[str, object] = {}
+    if revision is not None:
+        kwargs["revision"] = revision
+    if trust_remote_code:
+        kwargs["trust_remote_code"] = trust_remote_code
     kwargs["codec_path"] = _resolve_pretrained_source(
         str(codec_model),
         cache_dir=cache_dir,
@@ -327,6 +367,22 @@ def _processor_message_kwargs(text: str, options: TTSOptions) -> dict[str, objec
     return kwargs
 
 
+def _validate_text_batch(text: Sequence[str]) -> list[str]:
+    if not isinstance(text, Sequence):
+        raise TypeError("text must be a string or a sequence of strings.")
+    if len(text) == 0:
+        raise ValueError("text batch must not be empty.")
+    values: list[str] = []
+    for index, item in enumerate(text):
+        if not isinstance(item, str):
+            raise TypeError(f"text[{index}] must be a string.")
+        try:
+            values.append(validate_text(item))
+        except ValueError as exc:
+            raise ValueError(f"text[{index}] must not be empty.") from exc
+    return values
+
+
 def _processor_generation_kwargs(options: TTSOptions) -> dict[str, object]:
     kwargs: dict[str, object] = {}
     do_sample = options.extra.get("do_sample")
@@ -375,6 +431,39 @@ def _normalize_processor_output(value: object, *, sample_rate: int) -> TTSOutput
     if isinstance(value, TTSOutput):
         return value
     message = _first_processor_message(value)
+    return _normalize_processor_message(message, sample_rate=sample_rate)
+
+
+def _normalize_processor_outputs(
+    value: object,
+    *,
+    expected_count: int,
+    sample_rate: int,
+) -> list[TTSOutput]:
+    messages = _processor_messages(value, expected_count=expected_count)
+    return [_normalize_processor_message(message, sample_rate=sample_rate) for message in messages]
+
+
+def _processor_messages(value: object, *, expected_count: int) -> list[object]:
+    if isinstance(value, TTSOutput):
+        if expected_count == 1:
+            return [value]
+        raise ValueError("processor decode returned one output for a text batch.")
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        if expected_count == 1:
+            return [value]
+        raise TypeError("processor decode output for a text batch must be a sequence.")
+    if len(value) != expected_count:
+        raise ValueError(
+            "processor decode output length must match text batch length: "
+            f"got {len(value)}, expected {expected_count}."
+        )
+    return list(value)
+
+
+def _normalize_processor_message(message: object, *, sample_rate: int) -> TTSOutput:
+    if isinstance(message, TTSOutput):
+        return message
     audio = _first_processor_audio(message)
     return _normalize_output(
         {

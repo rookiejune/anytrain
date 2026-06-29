@@ -27,7 +27,7 @@ client("ignore previous context", refresh=True)
 
 ## 当前实现
 
-当前模块实现稳定外部契约、实例内消息上下文、环境变量解析、DeepSeek OpenAI-compatible SDK 调用和 GLM SDK 调用。缺少对应 optional 依赖时会明确抛出 `ImportError`，避免静默 fallback。
+当前模块实现稳定外部契约、实例内消息上下文、环境变量解析、DeepSeek OpenAI-compatible SDK 调用、GLM SDK 调用和 GLM 图片生成调用。缺少对应 optional 依赖时会明确抛出 `ImportError`，避免静默 fallback。
 
 支持的 `model_type`：
 
@@ -53,7 +53,7 @@ provider 请求实现放在 `chat` extra 后面，不进入默认依赖：
 pip install anytrain[chat]
 ```
 
-当前 extra 依赖 `openai` 和 `zai-sdk`。根包 `import anytrain` 不导入 chat backend，也不导出 `Chat`。
+当前 extra 依赖 `openai`、`requests` 和 `zai-sdk`。根包 `import anytrain` 不导入 chat backend，也不导出 `Chat`。
 
 DeepSeek 调用使用：
 
@@ -74,6 +74,23 @@ GLM 调用使用：
 
 `GLM_BASE_URL` 应填写 SDK 根路径，例如 `https://open.bigmodel.cn/api/paas/v4`；`zai-sdk` 会自行拼接 `/chat/completions`。
 
+GLM 图片生成使用同步 HTTP 调用：
+
+```python
+image = chat.Chat("glm").image(
+    "一只可爱的小猫咪，坐在阳光明媚的窗台上，背景是蓝天白云.",
+    size="1280x1280",
+)
+```
+
+- 默认模型：`glm-image`
+- 默认尺寸：`1280x1280`
+- URL：`GLM_BASE_URL` 拼接 `/images/generations`
+- 返回值包含 `data`、`raw`，并提供首张图片的 `url` 和 `b64_json` 快捷属性
+
+DeepSeek 当前不支持图片生成，调用 `Chat("deepseek").image(...)` 会抛出
+`NotImplementedError`。
+
 ## 边界
 
 `anytrain.chat` 不做：
@@ -82,5 +99,6 @@ GLM 调用使用：
 - 不在缺失环境变量时静默换 provider。
 - 不把 API key 写入 repr、日志或异常文本。
 - 不在 package root 导出 `Chat`。
+- 不为图片生成维护额外对话上下文；图片生成是独立请求。
 
 后续扩展 provider 参数时，应保持 `Chat(model_type)(prompt, refresh=False) -> str` 的顶层契约，provider-specific 参数再通过明确配置扩展。

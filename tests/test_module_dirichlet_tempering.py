@@ -2,7 +2,6 @@ import unittest
 from dataclasses import fields
 
 import torch
-
 from anytrain.module.dirichlet_tempering import (
     ADT,
     AdaptiveDirichletTempering,

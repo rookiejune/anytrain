@@ -91,6 +91,28 @@ class TextComparisonEvaluatorTest(unittest.TestCase):
         self.assertEqual(metrics["wer"], 1.0)
         self.assertLess(metrics["chrf"], 100.0)
 
+    def test_normalization_converts_traditional_chinese_to_simplified_by_default(self):
+        evaluator = TextComparisonEvaluator()
+
+        metrics = evaluator("從一流的媒體實驗室", "从一流的媒体实验室")
+
+        self.assertEqual(metrics["wer"], 0.0)
+        self.assertEqual(metrics["chrf"], 100.0)
+
+    def test_chinese_normalization_can_be_disabled(self):
+        evaluator = TextComparisonEvaluator(chinese=None)
+
+        metrics = evaluator("從一流的媒體實驗室", "从一流的媒体实验室")
+
+        self.assertGreater(metrics["wer"], 0.0)
+        self.assertLess(metrics["chrf"], 100.0)
+
+    def test_invalid_chinese_normalization_raises(self):
+        evaluator = TextComparisonEvaluator(chinese="traditional")
+
+        with self.assertRaisesRegex(ValueError, "simplified"):
+            evaluator("從", "从")
+
     def test_batch_length_mismatch_raises(self):
         evaluator = TextComparisonEvaluator()
 

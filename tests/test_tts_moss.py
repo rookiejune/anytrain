@@ -51,10 +51,13 @@ class MossTTSImportTest(unittest.TestCase):
         self.assertNotIn("transformers", sys.modules)
 
     def test_from_pretrained_requires_optional_dependency_when_missing(self):
-        with patch(
-            "anytrain.tts.moss.tts.load_transformers_auto_model_class",
-            side_effect=ImportError("transformers missing"),
-        ), self.assertRaisesRegex(ImportError, r"anytrain\[moss-tts\]"):
+        with (
+            patch(
+                "anytrain.tts.moss.tts.load_transformers_auto_model_class",
+                side_effect=ImportError("transformers missing"),
+            ),
+            self.assertRaisesRegex(ImportError, r"anytrain\[moss-tts\]"),
+        ):
             MossTTS.from_pretrained(local_files_only=True)
 
 
@@ -73,12 +76,15 @@ class MossTTSAdapterTest(unittest.TestCase):
                 cls.calls.append((model, kwargs))
                 return FakeMossProcessor()
 
-        with patch(
-            "anytrain.tts.moss.tts.load_transformers_auto_model_class",
-            return_value=FakeAutoModel,
-        ), patch(
-            "anytrain.tts.moss.tts.load_transformers_auto_processor_class",
-            return_value=FakeAutoProcessor,
+        with (
+            patch(
+                "anytrain.tts.moss.tts.load_transformers_auto_model_class",
+                return_value=FakeAutoModel,
+            ),
+            patch(
+                "anytrain.tts.moss.tts.load_transformers_auto_processor_class",
+                return_value=FakeAutoProcessor,
+            ),
         ):
             tts = MossTTS.from_pretrained(
                 "OpenMOSS-Team/MOSS-TTS-v1.5",
@@ -118,9 +124,7 @@ class MossTTSAdapterTest(unittest.TestCase):
                 (
                     "OpenMOSS-Team/MOSS-TTS-v1.5",
                     {
-                        "cache_dir": "storage/moss",
                         "codec_path": "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano",
-                        "local_files_only": True,
                         "revision": "main",
                         "trust_remote_code": True,
                     },
@@ -168,6 +172,45 @@ class MossTTSAdapterTest(unittest.TestCase):
         self.assertEqual(model.calls[0]["top_p"], 0.95)
         self.assertEqual(model.calls[0]["do_sample"], True)
         self.assertTrue(torch.equal(model.calls[0]["input_ids"], torch.tensor([[1, 2]])))
+
+    def test_synthesize_accepts_text_batch(self):
+        model = FakeBatchMossModel()
+        processor = FakeMossProcessor()
+        tts = MossTTS(
+            model=model,
+            processor=processor,
+            config=MossTTSConfig(sample_rate=24000, language="Chinese"),
+            device="cpu",
+        )
+
+        outputs = tts.synthesize(
+            ["hello", "world"],
+            TTSOptions(max_new_tokens=13, extra={"prompt_audio_path": "assets/prompt.wav"}),
+        )
+
+        self.assertEqual(len(outputs), 2)
+        self.assertTrue(torch.equal(outputs[0].waveform, torch.tensor([[0.0, 1.0, 2.0, 3.0]])))
+        self.assertTrue(torch.equal(outputs[1].waveform, torch.tensor([[4.0, 5.0, 6.0, 7.0]])))
+        self.assertEqual([message["text"] for message in processor.messages], ["hello", "world"])
+        self.assertEqual(
+            [message["reference"] for message in processor.messages],
+            [["assets/prompt.wav"], ["assets/prompt.wav"]],
+        )
+        self.assertEqual(processor.batch_modes, ["generation"])
+        self.assertEqual(tuple(model.calls[0]["input_ids"].shape), (2, 2))
+        self.assertEqual(model.calls[0]["max_new_tokens"], 13)
+
+    def test_synthesize_rejects_empty_text_batch(self):
+        tts = MossTTS(model=FakeMossModel(), processor=FakeMossProcessor())
+
+        with self.assertRaisesRegex(ValueError, "text batch"):
+            tts.synthesize([])
+
+    def test_synthesize_batch_rejects_decode_length_mismatch(self):
+        tts = MossTTS(model=FakeMossModel(), processor=FakeMossProcessor())
+
+        with self.assertRaisesRegex(ValueError, "text batch length"):
+            tts.synthesize(["hello", "world"])
 
     def test_runtime_kwargs_do_not_leak_load_kwargs(self):
         model = FakeMossModel()
@@ -267,6 +310,16 @@ class FakeRandomMossModel:
         return torch.rand(1, 4)
 
 
+class FakeBatchMossModel:
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        batch_size = kwargs["input_ids"].shape[0]
+        return torch.arange(batch_size * 4, dtype=torch.float32).reshape(batch_size, 4)
+
+
 class FakeProcessorMessage:
     def __init__(self, audio: torch.Tensor) -> None:
         self.audio_codes_list = [audio]
@@ -289,15 +342,16 @@ class FakeMossProcessor:
 
     def __call__(self, conversations, **kwargs):
         self.batch_modes.append(kwargs["mode"])
+        batch_size = len(conversations)
         return {
-            "input_ids": torch.tensor([[1, 2]]),
-            "attention_mask": torch.tensor([[1, 1]]),
+            "input_ids": torch.arange(1, batch_size * 2 + 1).reshape(batch_size, 2),
+            "attention_mask": torch.ones((batch_size, 2), dtype=torch.long),
         }
 
     def decode(self, value):
         self.decoded = value
         if isinstance(value, torch.Tensor) and value.ndim == 2 and value.shape[-1] == 4:
-            return [FakeProcessorMessage(value[0])]
+            return [FakeProcessorMessage(row) for row in value]
         return [FakeProcessorMessage(torch.arange(5, dtype=torch.float32))]
 
 

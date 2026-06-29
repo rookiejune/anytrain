@@ -54,7 +54,6 @@ class LightningTest(unittest.TestCase):
 
     def test_debug_callback_reports_first_gradient_after_backward(self):
         import torch
-
         from anytrain.lightning import DebugCallback
 
         class Module(torch.nn.Module):
@@ -98,7 +97,6 @@ class LightningTest(unittest.TestCase):
 
     def test_lightning_log_mixin_requires_media_logger(self):
         import torch
-
         from anytrain.lightning import LightningLogMixin
 
         class Module(LightningLogMixin):
@@ -111,7 +109,6 @@ class LightningTest(unittest.TestCase):
     def test_lightning_log_mixin_skips_media_on_nonzero_rank_by_default(self):
         import torch
         from lightning.pytorch.loggers import TensorBoardLogger
-
         from anytrain.lightning import LightningLogMixin
 
         class Experiment:
@@ -154,7 +151,6 @@ class LightningTest(unittest.TestCase):
     def test_lightning_log_mixin_prefixes_rank_when_logging_all_ranks(self):
         import torch
         from lightning.pytorch.loggers import TensorBoardLogger
-
         from anytrain.lightning import LightningLogMixin
 
         class Experiment:
@@ -198,7 +194,6 @@ class LightningTest(unittest.TestCase):
 
     def test_debug_callback_can_be_passed_to_trainer(self):
         from lightning import pytorch as pl
-
         from anytrain.lightning import DebugCallback
 
         with mock.patch.dict(environ, {"ANYTRAIN_DEBUG": "True"}, clear=True):
@@ -216,7 +211,6 @@ class LightningTest(unittest.TestCase):
         import inspect
 
         from lightning.pytorch.callbacks import ModelCheckpoint as LightningModelCheckpoint
-
         from anytrain.lightning import ModelCheckpoint
 
         original = inspect.signature(LightningModelCheckpoint.__init__)

@@ -39,7 +39,9 @@ class LongCatAssetsTest(unittest.TestCase):
                 return {"codec_config": {"name": stem, "ckpt_path": "ckpts/old.pt"}}
 
             with (
-                patch.object(longcat_assets, "_require_huggingface_hub", return_value=fake_download),
+                patch.object(
+                    longcat_assets, "_require_huggingface_hub", return_value=fake_download
+                ),
                 patch.object(longcat_assets, "_read_default_config", side_effect=fake_config),
             ):
                 assets = ensure_longcat_assets(cache_dir=root)
@@ -90,7 +92,9 @@ class LongCatAssetsTest(unittest.TestCase):
                 return {"codec_config": {"name": stem, "ckpt_path": "ckpts/old.pt"}}
 
             with (
-                patch.object(longcat_assets, "_require_huggingface_hub", return_value=fake_download),
+                patch.object(
+                    longcat_assets, "_require_huggingface_hub", return_value=fake_download
+                ),
                 patch.object(longcat_assets, "_read_default_config", side_effect=fake_config),
             ):
                 assets = ensure_longcat_assets(cache_dir=root, decoders=("16k_4codebooks",))

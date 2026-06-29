@@ -5,10 +5,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import torch
-from torch import nn
-
 from anytrain.codec.longcat.assets import LongCatAssets, LongCatConfigPaths
 from anytrain.codec.longcat.codec import LongCatAudioCodec
+from torch import nn
 
 
 class LongCatCodecTest(unittest.TestCase):
@@ -45,7 +44,10 @@ class LongCatCodecTest(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("LONGCAT_AUDIO_CODEC_CKPT_DIR", None)
                 with (
-                    patch("anytrain.codec.longcat.codec.ensure_longcat_assets", side_effect=fake_ensure_assets),
+                    patch(
+                        "anytrain.codec.longcat.codec.ensure_longcat_assets",
+                        side_effect=fake_ensure_assets,
+                    ),
                     patch(
                         "anytrain.codec.longcat.codec._load_longcat_loaders",
                         return_value=(fake_load_encoder, fake_load_decoder),

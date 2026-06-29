@@ -2,7 +2,6 @@ import unittest
 from dataclasses import fields
 
 import torch
-
 from anytrain.module.quantization import (
     EmbeddingVectorQuantizer,
     QuantizationLoss,
@@ -20,7 +19,9 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
         self.assertEqual(config.codebook_dim, 4)
 
     def test_forward_shapes(self):
-        quantizer = EmbeddingVectorQuantizer(VQConfig(input_dim=8, codebook_size=16, codebook_dim=4))
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=8, codebook_size=16, codebook_dim=4)
+        )
         x = torch.randn(3, 5, 8)
 
         output = quantizer(x)
@@ -34,7 +35,9 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
         self.assertEqual(output.loss.codebook.ndim, 0)
 
     def test_eval_returns_no_loss(self):
-        quantizer = EmbeddingVectorQuantizer(VQConfig(input_dim=8, codebook_size=16, codebook_dim=4))
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=8, codebook_size=16, codebook_dim=4)
+        )
         quantizer.eval()
 
         output = quantizer(torch.randn(2, 8))
@@ -52,7 +55,9 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
         self.assertTrue(torch.equal(round_trip, indices))
 
     def test_backward_reaches_input_and_codebook_without_ema(self):
-        quantizer = EmbeddingVectorQuantizer(VQConfig(input_dim=8, codebook_size=16, codebook_dim=4))
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=8, codebook_size=16, codebook_dim=4)
+        )
         x = torch.randn(3, 8, requires_grad=True)
 
         output = quantizer(x)

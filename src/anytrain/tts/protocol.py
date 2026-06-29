@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol, TypedDict, Unpack
+from typing import Protocol, TypedDict, Unpack, overload
 
 import torch
 from torch import Tensor
@@ -195,11 +195,25 @@ class TTSBackend(Protocol):
 
     def config_hash(self) -> str: ...
 
+    @overload
     def synthesize(
         self,
         text: str,
         options: TTSOptions | None = None,
     ) -> TTSOutput: ...
+
+    @overload
+    def synthesize(
+        self,
+        text: Sequence[str],
+        options: TTSOptions | None = None,
+    ) -> list[TTSOutput]: ...
+
+    def synthesize(
+        self,
+        text: str | Sequence[str],
+        options: TTSOptions | None = None,
+    ) -> TTSOutput | list[TTSOutput]: ...
 
 
 def validate_text(text: str) -> str:

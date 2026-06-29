@@ -40,7 +40,9 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertEqual(GaussianSource().sample_like(x).shape, x.shape)
         self.assertEqual(UniformSource(low=-1, high=1).sample_like(x).shape, x.shape)
         self.assertTrue((UniformTokenSource(5).sample_like(x) < 5).all())
-        self.assertTrue(torch.equal(MaskTokenSource(7).sample_like(x), torch.full_like(x, 7).long()))
+        self.assertTrue(
+            torch.equal(MaskTokenSource(7).sample_like(x), torch.full_like(x, 7).long())
+        )
 
         logit = LogitNormalTimeSampler()
         t = logit.sample(1024, x.device)
@@ -202,7 +204,10 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertIsNotNone(output.time_grid)
 
     def test_discrete_inputs_must_be_long(self):
-        from anytrain.framework.flow_matching import DiscreteEulerSampler, DiscreteFlowMatcher
+        from anytrain.framework.flow_matching import (
+            DiscreteEulerSampler,
+            DiscreteFlowMatcher,
+        )
 
         matcher = DiscreteFlowMatcher(6)
 

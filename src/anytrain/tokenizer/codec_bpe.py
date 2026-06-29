@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
@@ -12,7 +12,11 @@ import torch
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
     from tokenizers.models import BPE as TokenizersBPE
+    from tqdm.std import tqdm as Tqdm
 
+Unit = int | tuple[int, ...]
+UnitInput = int | Sequence[int]
+UnitState = int | list[int]
 
 PRIVATE_USE_RANGES = (
     (0xE000, 0xF8FF),
@@ -34,8 +38,8 @@ class _TokenizersBPEKwargs(TypedDict):
     ignore_merges: bool
 
 
-class IntBPEState(TypedDict):
-    tokens: dict[str, list[int]]
+class CodecBPEState(TypedDict):
+    tokens: dict[str, list[UnitState]]
     merges: list[dict[str, int]]
     strict: bool
 
@@ -68,7 +72,7 @@ RepeatInterleaveOutput = tuple[torch.Tensor, torch.Tensor] | tuple[
 class _CoreBPE:
     def __init__(
         self,
-        tokens: Mapping[int, Sequence[int]],
+        tokens: Mapping[int, Sequence[UnitInput]],
         merges: Sequence[Merge | tuple[int, int, int]] = (),
         *,
         strict: bool = True,
@@ -78,10 +82,13 @@ class _CoreBPE:
 
         self.strict = strict
         self.tokens = {
-            int(token_id): tuple(int(unit) for unit in units)
+            int(token_id): tuple(_normalize_unit(unit) for unit in units)
             for token_id, units in tokens.items()
         }
+        self.unit_dim = _unit_dim_from_token_units(self.tokens.values())
         for token_id, units in self.tokens.items():
+            if token_id < 0:
+                raise ValueError("token ids must be non-negative")
             if not units:
                 raise ValueError(f"token {token_id} must contain at least one unit")
 
@@ -103,12 +110,13 @@ class _CoreBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[int]],
+        corpus: Iterable[Sequence[UnitInput]],
         *,
         vocab_size: int | None = None,
         num_merges: int | None = None,
         min_count: int = 2,
         strict: bool = True,
+        progress: bool = False,
     ) -> Self:
         if vocab_size is not None and vocab_size <= 0:
             raise ValueError("vocab_size must be positive")
@@ -117,7 +125,13 @@ class _CoreBPE:
         if min_count <= 0:
             raise ValueError("min_count must be positive")
 
-        units = [tuple(int(unit) for unit in seq) for seq in corpus]
+        corpus_iter = _progress_iter(
+            corpus,
+            progress=progress,
+            desc="CodecBPE corpus",
+            unit="seq",
+        )
+        units = [tuple(_normalize_unit(unit) for unit in seq) for seq in corpus_iter]
         if not units:
             raise ValueError("corpus must not be empty")
         if strict and any(len(seq) == 0 for seq in units):
@@ -125,42 +139,71 @@ class _CoreBPE:
         units = [seq for seq in units if seq]
         if not units:
             raise ValueError("corpus must contain at least one unit")
+        _unit_dim_from_sequences(units)
 
         base = sorted({unit for seq in units for unit in seq})
-        tokens: dict[int, tuple[int, ...]] = {unit: (unit,) for unit in base}
-        encoded = [list(seq) for seq in units]
+        unit_to_id = {unit: token_id for token_id, unit in enumerate(base)}
+        tokens: dict[int, tuple[Unit, ...]] = {
+            token_id: (unit,)
+            for unit, token_id in unit_to_id.items()
+        }
+        encoded = [[unit_to_id[unit] for unit in seq] for seq in units]
         merges: list[Merge] = []
-        next_id = max(base) + 1
+        next_id = len(base)
+        if vocab_size is not None and next_id > vocab_size:
+            raise ValueError("vocab_size must be at least the number of unique corpus units")
 
-        while cls._can_merge(tokens, merges, vocab_size, num_merges):
-            pair_counts = cls._count_pairs(encoded)
-            if not pair_counts:
-                break
+        progress_bar = _progress_bar(
+            progress=progress,
+            total=cls._merge_progress_total(next_id, vocab_size, num_merges),
+            desc="CodecBPE merges",
+            unit="merge",
+        )
+        stop_reason = "limit"
+        try:
+            while cls._can_merge(next_id, merges, vocab_size, num_merges):
+                pair_counts = cls._count_pairs(encoded)
+                if not pair_counts:
+                    stop_reason = "no_pairs"
+                    break
 
-            best_count = max(pair_counts.values())
-            if best_count < min_count:
-                break
+                best_count = max(pair_counts.values())
+                if best_count < min_count:
+                    stop_reason = "min_count"
+                    break
 
-            pair = min(pair for pair, count in pair_counts.items() if count == best_count)
-            left, right = pair
-            token_id = next_id
-            next_id += 1
+                pair = min(pair for pair, count in pair_counts.items() if count == best_count)
+                left, right = pair
+                token_id = next_id
+                next_id += 1
 
-            tokens[token_id] = tokens[left] + tokens[right]
-            merges.append(Merge(left=left, right=right, token_id=token_id))
-            encoded = [cls._merge(seq, pair, token_id) for seq in encoded]
+                tokens[token_id] = tokens[left] + tokens[right]
+                merges.append(Merge(left=left, right=right, token_id=token_id))
+                encoded = [cls._merge(seq, pair, token_id) for seq in encoded]
+                if progress_bar is not None:
+                    progress_bar.set_postfix(count=best_count, vocab=next_id)
+                    progress_bar.update()
+        finally:
+            if progress_bar is not None:
+                if stop_reason != "limit" and progress_bar.total is not None:
+                    progress_bar.total = progress_bar.n
+                progress_bar.set_postfix_str(f"stop={stop_reason}, vocab={next_id}")
+                progress_bar.refresh()
+                progress_bar.close()
 
         return cls(tokens, merges, strict=strict)
 
-    def unit_ids(self, token_id: int, *, strict: bool | None = None) -> tuple[int, ...]:
+    def unit_ids(self, token_id: int, *, strict: bool | None = None) -> tuple[Unit, ...]:
         use_strict = self.strict if strict is None else strict
         if token_id in self.tokens:
             return self.tokens[token_id]
         if use_strict:
             raise KeyError(f"unknown token_id: {token_id}")
+        if self.unit_dim is not None:
+            raise KeyError(f"unknown token_id cannot be expanded for tuple units: {token_id}")
         return (token_id,)
 
-    def encode_units(self, units: Sequence[int], *, strict: bool | None = None) -> list[int]:
+    def encode_units(self, units: Sequence[UnitInput], *, strict: bool | None = None) -> list[int]:
         use_strict = self.strict if strict is None else strict
         if not units:
             if use_strict:
@@ -168,11 +211,17 @@ class _CoreBPE:
             return []
 
         token_ids: list[int] = []
-        for unit in units:
+        normalized = tuple(_normalize_unit(unit) for unit in units)
+        _validate_unit_dim(normalized, self.unit_dim)
+        for unit in normalized:
             token_id = self.unit_to_id.get(unit)
             if token_id is None:
                 if use_strict:
                     raise KeyError(f"unknown unit: {unit}")
+                if self.unit_dim is not None:
+                    raise KeyError(f"unknown tuple unit cannot be encoded: {unit}")
+                if unit in self.tokens:
+                    raise ValueError(f"unknown unit collides with token_id: {unit}")
                 token_ids.append(unit)
             else:
                 token_ids.append(token_id)
@@ -181,10 +230,10 @@ class _CoreBPE:
             token_ids = self._merge(token_ids, (merge.left, merge.right), merge.token_id)
         return token_ids
 
-    def eval(self, corpus: Iterable[Sequence[int]]) -> CompressionStats:
+    def eval(self, corpus: Iterable[Sequence[UnitInput]]) -> CompressionStats:
         return _eval(corpus, self.encode_units)
 
-    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
+    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Unit]:
         unit_ids, _ = self.expand_with_counts(token_ids, strict=strict)
         return unit_ids
 
@@ -193,14 +242,14 @@ class _CoreBPE:
         token_ids: Sequence[int],
         *,
         strict: bool | None = None,
-    ) -> tuple[list[int], list[int]]:
+    ) -> tuple[list[Unit], list[int]]:
         use_strict = self.strict if strict is None else strict
         if not token_ids:
             if use_strict:
                 raise ValueError("token_ids must not be empty")
             return [], []
 
-        unit_ids: list[int] = []
+        unit_ids: list[Unit] = []
         counts: list[int] = []
         for token_id in token_ids:
             units = self.unit_ids(token_id, strict=use_strict)
@@ -255,7 +304,7 @@ class _CoreBPE:
         )
         repeats = torch.tensor(counts, dtype=torch.long, device=x.device)
         expanded_x = torch.repeat_interleave(x, repeats, dim=dim)
-        expanded_ids = torch.tensor(unit_ids, dtype=token_ids.dtype, device=token_ids.device)
+        expanded_ids = _unit_tensor(unit_ids, dtype=token_ids.dtype, device=token_ids.device)
         return expanded_x, expanded_ids
 
     def _repeat_interleave_2d(
@@ -295,8 +344,9 @@ class _CoreBPE:
             expanded_rows.append(expanded_x)
             expanded_id_rows.append(expanded_ids)
 
-        max_len = max(row.numel() for row in expanded_id_rows)
-        if all(row.numel() == max_len for row in expanded_id_rows):
+        row_lengths = [self._expanded_length(row) for row in expanded_id_rows]
+        max_len = max(row_lengths)
+        if all(length == max_len for length in row_lengths):
             return (
                 torch.stack(expanded_rows, dim=0),
                 torch.stack(expanded_id_rows, dim=0),
@@ -313,7 +363,10 @@ class _CoreBPE:
         out_shape = list(x.shape)
         out_shape[dim] = max_len
         expanded_x = x.new_zeros(out_shape)
-        expanded_ids = token_ids.new_full((batch_size, max_len), pad_id)
+        ids_shape = (batch_size, max_len)
+        if self.unit_dim is not None:
+            ids_shape = (*ids_shape, self.unit_dim)
+        expanded_ids = token_ids.new_full(ids_shape, pad_id)
         expanded_mask = torch.zeros(
             (batch_size, max_len),
             dtype=torch.bool,
@@ -321,15 +374,20 @@ class _CoreBPE:
         )
 
         for row, (row_x, row_ids) in enumerate(zip(expanded_rows, expanded_id_rows, strict=True)):
-            length = row_ids.numel()
+            length = self._expanded_length(row_ids)
             row_target = expanded_x.select(0, row)
             slices = [slice(None)] * row_target.dim()
             slices[row_dim] = slice(0, length)
             row_target[tuple(slices)] = row_x
-            expanded_ids[row, :length] = row_ids
+            expanded_ids[row, :length, ...] = row_ids
             expanded_mask[row, :length] = True
 
         return expanded_x, expanded_ids, expanded_mask
+
+    def _expanded_length(self, unit_ids: torch.Tensor) -> int:
+        if self.unit_dim is None:
+            return unit_ids.numel()
+        return unit_ids.size(0)
 
     @staticmethod
     def _validate_token_ids(token_ids: torch.Tensor) -> None:
@@ -365,8 +423,8 @@ class _CoreBPE:
         return int(unique.item())
 
     @staticmethod
-    def _build_unit_to_id(tokens: Mapping[int, tuple[int, ...]]) -> dict[int, int]:
-        unit_to_id: dict[int, int] = {}
+    def _build_unit_to_id(tokens: Mapping[int, tuple[Unit, ...]]) -> dict[Unit, int]:
+        unit_to_id: dict[Unit, int] = {}
         for token_id, units in tokens.items():
             if len(units) == 1:
                 unit_to_id[units[0]] = token_id
@@ -374,14 +432,27 @@ class _CoreBPE:
 
     @staticmethod
     def _can_merge(
-        tokens: Mapping[int, tuple[int, ...]],
+        next_id: int,
         merges: Sequence[Merge],
         vocab_size: int | None,
         num_merges: int | None,
     ) -> bool:
-        if vocab_size is not None and len(tokens) >= vocab_size:
+        if vocab_size is not None and next_id >= vocab_size:
             return False
         return num_merges is None or len(merges) < num_merges
+
+    @staticmethod
+    def _merge_progress_total(
+        next_id: int,
+        vocab_size: int | None,
+        num_merges: int | None,
+    ) -> int | None:
+        vocab_merges = None if vocab_size is None else max(vocab_size - next_id, 0)
+        if num_merges is None:
+            return vocab_merges
+        if vocab_merges is None:
+            return num_merges
+        return min(vocab_merges, num_merges)
 
     @staticmethod
     def _count_pairs(seqs: Sequence[Sequence[int]]) -> Counter[tuple[int, int]]:
@@ -413,7 +484,7 @@ class _CoreBPE:
         return dim
 
 
-class IntBPE:
+class CodecBPE:
     def __init__(
         self,
         *,
@@ -436,14 +507,14 @@ class IntBPE:
         self.ignore_merges = ignore_merges
 
         self._core: _CoreBPE | None = None
-        self._unit_tokens: dict[int, str] | None = None
+        self._unit_tokens: dict[Unit, str] | None = None
         self._token_texts: dict[int, str] | None = None
         self._model: TokenizersBPE | None = None
 
     @classmethod
     def from_dict(
         cls,
-        state: IntBPEState,
+        state: CodecBPEState,
         *,
         cache_capacity: int | None = None,
         dropout: float | None = None,
@@ -465,7 +536,7 @@ class IntBPE:
             ignore_merges=ignore_merges,
         )
         tokens = {
-            int(token_id): tuple(int(unit) for unit in units)
+            int(token_id): tuple(_unit_from_state(unit) for unit in units)
             for token_id, units in state["tokens"].items()
         }
         merges = [
@@ -511,12 +582,13 @@ class IntBPE:
     @classmethod
     def train(
         cls,
-        corpus: Iterable[Sequence[int]],
+        corpus: Iterable[Sequence[UnitInput]],
         *,
         vocab_size: int | None = None,
         num_merges: int | None = None,
         min_count: int = 2,
         strict: bool = True,
+        progress: bool = False,
         cache_capacity: int | None = None,
         dropout: float | None = None,
         unk_token: str | None = None,
@@ -532,6 +604,7 @@ class IntBPE:
             num_merges=num_merges,
             min_count=min_count,
             strict=strict,
+            progress=progress,
         )
         bpe = cls(
             cache_capacity=cache_capacity,
@@ -555,7 +628,7 @@ class IntBPE:
         return self._require_model()
 
     @property
-    def tokens(self) -> Mapping[int, tuple[int, ...]]:
+    def tokens(self) -> Mapping[int, tuple[Unit, ...]]:
         return self.core.tokens
 
     @property
@@ -574,8 +647,10 @@ class IntBPE:
         tokenizer_type = _require_tokenizer()
         return tokenizer_type(self.model)
 
-    def units_text(self, units: Sequence[int]) -> str:
-        return self._units_text(tuple(int(unit) for unit in units), self._require_unit_tokens())
+    def units_text(self, units: Sequence[UnitInput]) -> str:
+        normalized = tuple(_normalize_unit(unit) for unit in units)
+        _validate_unit_dim(normalized, self.core.unit_dim)
+        return self._units_text(normalized, self._require_unit_tokens())
 
     def token_text(self, token_id: int) -> str:
         token_texts = self._require_token_texts()
@@ -583,24 +658,26 @@ class IntBPE:
             raise KeyError(f"unknown token_id: {token_id}")
         return token_texts[token_id]
 
-    def encode_units(self, units: Sequence[int]) -> list[int]:
+    def encode_units(self, units: Sequence[UnitInput]) -> list[int]:
         core = self.core
         if not units:
             if core.strict:
                 raise ValueError("units must not be empty")
             return []
 
+        normalized = tuple(_normalize_unit(unit) for unit in units)
+        _validate_unit_dim(normalized, core.unit_dim)
         unit_tokens = self._require_unit_tokens()
-        if not core.strict and any(unit not in unit_tokens for unit in units):
+        if not core.strict and any(unit not in unit_tokens for unit in normalized):
             return core.encode_units(units, strict=False)
 
-        text = self.units_text(units)
+        text = self._units_text(normalized, unit_tokens)
         return [token.id for token in self.model.tokenize(text)]
 
-    def eval(self, corpus: Iterable[Sequence[int]]) -> CompressionStats:
+    def eval(self, corpus: Iterable[Sequence[UnitInput]]) -> CompressionStats:
         return _eval(corpus, self.encode_units)
 
-    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
+    def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Unit]:
         return self.core.expand_ids(token_ids, strict=strict)
 
     def expand_with_counts(
@@ -608,7 +685,7 @@ class IntBPE:
         token_ids: Sequence[int],
         *,
         strict: bool | None = None,
-    ) -> tuple[list[int], list[int]]:
+    ) -> tuple[list[Unit], list[int]]:
         return self.core.expand_with_counts(token_ids, strict=strict)
 
     def repeat_interleave(
@@ -622,10 +699,10 @@ class IntBPE:
     ) -> RepeatInterleaveOutput:
         return self.core.repeat_interleave(x, token_ids, mask, dim=dim, strict=strict)
 
-    def to_dict(self) -> IntBPEState:
+    def to_dict(self) -> CodecBPEState:
         return {
             "tokens": {
-                str(token_id): list(units)
+                str(token_id): [_unit_to_state(unit) for unit in units]
                 for token_id, units in sorted(self.tokens.items())
             },
             "merges": [
@@ -642,7 +719,7 @@ class IntBPE:
     def save_pretrained(self, path: str | Path) -> Path:
         out = Path(path)
         out.mkdir(parents=True, exist_ok=True)
-        (out / "int_bpe.json").write_text(
+        (out / "codec_bpe.json").write_text(
             json.dumps(self.to_dict(), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
@@ -668,10 +745,10 @@ class IntBPE:
         self._model = tokenizers_bpe(**self._tokenizers_kwargs(vocab, merges))
 
     @staticmethod
-    def _build_unit_tokens(core: _CoreBPE) -> dict[int, str]:
+    def _build_unit_tokens(core: _CoreBPE) -> dict[Unit, str]:
         units = sorted(core.unit_to_id)
         if len(units) > _private_use_capacity():
-            raise ValueError("too many units for IntBPE")
+            raise ValueError("too many units for CodecBPE")
         return {
             unit: _private_use_char(index)
             for index, unit in enumerate(units)
@@ -679,22 +756,22 @@ class IntBPE:
 
     def _require_core(self) -> _CoreBPE:
         if self._core is None:
-            raise ValueError("IntBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
         return self._core
 
     def _require_model(self) -> TokenizersBPE:
         if self._model is None:
-            raise ValueError("IntBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
         return self._model
 
-    def _require_unit_tokens(self) -> Mapping[int, str]:
+    def _require_unit_tokens(self) -> Mapping[Unit, str]:
         if self._unit_tokens is None:
-            raise ValueError("IntBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
         return self._unit_tokens
 
     def _require_token_texts(self) -> Mapping[int, str]:
         if self._token_texts is None:
-            raise ValueError("IntBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
         return self._token_texts
 
     def _tokenizers_kwargs(
@@ -726,11 +803,11 @@ class IntBPE:
     def _state_path(path: str | Path) -> Path:
         state_path = Path(path)
         if state_path.is_dir():
-            return state_path / "int_bpe.json"
+            return state_path / "codec_bpe.json"
         return state_path
 
     @staticmethod
-    def _units_text(units: Sequence[int], unit_tokens: Mapping[int, str]) -> str:
+    def _units_text(units: Sequence[Unit], unit_tokens: Mapping[Unit, str]) -> str:
         pieces: list[str] = []
         for unit in units:
             if unit not in unit_tokens:
@@ -743,7 +820,7 @@ def _require_tokenizers_bpe() -> type[TokenizersBPE]:
     try:
         from tokenizers.models import BPE as TokenizersBPE
     except ImportError as error:
-        raise ImportError("IntBPE requires the `tokenizers` package") from error
+        raise ImportError("CodecBPE requires the `tokenizers` package") from error
     return TokenizersBPE
 
 
@@ -751,8 +828,106 @@ def _require_tokenizer() -> type[Tokenizer]:
     try:
         from tokenizers import Tokenizer
     except ImportError as error:
-        raise ImportError("IntBPE.tokenizer() requires the `tokenizers` package") from error
+        raise ImportError("CodecBPE.tokenizer() requires the `tokenizers` package") from error
     return Tokenizer
+
+
+def _progress_iter[T](
+    iterable: Iterable[T],
+    *,
+    progress: bool,
+    desc: str,
+    unit: str,
+) -> Iterable[T]:
+    if not progress:
+        return iterable
+    tqdm = _require_tqdm()
+    total = len(iterable) if isinstance(iterable, Sized) else None
+    return tqdm(iterable, total=total, desc=desc, unit=unit)
+
+
+def _progress_bar(
+    *,
+    progress: bool,
+    total: int | None,
+    desc: str,
+    unit: str,
+) -> Tqdm | None:
+    if not progress:
+        return None
+    tqdm = _require_tqdm()
+    return tqdm(total=total, desc=desc, unit=unit)
+
+
+def _require_tqdm() -> type[Tqdm]:
+    try:
+        from tqdm.auto import tqdm
+    except ImportError as error:
+        raise ImportError("CodecBPE progress requires the `tqdm` package") from error
+    return tqdm
+
+
+def _normalize_unit(unit: UnitInput) -> Unit:
+    if isinstance(unit, int):
+        if unit < 0:
+            raise ValueError("unit ids must be non-negative")
+        return unit
+    if isinstance(unit, str):
+        raise TypeError("tuple units must contain integer ids")
+
+    values = tuple(int(value) for value in unit)
+    if not values:
+        raise ValueError("tuple units must not be empty")
+    if any(value < 0 for value in values):
+        raise ValueError("unit ids must be non-negative")
+    return values
+
+
+def _unit_dim_from_sequences(seqs: Sequence[Sequence[Unit]]) -> int | None:
+    return _unit_dim(unit for seq in seqs for unit in seq)
+
+
+def _unit_dim_from_token_units(token_units: Iterable[Sequence[Unit]]) -> int | None:
+    return _unit_dim(unit for units in token_units for unit in units)
+
+
+def _unit_dim(units: Iterable[Unit]) -> int | None:
+    dim: int | None = None
+    initialized = False
+    for unit in units:
+        current = len(unit) if isinstance(unit, tuple) else None
+        if not initialized:
+            dim = current
+            initialized = True
+            continue
+        if dim != current:
+            raise ValueError("units must be all ints or fixed-length integer sequences")
+    return dim
+
+
+def _validate_unit_dim(units: Sequence[Unit], dim: int | None) -> None:
+    inferred = _unit_dim(units)
+    if inferred != dim:
+        raise ValueError("units must match the tokenizer unit shape")
+
+
+def _unit_to_state(unit: Unit) -> UnitState:
+    if isinstance(unit, tuple):
+        return list(unit)
+    return unit
+
+
+def _unit_from_state(unit: UnitState) -> Unit:
+    return _normalize_unit(unit)
+
+
+def _unit_tensor(
+    units: Sequence[Unit],
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    return torch.tensor(units, dtype=dtype, device=device)
 
 
 def _private_use_capacity() -> int:
@@ -769,14 +944,14 @@ def _private_use_char(index: int) -> str:
 
 
 def _eval(
-    corpus: Iterable[Sequence[int]],
-    encode_units: Callable[[Sequence[int]], Sequence[int]],
+    corpus: Iterable[Sequence[UnitInput]],
+    encode_units: Callable[[Sequence[UnitInput]], Sequence[int]],
 ) -> CompressionStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
     for seq in corpus:
-        units = tuple(int(unit) for unit in seq)
+        units = tuple(_normalize_unit(unit) for unit in seq)
         num_sequences += 1
         original_tokens += len(units)
         encoded_tokens += len(encode_units(units))

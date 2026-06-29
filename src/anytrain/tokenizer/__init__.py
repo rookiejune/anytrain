@@ -1,7 +1,7 @@
-from .int_bpe import CompressionStats, IntBPE, Merge
+from .codec_bpe import CodecBPE, CompressionStats, Merge
 
 __all__ = [
+    "CodecBPE",
     "CompressionStats",
-    "IntBPE",
     "Merge",
 ]

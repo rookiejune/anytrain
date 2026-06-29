@@ -1,6 +1,6 @@
 # Tokenizer TODO
 
-## IntBPE Batch Support
+## CodecBPE Batch Support
 
 批量输入单独设计，避免第一版把 ragged 行为写乱：
 

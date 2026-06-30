@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 import torch
 import torch.nn.functional as F
@@ -126,7 +127,9 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
     def test_init_defaults(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 3)])
 
-        embed = IdSpaceEmbedding(space, 4, dtype=torch.float64)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            embed = IdSpaceEmbedding(space, 4, dtype=torch.float64)
 
         self.assertEqual(embed.dim, 4)
         self.assertEqual(embed.embedding_dim, 4)
@@ -137,6 +140,49 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         self.assertEqual(embed.modality_embeddings[Modality.TEXT].num_embeddings, 3)
         self.assertEqual(embed.modality_embeddings[Modality.TEXT].embedding_dim, 4)
         self.assertEqual(embed.modality_embeddings[Modality.TEXT].weight.dtype, torch.float64)
+
+    def test_init_warns_when_using_default_initialization(self):
+        space = IdSpace(
+            {"pad": 0},
+            [ModalityBlock(Modality.TEXT, 1, 2), ModalityBlock(Modality.AUDIO, 3, 2)],
+        )
+
+        with self.assertWarnsRegex(UserWarning, "PyTorch default initialization") as special:
+            IdSpaceEmbedding(
+                space,
+                2,
+                modality_embeddings={Modality.TEXT: torch.nn.Embedding(2, 2)},
+            )
+
+        self.assertIn("special embeddings", str(special.warning))
+
+        with self.assertWarnsRegex(UserWarning, "PyTorch default initialization") as modality:
+            IdSpaceEmbedding(
+                space,
+                2,
+                special_embeddings=torch.nn.ParameterDict(
+                    {"pad": torch.nn.Parameter(torch.zeros(2))}
+                ),
+                modality_embeddings={Modality.TEXT: torch.nn.Embedding(2, 2)},
+            )
+
+        self.assertIn("modality embeddings", str(modality.warning))
+
+    def test_init_does_not_warn_for_explicit_embeddings(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            IdSpaceEmbedding(
+                space,
+                2,
+                special_embeddings=torch.nn.ParameterDict(
+                    {"pad": torch.nn.Parameter(torch.zeros(2))}
+                ),
+                modality_embeddings={Modality.TEXT: torch.nn.Embedding(2, 2)},
+            )
+
+        self.assertEqual(caught, [])
 
     def test_init_accepts_explicit_weights(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 
 import torch
@@ -377,6 +378,11 @@ def _init_special_embeddings(
     if not init_missing:
         _validate_missing_special_embeddings_are_covered(space, special_embeddings)
         return special_embeddings
+    missing_names = [
+        name for name in space.special_token_ids if name not in special_embeddings
+    ]
+    if missing_names:
+        _warn_default_initialization("special embeddings", missing_names)
     for name in space.special_token_ids:
         if name in special_embeddings:
             continue
@@ -421,6 +427,10 @@ def _init_modality_embeddings(
     for modality_block in space.modality_blocks:
         embed = modality_embeddings.get(modality_block.modality)
         if embed is None:
+            _warn_default_initialization(
+                "modality embeddings",
+                [modality_block.modality.value],
+            )
             embed = nn.Embedding(
                 modality_block.vocab_size,
                 dim,
@@ -441,6 +451,18 @@ def _init_modality_embeddings(
             )
         modules[modality_block.modality.value] = embed
     return modules
+
+
+def _warn_default_initialization(kind: str, names: Sequence[str]) -> None:
+    joined = ", ".join(names)
+    warnings.warn(
+        f"IdSpaceEmbedding is using PyTorch default initialization for {kind}: {joined}. "
+        "This is often a poor production default, especially when adding tokens to "
+        "a pretrained model or tying embeddings as an output head; pass explicit "
+        "embeddings when initialization scale matters.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def _normalize_head_special_tokens(

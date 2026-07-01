@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import torch
 from torch import nn
@@ -14,7 +14,7 @@ from ._llm_config import (
 )
 from .adamw import create_adamw_optimizer
 from .muon import create_muon_adamw_optimizer
-from .options import OptimizerOptions
+from .options import AdamWOptions, OptimizerOptions
 from .rules import (
     ExcludedModules,
     LRScaleRules,
@@ -113,18 +113,19 @@ def create_optimizer_from_config(
     config: OptimizationConfig,
 ) -> torch.optim.Optimizer:
     optimizer_options = config.optimizer_options
-    if not is_muon_adamw_options(optimizer_options):
-        return create_adamw_optimizer(
+    if is_muon_adamw_options(optimizer_options):
+        return create_muon_adamw_optimizer(
             module,
-            optimizer_options,
+            muon=optimizer_options["muon"],
+            adamw=optimizer_options["adamw"],
             excluded_modules=config.excluded_modules,
             lr_scale_rules=config.lr_scale_rules,
         )
 
-    return create_muon_adamw_optimizer(
+    adamw_options = cast(AdamWOptions, optimizer_options)
+    return create_adamw_optimizer(
         module,
-        muon=optimizer_options["muon"],
-        adamw=optimizer_options["adamw"],
+        adamw_options,
         excluded_modules=config.excluded_modules,
         lr_scale_rules=config.lr_scale_rules,
     )

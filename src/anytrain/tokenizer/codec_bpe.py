@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, Self, TypeVar, TypedDict
+from typing import TYPE_CHECKING, NotRequired, Self, TypedDict, TypeVar
 
 import torch
 
@@ -68,9 +70,49 @@ class CompressionStats:
     compression_gain: float
 
 
-RepeatInterleaveOutput = tuple[torch.Tensor, torch.Tensor] | tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor
-]
+@dataclass(frozen=True, slots=True)
+class TokenCount:
+    token_id: int
+    count: int
+    frequency: float
+    length: int
+
+
+@dataclass(frozen=True, slots=True)
+class TokenFrequencyStats:
+    total_tokens: int
+    token_count_histogram: dict[int, int]
+    top_token_counts: tuple[TokenCount, ...]
+    num_used_tokens: int
+    vocab_coverage: float
+    entropy: float
+
+
+@dataclass(frozen=True, slots=True)
+class TokenLengthStats:
+    used_token_length_counts: tuple[int, ...]
+    used_token_length_frequencies: tuple[float, ...]
+    vocab_token_length_counts: tuple[int, ...]
+    vocab_token_length_frequencies: tuple[float, ...]
+    mean_used_token_length: float
+    mean_vocab_token_length: float
+    max_used_token_length: int
+    max_vocab_token_length: int
+    used_token_length_quantiles: dict[str, float]
+    vocab_token_length_quantiles: dict[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class CodecBPEEvalStats:
+    compression: CompressionStats
+    token_frequency: TokenFrequencyStats
+    token_length: TokenLengthStats
+
+
+RepeatInterleaveOutput = (
+    tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+)
+LENGTH_QUANTILES = (0.5, 0.9, 0.95, 0.99)
 
 
 class _FrameCodec:
@@ -161,8 +203,7 @@ class _CoreBPE:
             show_progress=show_progress,
         )
         base_tokens = {
-            base_id: _private_use_char(index)
-            for index, base_id in enumerate(sorted(base))
+            base_id: _private_use_char(index) for index, base_id in enumerate(sorted(base))
         }
         tokenizer = _train_tokenizers_bpe(
             _text_corpus(corpus_factory, base_tokens, strict=strict),
@@ -207,8 +248,19 @@ class _CoreBPE:
         corpus: Iterable[Sequence[int]],
         *,
         show_progress: bool = True,
-    ) -> CompressionStats:
-        return _eval(corpus, self.encode_ids, show_progress=show_progress)
+        top_k: int = 100,
+    ) -> CodecBPEEvalStats:
+        return _eval(
+            corpus,
+            self.encode_ids,
+            token_lengths=self._token_lengths(),
+            vocab_size=self.vocab_size,
+            show_progress=show_progress,
+            top_k=_normalize_top_k(top_k),
+        )
+
+    def _token_lengths(self) -> dict[int, int]:
+        return {token_id: len(base_ids) for token_id, base_ids in self.tokens.items()}
 
     def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[int]:
         base_ids, _ = self.expand_with_counts(token_ids, strict=strict)
@@ -642,20 +694,21 @@ class CodecBPE:
         corpus: Iterable[Sequence[FrameInput]],
         *,
         show_progress: bool = True,
-    ) -> CompressionStats:
+        top_k: int = 100,
+    ) -> CodecBPEEvalStats:
         return _eval_frames(
             corpus,
             self._require_codec(),
             self.encode_frames,
+            token_lengths=self.core._token_lengths(),
+            vocab_size=self.vocab_size,
             show_progress=show_progress,
+            top_k=_normalize_top_k(top_k),
         )
 
     def expand_ids(self, token_ids: Sequence[int], *, strict: bool | None = None) -> list[Frame]:
         codec = self._require_codec()
-        return [
-            codec.decode(base_id)
-            for base_id in self.core.expand_ids(token_ids, strict=strict)
-        ]
+        return [codec.decode(base_id) for base_id in self.core.expand_ids(token_ids, strict=strict)]
 
     def expand_with_counts(
         self,
@@ -688,10 +741,7 @@ class CodecBPE:
         return {
             "codebook_sizes": list(codec.codebook_sizes),
             "tokens": {
-                str(token_id): [
-                    list(codec.decode(base_id))
-                    for base_id in base_ids
-                ]
+                str(token_id): [list(codec.decode(base_id)) for base_id in base_ids]
                 for token_id, base_ids in sorted(self.core.tokens.items())
             },
             "merges": [
@@ -723,10 +773,7 @@ class CodecBPE:
             for token_id, base_ids in core.tokens.items()
         }
         vocab = {text: token_id for token_id, text in token_texts.items()}
-        merges = [
-            (token_texts[merge.left], token_texts[merge.right])
-            for merge in core.merges
-        ]
+        merges = [(token_texts[merge.left], token_texts[merge.right]) for merge in core.merges]
 
         self._codec = codec
         self._core = core
@@ -739,12 +786,11 @@ class CodecBPE:
         base_ids = sorted(core.base_to_id)
         if len(base_ids) > _private_use_capacity():
             raise ValueError("too many observed frames for CodecBPE")
-        return {
-            base_id: _private_use_char(index)
-            for index, base_id in enumerate(base_ids)
-        }
+        return {base_id: _private_use_char(index) for index, base_id in enumerate(base_ids)}
 
-    def _frames_tensor(self, base_ids: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    def _frames_tensor(
+        self, base_ids: torch.Tensor, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         codec = self._require_codec()
         if codec.num_codebooks == 1:
             return base_ids.unsqueeze(-1)
@@ -767,27 +813,37 @@ class CodecBPE:
 
     def _require_codec(self) -> _FrameCodec:
         if self._codec is None:
-            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError(
+                "CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()"
+            )
         return self._codec
 
     def _require_core(self) -> _CoreBPE:
         if self._core is None:
-            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError(
+                "CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()"
+            )
         return self._core
 
     def _require_model(self) -> TokenizersBPE:
         if self._model is None:
-            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError(
+                "CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()"
+            )
         return self._model
 
     def _require_base_tokens(self) -> Mapping[int, str]:
         if self._base_tokens is None:
-            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError(
+                "CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()"
+            )
         return self._base_tokens
 
     def _require_token_texts(self) -> Mapping[int, str]:
         if self._token_texts is None:
-            raise ValueError("CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()")
+            raise ValueError(
+                "CodecBPE is not initialized; use train(), from_dict(), or from_pretrained()"
+            )
         return self._token_texts
 
     def _tokenizers_kwargs(
@@ -883,8 +939,7 @@ def _core_state_from_tokenizer(
     char_to_base = {text: base_id for base_id, text in base_tokens.items()}
     vocab = {text: int(token_id) for text, token_id in model["vocab"].items()}
     tokens = {
-        token_id: tuple(char_to_base[char] for char in text)
-        for text, token_id in vocab.items()
+        token_id: tuple(char_to_base[char] for char in text) for text, token_id in vocab.items()
     }
     merges: list[Merge] = []
     for left_text, right_text in model["merges"]:
@@ -923,9 +978,7 @@ def _normalize_frame(frame: FrameInput, codebook_sizes: Sequence[int]) -> Frame:
 
     for index, (value, size) in enumerate(zip(values, codebook_sizes, strict=True)):
         if value >= size:
-            raise ValueError(
-                f"frame code id at codebook {index} must be in [0, {size})"
-            )
+            raise ValueError(f"frame code id at codebook {index} must be in [0, {size})")
     return values
 
 
@@ -945,7 +998,9 @@ def _normalize_base_id(base_id: int) -> int:
     return base_id
 
 
-def _corpus_factory(corpus: CorpusT | Callable[[], CorpusT]) -> Callable[[], CorpusT]:
+def _corpus_factory[CorpusT: Iterable[object]](
+    corpus: CorpusT | Callable[[], CorpusT],
+) -> Callable[[], CorpusT]:
     if callable(corpus):
         return corpus
     if isinstance(corpus, Iterator):
@@ -1043,33 +1098,31 @@ def _eval(
     corpus: Iterable[Sequence[int]],
     encode_ids: Callable[[Sequence[int]], Sequence[int]],
     *,
+    token_lengths: Mapping[int, int],
+    vocab_size: int,
     show_progress: bool,
-) -> CompressionStats:
+    top_k: int,
+) -> CodecBPEEvalStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
+    token_counts: Counter[int] = Counter()
     for seq in _progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
         ids = tuple(_normalize_base_id(base_id) for base_id in seq)
+        encoded = tuple(encode_ids(ids))
         num_sequences += 1
         original_tokens += len(ids)
-        encoded_tokens += len(encode_ids(ids))
+        encoded_tokens += len(encoded)
+        token_counts.update(encoded)
 
-    if num_sequences == 0:
-        raise ValueError("corpus must not be empty")
-    if original_tokens == 0:
-        raise ValueError("corpus must contain at least one frame")
-
-    compression_ratio = encoded_tokens / original_tokens
-    compression_factor = original_tokens / encoded_tokens if encoded_tokens else float("inf")
-    return CompressionStats(
+    return _eval_stats(
         num_sequences=num_sequences,
         original_tokens=original_tokens,
         encoded_tokens=encoded_tokens,
-        mean_original_length=original_tokens / num_sequences,
-        mean_encoded_length=encoded_tokens / num_sequences,
-        compression_ratio=compression_ratio,
-        compression_factor=compression_factor,
-        compression_gain=1.0 - compression_ratio,
+        token_counts=token_counts,
+        token_lengths=token_lengths,
+        vocab_size=vocab_size,
+        top_k=top_k,
     )
 
 
@@ -1078,17 +1131,44 @@ def _eval_frames(
     codec: _FrameCodec,
     encode_frames: Callable[[Sequence[FrameInput]], Sequence[int]],
     *,
+    token_lengths: Mapping[int, int],
+    vocab_size: int,
     show_progress: bool,
-) -> CompressionStats:
+    top_k: int,
+) -> CodecBPEEvalStats:
     num_sequences = 0
     original_tokens = 0
     encoded_tokens = 0
+    token_counts: Counter[int] = Counter()
     for seq in _progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
         frames = tuple(codec.normalize(frame) for frame in seq)
+        encoded = tuple(encode_frames(frames))
         num_sequences += 1
         original_tokens += len(frames)
-        encoded_tokens += len(encode_frames(frames))
+        encoded_tokens += len(encoded)
+        token_counts.update(encoded)
 
+    return _eval_stats(
+        num_sequences=num_sequences,
+        original_tokens=original_tokens,
+        encoded_tokens=encoded_tokens,
+        token_counts=token_counts,
+        token_lengths=token_lengths,
+        vocab_size=vocab_size,
+        top_k=top_k,
+    )
+
+
+def _eval_stats(
+    *,
+    num_sequences: int,
+    original_tokens: int,
+    encoded_tokens: int,
+    token_counts: Counter[int],
+    token_lengths: Mapping[int, int],
+    vocab_size: int,
+    top_k: int,
+) -> CodecBPEEvalStats:
     if num_sequences == 0:
         raise ValueError("corpus must not be empty")
     if original_tokens == 0:
@@ -1096,7 +1176,7 @@ def _eval_frames(
 
     compression_ratio = encoded_tokens / original_tokens
     compression_factor = original_tokens / encoded_tokens if encoded_tokens else float("inf")
-    return CompressionStats(
+    compression = CompressionStats(
         num_sequences=num_sequences,
         original_tokens=original_tokens,
         encoded_tokens=encoded_tokens,
@@ -1106,3 +1186,112 @@ def _eval_frames(
         compression_factor=compression_factor,
         compression_gain=1.0 - compression_ratio,
     )
+    return CodecBPEEvalStats(
+        compression=compression,
+        token_frequency=_token_frequency_stats(
+            token_counts,
+            token_lengths,
+            encoded_tokens,
+            vocab_size,
+            top_k=top_k,
+        ),
+        token_length=_token_length_stats(token_counts, token_lengths),
+    )
+
+
+def _token_frequency_stats(
+    token_counts: Counter[int],
+    token_lengths: Mapping[int, int],
+    total_tokens: int,
+    vocab_size: int,
+    *,
+    top_k: int,
+) -> TokenFrequencyStats:
+    count_histogram = Counter(token_counts.values())
+    entropy = -sum(
+        (count / total_tokens) * math.log(count / total_tokens) for count in token_counts.values()
+    )
+    top_counts = tuple(
+        TokenCount(
+            token_id=token_id,
+            count=count,
+            frequency=count / total_tokens,
+            length=token_lengths[token_id],
+        )
+        for token_id, count in sorted(
+            token_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:top_k]
+    )
+    return TokenFrequencyStats(
+        total_tokens=total_tokens,
+        token_count_histogram=dict(sorted(count_histogram.items())),
+        top_token_counts=top_counts,
+        num_used_tokens=len(token_counts),
+        vocab_coverage=len(token_counts) / vocab_size,
+        entropy=entropy,
+    )
+
+
+def _token_length_stats(
+    token_counts: Counter[int],
+    token_lengths: Mapping[int, int],
+) -> TokenLengthStats:
+    vocab_counts = Counter(token_lengths.values())
+    used_counts: Counter[int] = Counter()
+    used_length_total = 0
+    total_used_tokens = sum(token_counts.values())
+    for token_id, count in token_counts.items():
+        if token_id not in token_lengths:
+            raise KeyError(f"encoded unknown token_id: {token_id}")
+        length = token_lengths[token_id]
+        used_counts[length] += count
+        used_length_total += length * count
+
+    used_length_counts = _dense_length_counts(used_counts)
+    vocab_length_counts = _dense_length_counts(vocab_counts)
+    return TokenLengthStats(
+        used_token_length_counts=used_length_counts,
+        used_token_length_frequencies=_length_frequencies(used_length_counts),
+        vocab_token_length_counts=vocab_length_counts,
+        vocab_token_length_frequencies=_length_frequencies(vocab_length_counts),
+        mean_used_token_length=used_length_total / total_used_tokens,
+        mean_vocab_token_length=sum(length * count for length, count in vocab_counts.items())
+        / sum(vocab_counts.values()),
+        max_used_token_length=max(used_counts),
+        max_vocab_token_length=max(vocab_counts),
+        used_token_length_quantiles=_length_quantiles(used_counts),
+        vocab_token_length_quantiles=_length_quantiles(vocab_counts),
+    )
+
+
+def _dense_length_counts(length_counts: Mapping[int, int]) -> tuple[int, ...]:
+    max_length = max(length_counts)
+    return tuple(length_counts.get(length, 0) for length in range(max_length + 1))
+
+
+def _length_frequencies(length_counts: Sequence[int]) -> tuple[float, ...]:
+    total = sum(length_counts)
+    return tuple(count / total for count in length_counts)
+
+
+def _length_quantiles(length_counts: Mapping[int, int]) -> dict[str, float]:
+    total = sum(length_counts.values())
+    quantiles: dict[str, float] = {}
+    for quantile in LENGTH_QUANTILES:
+        rank = max(1, math.ceil(quantile * total))
+        cumulative = 0
+        for length, count in sorted(length_counts.items()):
+            cumulative += count
+            if cumulative >= rank:
+                quantiles[f"p{round(quantile * 100):02d}"] = float(length)
+                break
+    return quantiles
+
+
+def _normalize_top_k(top_k: int) -> int:
+    if isinstance(top_k, bool) or not isinstance(top_k, int):
+        raise TypeError("top_k must be an integer")
+    if top_k < 0:
+        raise ValueError("top_k must be non-negative")
+    return top_k

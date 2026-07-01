@@ -10,6 +10,10 @@
 - `CodecBPE`
 - `Merge`
 - `CompressionStats`
+- `TokenCount`
+- `TokenFrequencyStats`
+- `TokenLengthStats`
+- `CodecBPEEvalStats`
 
 ## CodecBPE
 
@@ -44,6 +48,7 @@ bpe = CodecBPE.train(
 token_ids = bpe.encode_frames([[1], [2], [1], [2], [3]])
 frames = bpe.expand_ids(token_ids)
 stats = bpe.eval([[[1], [2], [1], [2], [3]]], show_progress=False)
+compression_ratio = stats.compression.compression_ratio
 vocab_size = bpe.vocab_size
 ```
 
@@ -81,7 +86,15 @@ corpus 中不同 frame 数量更多，最终 compact vocab 会保留完整 alpha
 `BpeTrainer` 学习 merges。传入的 corpus 必须是可重放 iterable，或 callable 且每次返回
 新的 iterator。`show_progress=True` 时第一遍 alphabet scan 和第二遍 BPE trainer
 各自显示独立进度。
-`eval()` 也支持 `show_progress`，用于评估大语料压缩率时显示独立进度。
+`eval()` 也支持 `show_progress`，用于评估大语料压缩率和 BPE token 使用分布时显示独立进度。
+它返回 `CodecBPEEvalStats`，其中 `compression` 保留原始压缩指标，`token_frequency`
+统计 eval corpus 编码后 BPE token 的出现次数直方图、top-k token、实际使用 token 数、
+vocab 覆盖率和 entropy，`token_length` 同时统计 vocab 视角和 eval 实际使用视角的 token
+展开长度分布。长度分布是 dense tuple，下标就是 BPE token 展开后的原始 frame 数，
+例如 `used_token_length_counts[3]` 表示长度为 3 的 BPE token 在 eval corpus 中出现了多少次；
+tuple 的最大下标就是当前统计中最大的 BPE 展开长度。`eval()` 不返回完整 token-id 到 count 或
+length 的大 dict；具体 bpe id 的频率明细只保留 `top_token_counts`，默认 `top_k=100`。
+长度定义为一个 BPE token 通过 `expand_ids()` 还原后覆盖的原始 codec frame 数。
 frame 长度必须等于 `len(codebook_sizes)`，每个 code id 必须在对应 book size 范围内。
 单 codebook 也必须通过 `[id]` 表达，不保留 1D unit 入口。
 

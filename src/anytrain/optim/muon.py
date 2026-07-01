@@ -3,12 +3,14 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from ._params import make_scaled_param_groups, split_parameters_by_predicate, validate_module
 from .adamw import AdamWDecayPolicy, create_adamw_optimizer_from_config
 from .compose import CompositeOptimizer
 from .config import AdamWConfig, MuonAdjustLRFn, MuonConfig
 from .rules import (
     ExcludedModules,
     ExcludedModuleTypes,
+    LRScaleRules,
     is_muon_parameter_for_module,
     resolve_excluded_module_ids,
 )
@@ -17,15 +19,13 @@ from .rules import (
 def create_muon_adamw_optimizer(
     module: nn.Module,
     *,
-    lr: float,
-    weight_decay: float = 0.1,
-    adamw_lr: float | None = None,
-    adamw_weight_decay: float | None = None,
+    muon_lr: float,
+    adamw_lr: float,
+    muon_weight_decay: float = 0.1,
+    adamw_weight_decay: float = 0.1,
     adamw_betas: tuple[float, float] = (0.9, 0.95),
     adamw_eps: float = 1e-8,
     adamw_fused: bool | None = None,
-    muon_lr: float | None = None,
-    muon_weight_decay: float | None = None,
     muon_momentum: float = 0.95,
     muon_nesterov: bool = True,
     muon_ns_coefficients: tuple[float, float, float] = (3.4445, -4.775, 2.0315),
@@ -35,12 +35,13 @@ def create_muon_adamw_optimizer(
     requires_grad_only: bool = True,
     excluded_modules: ExcludedModules = (),
     excluded_module_types: ExcludedModuleTypes = (),
+    lr_scale_rules: LRScaleRules = (),
 ) -> CompositeOptimizer:
     return create_muon_adamw_optimizer_from_config(
         module,
         muon=MuonConfig(
-            lr=lr if muon_lr is None else muon_lr,
-            weight_decay=weight_decay if muon_weight_decay is None else muon_weight_decay,
+            lr=muon_lr,
+            weight_decay=muon_weight_decay,
             momentum=muon_momentum,
             nesterov=muon_nesterov,
             ns_coefficients=muon_ns_coefficients,
@@ -49,8 +50,8 @@ def create_muon_adamw_optimizer(
             adjust_lr_fn=muon_adjust_lr_fn,
         ),
         adamw=AdamWConfig(
-            lr=lr if adamw_lr is None else adamw_lr,
-            weight_decay=weight_decay if adamw_weight_decay is None else adamw_weight_decay,
+            lr=adamw_lr,
+            weight_decay=adamw_weight_decay,
             betas=adamw_betas,
             eps=adamw_eps,
             fused=adamw_fused,
@@ -58,6 +59,7 @@ def create_muon_adamw_optimizer(
         requires_grad_only=requires_grad_only,
         excluded_modules=excluded_modules,
         excluded_module_types=excluded_module_types,
+        lr_scale_rules=lr_scale_rules,
     )
 
 
@@ -69,6 +71,7 @@ def create_muon_adamw_optimizer_from_config(
     requires_grad_only: bool = True,
     excluded_modules: ExcludedModules = (),
     excluded_module_types: ExcludedModuleTypes = (),
+    lr_scale_rules: LRScaleRules = (),
 ) -> CompositeOptimizer:
     muon_parameters, adamw_parameters = split_muon_params(
         module,
@@ -80,7 +83,12 @@ def create_muon_adamw_optimizer_from_config(
         raise ValueError("No parameters are eligible for Muon.")
 
     optimizers: dict[str, torch.optim.Optimizer] = {
-        "muon": _create_muon_optimizer(muon_parameters, muon),
+        "muon": _create_muon_optimizer(
+            module,
+            muon_parameters,
+            muon,
+            lr_scale_rules=lr_scale_rules,
+        ),
     }
     if adamw_parameters:
         optimizers["adamw"] = create_adamw_optimizer_from_config(
@@ -90,8 +98,8 @@ def create_muon_adamw_optimizer_from_config(
             selected_params=adamw_parameters,
             excluded_modules=excluded_modules,
             excluded_module_types=excluded_module_types,
-            decay_selected_params=False,
-            decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE,
+            decay_policy=AdamWDecayPolicy.STANDARD,
+            lr_scale_rules=lr_scale_rules,
         )
 
     return CompositeOptimizer(optimizers)
@@ -113,52 +121,47 @@ def split_muon_params(
     Muon-eligible.
     """
 
-    if not isinstance(module, nn.Module):
-        raise TypeError("`module` must be an instance of torch.nn.Module.")
-
-    parameter_entries_by_id: dict[int, tuple[nn.Parameter, bool]] = {}
+    validate_module(module)
     excluded_module_ids = resolve_excluded_module_ids(module, excluded_modules)
 
-    for _, child_module in module.named_modules():
-        for parameter_name, parameter in child_module.named_parameters(recurse=False):
-            if requires_grad_only and not parameter.requires_grad:
-                continue
+    def is_muon(
+        child_module: nn.Module,
+        parameter_name: str,
+        parameter: nn.Parameter,
+    ) -> bool:
+        return is_muon_parameter_for_module(
+            child_module,
+            parameter_name,
+            parameter,
+            excluded_module_ids=excluded_module_ids,
+            excluded_module_types=excluded_module_types,
+        )
 
-            is_muon = is_muon_parameter_for_module(
-                child_module,
-                parameter_name,
-                parameter,
-                excluded_module_ids=excluded_module_ids,
-                excluded_module_types=excluded_module_types,
-            )
-
-            parameter_id = id(parameter)
-            previous_entry = parameter_entries_by_id.get(parameter_id)
-            if previous_entry is None:
-                parameter_entries_by_id[parameter_id] = (parameter, is_muon)
-            else:
-                parameter_entries_by_id[parameter_id] = (parameter, previous_entry[1] and is_muon)
-
-    muon_parameters: list[nn.Parameter] = []
-    non_muon_parameters: list[nn.Parameter] = []
-    for parameter, is_muon in parameter_entries_by_id.values():
-        if is_muon:
-            muon_parameters.append(parameter)
-        else:
-            non_muon_parameters.append(parameter)
-
-    return muon_parameters, non_muon_parameters
+    return split_parameters_by_predicate(
+        module,
+        is_muon,
+        requires_grad_only=requires_grad_only,
+    )
 
 
 def _create_muon_optimizer(
+    module: nn.Module,
     parameters: list[nn.Parameter],
     config: MuonConfig,
+    *,
+    lr_scale_rules: LRScaleRules = (),
 ) -> torch.optim.Optimizer:
     muon_cls = getattr(torch.optim, "Muon", None)
     if muon_cls is None:
         raise RuntimeError("torch.optim.Muon is not available in this PyTorch version.")
+    param_groups = make_scaled_param_groups(
+        module,
+        ((parameters, {}),),
+        base_lr=config.lr,
+        lr_scale_rules=lr_scale_rules,
+    )
     return muon_cls(
-        parameters,
+        param_groups,
         lr=config.lr,
         weight_decay=config.weight_decay,
         momentum=config.momentum,

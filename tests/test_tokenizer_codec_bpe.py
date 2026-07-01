@@ -622,14 +622,76 @@ class BPETest(unittest.TestCase):
             show_progress=False,
         )
 
-        self.assertEqual(stats.num_sequences, 2)
-        self.assertEqual(stats.original_tokens, 8)
-        self.assertEqual(stats.encoded_tokens, 3)
-        self.assertEqual(stats.mean_original_length, 4.0)
-        self.assertEqual(stats.mean_encoded_length, 1.5)
-        self.assertAlmostEqual(stats.compression_ratio, 3 / 8)
-        self.assertAlmostEqual(stats.compression_factor, 8 / 3)
-        self.assertAlmostEqual(stats.compression_gain, 5 / 8)
+        compression = stats.compression
+        self.assertEqual(compression.num_sequences, 2)
+        self.assertEqual(compression.original_tokens, 8)
+        self.assertEqual(compression.encoded_tokens, 3)
+        self.assertEqual(compression.mean_original_length, 4.0)
+        self.assertEqual(compression.mean_encoded_length, 1.5)
+        self.assertAlmostEqual(compression.compression_ratio, 3 / 8)
+        self.assertAlmostEqual(compression.compression_factor, 8 / 3)
+        self.assertAlmostEqual(compression.compression_gain, 5 / 8)
+
+    def test_eval_reports_token_distributions(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+        )
+
+        stats = bpe.eval(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            show_progress=False,
+        )
+
+        self.assertEqual(stats.token_frequency.total_tokens, 3)
+        self.assertEqual(stats.token_frequency.token_count_histogram, {1: 1, 2: 1})
+        self.assertEqual(
+            [count.count for count in stats.token_frequency.top_token_counts],
+            [2, 1],
+        )
+        self.assertEqual(stats.token_frequency.num_used_tokens, 2)
+        self.assertAlmostEqual(
+            sum(count.frequency for count in stats.token_frequency.top_token_counts),
+            1.0,
+        )
+        self.assertAlmostEqual(
+            stats.token_frequency.vocab_coverage,
+            stats.token_frequency.num_used_tokens / bpe.vocab_size,
+        )
+        self.assertGreater(stats.token_frequency.entropy, 0.0)
+
+        self.assertEqual(stats.token_length.used_token_length_counts, (0, 0, 1, 2))
+        self.assertEqual(stats.token_length.used_token_length_frequencies, (0.0, 0.0, 1 / 3, 2 / 3))
+        self.assertEqual(
+            sum(stats.token_length.vocab_token_length_counts),
+            bpe.vocab_size,
+        )
+        self.assertEqual(stats.token_length.mean_used_token_length, 8 / 3)
+        self.assertEqual(stats.token_length.max_used_token_length, 3)
+        self.assertEqual(stats.token_length.used_token_length_quantiles["p50"], 3.0)
+
+    def test_eval_limits_top_token_counts(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+        )
+
+        stats = bpe.eval(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            show_progress=False,
+            top_k=1,
+        )
+
+        self.assertEqual(len(stats.token_frequency.top_token_counts), 1)
+        self.assertEqual(stats.token_frequency.top_token_counts[0].count, 2)
+
+    def test_eval_rejects_invalid_top_k(self):
+        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4)
+
+        with self.assertRaisesRegex(ValueError, "top_k"):
+            bpe.eval([[[1], [2], [3]]], show_progress=False, top_k=-1)
 
     def test_eval_progress_keeps_same_result(self):
         bpe = CodecBPE.train(

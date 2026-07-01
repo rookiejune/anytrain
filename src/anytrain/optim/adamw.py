@@ -6,10 +6,12 @@ from enum import StrEnum, auto
 import torch
 from torch import nn
 
+from ._params import make_scaled_param_groups, split_parameters_by_predicate, validate_module
 from .config import AdamWConfig
 from .rules import (
     ExcludedModules,
     ExcludedModuleTypes,
+    LRScaleRules,
     is_embedding_module,
     is_muon_parameter_for_module,
     is_normalization_module,
@@ -36,6 +38,7 @@ def create_adamw_optimizer(
     excluded_module_types: ExcludedModuleTypes = (),
     decay_selected_params: bool = True,
     decay_policy: AdamWDecayPolicy | str = AdamWDecayPolicy.STANDARD,
+    lr_scale_rules: LRScaleRules = (),
 ) -> torch.optim.AdamW:
     return create_adamw_optimizer_from_config(
         module,
@@ -52,6 +55,7 @@ def create_adamw_optimizer(
         excluded_module_types=excluded_module_types,
         decay_selected_params=decay_selected_params,
         decay_policy=decay_policy,
+        lr_scale_rules=lr_scale_rules,
     )
 
 
@@ -65,6 +69,7 @@ def create_adamw_optimizer_from_config(
     excluded_module_types: ExcludedModuleTypes = (),
     decay_selected_params: bool = True,
     decay_policy: AdamWDecayPolicy | str = AdamWDecayPolicy.STANDARD,
+    lr_scale_rules: LRScaleRules = (),
 ) -> torch.optim.AdamW:
     decay_params, no_decay_params = split_adamw_decay_params(
         module,
@@ -75,13 +80,20 @@ def create_adamw_optimizer_from_config(
         decay_selected_params=decay_selected_params,
         decay_policy=decay_policy,
     )
-    param_groups: list[dict[str, object]] = []
+    raw_param_groups: list[tuple[list[nn.Parameter], dict[str, object]]] = []
     if decay_params:
-        param_groups.append({"params": decay_params, "weight_decay": config.weight_decay})
+        raw_param_groups.append((decay_params, {"weight_decay": config.weight_decay}))
     if no_decay_params:
-        param_groups.append({"params": no_decay_params, "weight_decay": 0.0})
-    if not param_groups:
+        raw_param_groups.append((no_decay_params, {"weight_decay": 0.0}))
+    if not raw_param_groups:
         raise ValueError("No parameters are available for AdamW.")
+
+    param_groups = make_scaled_param_groups(
+        module,
+        raw_param_groups,
+        base_lr=config.lr,
+        lr_scale_rules=lr_scale_rules,
+    )
 
     if config.fused is None:
         return torch.optim.AdamW(
@@ -109,51 +121,35 @@ def split_adamw_decay_params(
     decay_selected_params: bool = True,
     decay_policy: AdamWDecayPolicy | str = AdamWDecayPolicy.STANDARD,
 ) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
-    if not isinstance(module, nn.Module):
-        raise TypeError("`module` must be an instance of torch.nn.Module.")
+    validate_module(module)
     if not isinstance(decay_selected_params, bool):
         raise TypeError("decay_selected_params must be a bool.")
 
     resolved_decay_policy = _normalize_decay_policy(decay_policy)
-    selected_param_ids = _resolve_selected_param_ids(module, selected_params)
     excluded_module_ids = resolve_excluded_module_ids(module, excluded_modules)
-    parameter_entries_by_id: dict[int, tuple[nn.Parameter, bool]] = {}
 
-    for _, child_module in module.named_modules():
-        for parameter_name, parameter in child_module.named_parameters(recurse=False):
-            if requires_grad_only and not parameter.requires_grad:
-                continue
-            if selected_param_ids is not None and id(parameter) not in selected_param_ids:
-                continue
+    def should_decay(
+        child_module: nn.Module,
+        parameter_name: str,
+        parameter: nn.Parameter,
+    ) -> bool:
+        if not decay_selected_params:
+            return False
+        return _should_decay_parameter(
+            child_module,
+            parameter_name,
+            parameter,
+            excluded_module_ids=excluded_module_ids,
+            excluded_module_types=excluded_module_types,
+            decay_policy=resolved_decay_policy,
+        )
 
-            should_decay = False
-            if decay_selected_params:
-                should_decay = _should_decay_parameter(
-                    child_module,
-                    parameter_name,
-                    parameter,
-                    excluded_module_ids=excluded_module_ids,
-                    excluded_module_types=excluded_module_types,
-                    decay_policy=resolved_decay_policy,
-                )
-            parameter_id = id(parameter)
-            previous_entry = parameter_entries_by_id.get(parameter_id)
-            if previous_entry is None:
-                parameter_entries_by_id[parameter_id] = (parameter, should_decay)
-            else:
-                parameter_entries_by_id[parameter_id] = (
-                    parameter,
-                    previous_entry[1] and should_decay,
-                )
-
-    decay_params: list[nn.Parameter] = []
-    no_decay_params: list[nn.Parameter] = []
-    for parameter, should_decay in parameter_entries_by_id.values():
-        if should_decay:
-            decay_params.append(parameter)
-        else:
-            no_decay_params.append(parameter)
-    return decay_params, no_decay_params
+    return split_parameters_by_predicate(
+        module,
+        should_decay,
+        requires_grad_only=requires_grad_only,
+        selected_params=selected_params,
+    )
 
 
 def _should_decay_parameter(
@@ -216,26 +212,6 @@ def _normalize_decay_policy(decay_policy: AdamWDecayPolicy | str) -> AdamWDecayP
         return AdamWDecayPolicy(decay_policy)
     except ValueError as error:
         raise ValueError("decay_policy must be standard or muon_eligible.") from error
-
-
-def _resolve_selected_param_ids(
-    module: nn.Module,
-    selected_params: Collection[nn.Parameter] | None,
-) -> set[int] | None:
-    if selected_params is None:
-        return None
-    if not isinstance(selected_params, Collection):
-        raise TypeError("selected_params must be a collection of nn.Parameter.")
-
-    module_param_ids = {id(parameter) for parameter in module.parameters()}
-    selected_param_ids: set[int] = set()
-    for index, parameter in enumerate(selected_params):
-        if not isinstance(parameter, nn.Parameter):
-            raise TypeError(f"selected_params[{index}] must be an nn.Parameter.")
-        if id(parameter) not in module_param_ids:
-            raise ValueError(f"selected_params[{index}] must belong to `module`.")
-        selected_param_ids.add(id(parameter))
-    return selected_param_ids
 
 
 __all__ = [

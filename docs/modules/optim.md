@@ -11,6 +11,8 @@
 ```text
 src/anytrain/optim/
   __init__.py
+  _llm_config.py
+  _params.py
   adamw.py
   compose.py
   config.py
@@ -26,6 +28,8 @@ src/anytrain/optim/
 - `CompositeOptimizer`
 - `ExcludedModules`
 - `ExcludedModuleTypes`
+- `LRScaleRule`
+- `LRScaleRules`
 - `create_adamw_optimizer`
 - `split_adamw_decay_params`
 - `create_muon_adamw_optimizer`
@@ -43,6 +47,29 @@ src/anytrain/optim/
 - `anytrain.optim.llm`: `OptimizationConfig`、`create_optimizer_from_config`、`create_lightning_optimizers_from_config`
 
 `torch.optim.Muon` 是依赖边界之一，因此 `anytrain` 要求 `torch>=2.12`。
+
+## LR Scale Rules
+
+需要给某个 module 子树设置相对学习率时，传 `lr_scale_rules`。`name` 对应
+`module.named_modules()` 的路径，`lr_scale` 必须大于 0；未命中参数使用 `1.0`：
+
+```python
+optimizer = create_adamw_optimizer(
+    model,
+    lr=3e-4,
+    lr_scale_rules=[
+        {"name": "encoder", "lr_scale": 0.5},
+        {"name": "encoder.layers.23", "lr_scale": 1.0},
+        {"name": "lm_head", "lr_scale": 2.0},
+    ],
+)
+```
+
+如果一个参数被多个规则命中，使用最长 module path 对应的规则；同样具体的规则给同一个
+shared parameter 分配不同 `lr_scale` 时会抛错。
+
+`lr_scale_rules` 是通用参数分组逻辑，AdamW、Muon+AdamW 和 LLM preset helper 都使用同一套规则。
+LLM preset 会把规则透传给底层 optimizer。
 
 ## AdamW
 
@@ -73,13 +100,20 @@ optimizer = create_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_he
 因此 head 不再因为名字包含 `head` 自动排除；如果要让 head 走 AdamW，传入具体 module：
 
 ```python
-optimizer = create_muon_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_head,))
+optimizer = create_muon_adamw_optimizer(
+    model,
+    muon_lr=3e-4,
+    adamw_lr=3e-4,
+    excluded_modules=(model.lm_head,),
+)
 ```
 
-`create_muon_adamw_optimizer(module, lr=..., ...)` 返回 `CompositeOptimizer`：
+`lr_scale_rules` 同样会作用到 Muon 和 AdamW fallback 子 optimizer 的参数组。
+
+`create_muon_adamw_optimizer(module, muon_lr=..., adamw_lr=..., ...)` 返回 `CompositeOptimizer`：
 
 - `"muon"` 子 optimizer 处理 Muon 参数。
-- `"adamw"` 子 optimizer 处理其余参数，并全部使用 `weight_decay=0.0`。
+- `"adamw"` 子 optimizer 处理其余参数，并继续按 AdamW 规则拆分 decay / no-decay。
 
 `MuonConfig.adjust_lr_fn` 默认是 `MuonAdjustLRFn.MATCH_RMS_ADAMW`，用于和 AdamW 常用 lr/wd 配置对齐。PyTorch 原生 `torch.optim.Muon` 默认不设置 `adjust_lr_fn`；这里显式改成 LLM 训练更常用的对齐口径。为了方便 YAML/JSON 配置，`adjust_lr_fn` 也接受字符串 `"original"` 和 `"match_rms_adamw"`。
 
@@ -178,6 +212,10 @@ optimizer = create_llm_optimizer(
     excluded_modules=(model.lm_head,),
 )
 ```
+
+LLM 预设下 Muon 和 AdamW fallback 共用同一套 `lr` / `weight_decay`。需要局部调整学习率时使用
+`lr_scale_rules`；需要控制 Muon 专属超参时，直接使用 `anytrain.optim.muon` 或
+`OptimizationConfig(optimizer_config=MuonAdamWConfig(...))`。
 
 `create_llm_lightning_optimizers()` 直接返回 Lightning `configure_optimizers()` 可用的 dict：
 

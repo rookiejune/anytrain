@@ -9,6 +9,8 @@ from .muon import (
 from .rules import (
     ExcludedModules,
     ExcludedModuleTypes,
+    LRScaleRule,
+    LRScaleRules,
 )
 from .scheduler import (
     create_scheduler,
@@ -19,6 +21,8 @@ __all__ = [
     "CompositeOptimizer",
     "ExcludedModules",
     "ExcludedModuleTypes",
+    "LRScaleRule",
+    "LRScaleRules",
     "create_adamw_optimizer",
     "create_llm_lightning_optimizers",
     "create_llm_optimizer",

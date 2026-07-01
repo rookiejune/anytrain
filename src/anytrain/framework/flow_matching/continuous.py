@@ -53,9 +53,11 @@ class ContinuousFlowMatcher(nn.Module):
         self,
         model: nn.Module,
         x_0: Tensor,
+        *,
+        time_grid: Tensor | None = None,
         **model_extras: object,
     ) -> FlowSampleOutput:
-        return self.sampler.sample(model, x_0, **model_extras)
+        return self.sampler.sample(model, x_0, time_grid=time_grid, **model_extras)
 
 
 __all__ = ["ContinuousFlowMatcher"]

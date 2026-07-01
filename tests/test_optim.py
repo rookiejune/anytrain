@@ -7,8 +7,8 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 import anytrain.optim as optim_api
+import anytrain.optim.scheduler as scheduler_api
 from anytrain.optim import (
-    AdamWDecayPolicy,
     CompositeOptimizer,
     create_adamw_optimizer,
     create_llm_lightning_optimizers,
@@ -19,12 +19,6 @@ from anytrain.optim import (
     split_muon_params,
 )
 from anytrain.optim import llm as llm_optim
-from anytrain.optim.config import (
-    AdamWConfig,
-    MuonAdamWConfig,
-    MuonAdjustLRFn,
-    MuonConfig,
-)
 from anytrain.optim.llm import (
     LightningOptimizerConfig as LLMLightningOptimizerConfig,
 )
@@ -35,10 +29,16 @@ from anytrain.optim.llm import (
 from anytrain.optim.llm import (
     create_optimizer_from_config as create_llm_optimizer_from_config,
 )
+from anytrain.optim.options import (
+    DEFAULT_MUON_ADJUST_LR_FN,
+    AdamWOptions,
+    MuonAdjustLRFn,
+    MuonOptions,
+)
 from anytrain.optim.scheduler import (
     CurveShape,
-    SchedulerConfig,
-    SchedulerPhaseConfig,
+    Phase,
+    Schedule,
     create_scheduler_from_config,
     make_scheduler_config,
 )
@@ -58,6 +58,14 @@ def _group_lrs_by_param_id(optimizer: torch.optim.Optimizer) -> dict[int, float]
         for group in optimizer.param_groups
         for param in group["params"]
     }
+
+
+def _adamw_options(lr: float, weight_decay: float = 0.1) -> AdamWOptions:
+    return {"lr": lr, "weight_decay": weight_decay}
+
+
+def _muon_options(lr: float, weight_decay: float = 0.1) -> MuonOptions:
+    return {"lr": lr, "weight_decay": weight_decay}
 
 
 class TinyLLM(nn.Module):
@@ -129,28 +137,6 @@ class SplitMuonParamsTest(unittest.TestCase):
 
         self.assertEqual(_param_ids(muon_parameters), {id(model.embed_tokens.weight)})
         self.assertEqual(non_muon_parameters, [])
-
-    def test_split_muon_params_excludes_custom_module_types(self):
-        class Adapter(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.weight = nn.Parameter(torch.randn(4, 4))
-
-        class Model(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.proj = nn.Linear(4, 4, bias=False)
-                self.adapter = Adapter()
-
-        model = Model()
-
-        muon_parameters, non_muon_parameters = split_muon_params(
-            model,
-            excluded_module_types=(Adapter,),
-        )
-
-        self.assertEqual(_param_ids(muon_parameters), {id(model.proj.weight)})
-        self.assertEqual(_param_ids(non_muon_parameters), {id(model.adapter.weight)})
 
     def test_split_muon_params_includes_head_named_weights_by_default(self):
         class Model(nn.Module):
@@ -317,11 +303,6 @@ class AdamWOptimizerTest(unittest.TestCase):
             },
         )
 
-    def test_adamw_decay_policy_type_is_exported(self):
-        policy = AdamWDecayPolicy.STANDARD
-
-        self.assertEqual(policy.value, "standard")
-
     def test_split_adamw_decay_params_excludes_explicit_modules(self):
         model = TinyLLM()
 
@@ -356,37 +337,9 @@ class AdamWOptimizerTest(unittest.TestCase):
         self.assertEqual(_param_ids(decay_params), {id(model.conv.weight), id(model.proj.weight)})
         self.assertEqual(_param_ids(no_decay_params), set())
 
-    def test_split_adamw_decay_params_can_use_muon_eligible_policy(self):
-        class Model(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.conv = nn.Conv1d(2, 4, kernel_size=3, bias=False)
-                self.proj = nn.Linear(4, 4, bias=False)
-
-        model = Model()
-
-        decay_params, no_decay_params = split_adamw_decay_params(
-            model,
-            decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE,
-        )
-
-        self.assertEqual(_param_ids(decay_params), {id(model.proj.weight)})
-        self.assertEqual(_param_ids(no_decay_params), {id(model.conv.weight)})
-
-    def test_split_adamw_decay_params_accepts_decay_policy_string(self):
-        model = nn.Linear(4, 4, bias=False)
-
-        decay_params, no_decay_params = split_adamw_decay_params(
-            model,
-            decay_policy="standard",
-        )
-
-        self.assertEqual(_param_ids(decay_params), {id(model.weight)})
-        self.assertEqual(no_decay_params, [])
-
     def test_create_adamw_optimizer_uses_decay_and_no_decay_groups(self):
         model = TinyLLM()
-        optimizer = create_adamw_optimizer(model, lr=3e-4, weight_decay=0.1)
+        optimizer = create_adamw_optimizer(model, _adamw_options(3e-4))
 
         self.assertIsInstance(optimizer, torch.optim.AdamW)
         self.assertEqual(len(optimizer.param_groups), 2)
@@ -397,8 +350,7 @@ class AdamWOptimizerTest(unittest.TestCase):
         model = TinyLLM()
         optimizer = create_adamw_optimizer(
             model,
-            lr=3e-4,
-            weight_decay=0.1,
+            _adamw_options(3e-4),
             selected_params=[model.proj.weight],
             decay_selected_params=False,
         )
@@ -420,7 +372,7 @@ class AdamWOptimizerTest(unittest.TestCase):
         model = Model()
         optimizer = create_adamw_optimizer(
             model,
-            lr=1.0,
+            _adamw_options(1.0),
             lr_scale_rules=[
                 {"name": "encoder", "lr_scale": 0.5},
                 {"name": "encoder.1", "lr_scale": 0.25},
@@ -439,7 +391,7 @@ class AdamWOptimizerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "positive"):
             create_adamw_optimizer(
                 nn.Sequential(nn.Linear(4, 4)),
-                lr=1.0,
+                _adamw_options(1.0),
                 lr_scale_rules=[{"name": "0", "lr_scale": 0.0}],
             )
 
@@ -447,7 +399,7 @@ class AdamWOptimizerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "belong"):
             create_adamw_optimizer(
                 nn.Sequential(nn.Linear(4, 4)),
-                lr=1.0,
+                _adamw_options(1.0),
                 lr_scale_rules=[{"name": "missing", "lr_scale": 0.5}],
             )
 
@@ -464,7 +416,7 @@ class AdamWOptimizerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting"):
             create_adamw_optimizer(
                 model,
-                lr=1.0,
+                _adamw_options(1.0),
                 lr_scale_rules=[
                     {"name": "left", "lr_scale": 0.5},
                     {"name": "right", "lr_scale": 2.0},
@@ -478,19 +430,14 @@ class AdamWOptimizerTest(unittest.TestCase):
                 selected_params=[nn.Parameter(torch.randn(4, 4))],
             )
 
-    def test_split_adamw_decay_params_rejects_invalid_decay_policy(self):
-        with self.assertRaisesRegex(ValueError, "decay_policy"):
-            split_adamw_decay_params(nn.Linear(4, 4), decay_policy="hidden")
-
-
 class MuonAdamWOptimizerTest(unittest.TestCase):
     def test_create_muon_adamw_optimizer_returns_composite_optimizer(self):
         model = TinyLLM()
 
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=3e-4,
-            adamw_lr=3e-4,
+            muon=_muon_options(3e-4),
+            adamw=_adamw_options(3e-4),
             excluded_modules=(model.lm_head,),
         )
 
@@ -510,10 +457,8 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
 
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=3e-4,
-            adamw_lr=3e-4,
-            muon_weight_decay=0.1,
-            adamw_weight_decay=0.1,
+            muon=_muon_options(3e-4),
+            adamw=_adamw_options(3e-4),
             excluded_modules=(model.lm_head,),
         )
 
@@ -521,19 +466,19 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
         adamw_optimizer = optimizer.optimizers["adamw"]
         self.assertTrue(all(group["weight_decay"] == 0.0 for group in adamw_optimizer.param_groups))
 
-    def test_create_muon_adamw_optimizer_requires_explicit_child_lrs(self):
-        with self.assertRaisesRegex(TypeError, "muon_lr"):
-            create_muon_adamw_optimizer(TinyLLM(), adamw_lr=1.0)
-        with self.assertRaisesRegex(TypeError, "adamw_lr"):
-            create_muon_adamw_optimizer(TinyLLM(), muon_lr=1.0)
+    def test_create_muon_adamw_optimizer_requires_child_option_lrs(self):
+        with self.assertRaisesRegex(KeyError, "lr"):
+            create_muon_adamw_optimizer(TinyLLM(), muon={}, adamw=_adamw_options(1.0))
+        with self.assertRaisesRegex(KeyError, "lr"):
+            create_muon_adamw_optimizer(TinyLLM(), muon=_muon_options(1.0), adamw={})
 
     def test_create_muon_adamw_optimizer_applies_lr_scale_rules_to_child_optimizers(self):
         model = TinyLLM()
 
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=1.0,
-            adamw_lr=1.0,
+            muon=_muon_options(1.0),
+            adamw=_adamw_options(1.0),
             excluded_modules=(model.lm_head,),
             lr_scale_rules=[
                 {"name": "proj", "lr_scale": 0.5},
@@ -551,8 +496,8 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
         model = TinyLLM()
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=1.0,
-            adamw_lr=1.0,
+            muon=_muon_options(1.0),
+            adamw=_adamw_options(1.0),
             excluded_modules=(model.lm_head,),
         )
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 0.5)
@@ -572,8 +517,8 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
         model = TinyLLM()
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=3e-4,
-            adamw_lr=3e-4,
+            muon=_muon_options(3e-4),
+            adamw=_adamw_options(3e-4),
             excluded_modules=(model.lm_head,),
         )
 
@@ -589,8 +534,8 @@ class MuonAdamWOptimizerTest(unittest.TestCase):
         model = TinyLLM()
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=3e-4,
-            adamw_lr=3e-4,
+            muon=_muon_options(3e-4),
+            adamw=_adamw_options(3e-4),
             excluded_modules=(model.lm_head,),
         )
 
@@ -617,26 +562,34 @@ class LLMOptimizerTest(unittest.TestCase):
     def test_llm_config_from_preset_uses_preset_adamw_defaults(self):
         config = LLMOptimizationConfig.from_preset("sft")
 
-        self.assertIsInstance(config.optimizer_config, AdamWConfig)
-        self.assertEqual(config.optimizer_config.lr, 2e-5)
-        self.assertEqual(config.optimizer_config.weight_decay, 0.01)
-        self.assertEqual(config.optimizer_config.betas, (0.9, 0.999))
+        self.assertEqual(config.optimizer_options["lr"], 2e-5)
+        self.assertEqual(config.optimizer_options["weight_decay"], 0.01)
+        self.assertEqual(config.optimizer_options["betas"], (0.9, 0.999))
 
     def test_llm_config_from_preset_uses_cpt_defaults(self):
-        config = LLMOptimizationConfig.from_preset("cpt").optimizer_config
+        options = LLMOptimizationConfig.from_preset("cpt").optimizer_options
 
-        self.assertIsInstance(config, AdamWConfig)
-        self.assertEqual(config.lr, 5e-5)
-        self.assertEqual(config.weight_decay, 0.1)
+        self.assertEqual(options["lr"], 5e-5)
+        self.assertEqual(options["weight_decay"], 0.01)
 
     def test_llm_config_from_preset_uses_optimizer_string(self):
         config = LLMOptimizationConfig.from_preset("pretrain", optimizer="muon")
 
-        self.assertIsInstance(config.optimizer_config, MuonAdamWConfig)
-        self.assertEqual(config.optimizer_config.adamw.lr, 3e-4)
-        self.assertEqual(config.optimizer_config.muon.lr, 3e-4)
-        self.assertEqual(config.optimizer_config.adamw.weight_decay, 0.1)
-        self.assertEqual(config.optimizer_config.muon.weight_decay, 0.1)
+        self.assertEqual(config.optimizer_options["adamw"]["lr"], 3e-4)
+        self.assertEqual(config.optimizer_options["muon"]["lr"], 3e-4)
+        self.assertEqual(config.optimizer_options["adamw"]["weight_decay"], 0.01)
+        self.assertEqual(config.optimizer_options["muon"]["weight_decay"], 0.0)
+        self.assertEqual(config.optimizer_options["muon"]["adjust_lr_fn"], DEFAULT_MUON_ADJUST_LR_FN)
+
+    def test_llm_config_weight_decay_override_applies_to_adamw_only(self):
+        config = LLMOptimizationConfig.from_preset(
+            "pretrain",
+            optimizer="muon",
+            weight_decay=0.2,
+        )
+
+        self.assertEqual(config.optimizer_options["adamw"]["weight_decay"], 0.2)
+        self.assertEqual(config.optimizer_options["muon"]["weight_decay"], 0.0)
 
     def test_llm_config_from_preset_rejects_unknown_optimizer_string(self):
         with self.assertRaisesRegex(ValueError, "optimizer"):
@@ -645,10 +598,6 @@ class LLMOptimizerTest(unittest.TestCase):
     def test_llm_config_from_preset_rejects_unknown_preset_string(self):
         with self.assertRaisesRegex(ValueError, "preset"):
             LLMOptimizationConfig.from_preset("dpo")
-
-    def test_llm_config_rejects_invalid_optimizer_config(self):
-        with self.assertRaisesRegex(TypeError, "optimizer_config"):
-            LLMOptimizationConfig(optimizer_config="adamw")
 
     def test_create_llm_optimizer_uses_flat_adamw_options(self):
         model = TinyLLM()
@@ -707,13 +656,11 @@ class LLMOptimizerTest(unittest.TestCase):
         self.assertEqual(lrs[id(model.proj.bias)], 0.5)
         self.assertEqual(lrs[id(model.lm_head.weight)], 2.0)
 
-    def test_llm_config_accepts_custom_muon_adamw_config(self):
-        adamw = AdamWConfig(lr=1e-4)
-        muon = MuonConfig(lr=1e-4)
-        muon_adamw = MuonAdamWConfig(muon=muon, adamw=adamw)
-        config = LLMOptimizationConfig(optimizer_config=muon_adamw)
+    def test_llm_config_accepts_custom_muon_adamw_options(self):
+        options = {"muon": {"lr": 1e-4}, "adamw": {"lr": 1e-4}}
+        config = LLMOptimizationConfig(optimizer_options=options)
 
-        self.assertIs(config.optimizer_config, muon_adamw)
+        self.assertIs(config.optimizer_options, options)
 
     def test_llm_module_exports_short_names(self):
         model = TinyLLM()
@@ -735,11 +682,11 @@ class LLMOptimizerTest(unittest.TestCase):
         self.assertIsInstance(configured["optimizer"], torch.optim.AdamW)
         self.assertEqual(configured["lr_scheduler"]["interval"], "step")
 
-    def test_create_llm_optimizer_from_config_uses_adamw_config(self):
+    def test_create_llm_optimizer_from_config_uses_adamw_options(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer_from_config(
             model,
-            LLMOptimizationConfig(optimizer_config=AdamWConfig(lr=1e-4)),
+            LLMOptimizationConfig(optimizer_options={"lr": 1e-4}),
         )
 
         self.assertIsInstance(optimizer, torch.optim.AdamW)
@@ -761,21 +708,21 @@ class LLMOptimizerTest(unittest.TestCase):
         model = TinyLLM()
         optimizer = create_muon_adamw_optimizer(
             model,
-            muon_lr=1.0,
-            adamw_lr=1.0,
+            muon=_muon_options(1.0),
+            adamw=_adamw_options(1.0),
             excluded_modules=(model.lm_head,),
         )
         scheduler = create_scheduler_from_config(
             optimizer,
-            SchedulerConfig(
+            Schedule(
                 phases=(
-                    SchedulerPhaseConfig(
+                    Phase(
                         shape=CurveShape.LINEAR,
                         duration_steps=2,
                         start_lr_ratio=0.0,
                         end_lr_ratio=1.0,
                     ),
-                    SchedulerPhaseConfig(
+                    Phase(
                         shape=CurveShape.COSINE,
                         duration_steps=4,
                         end_lr_ratio=0.1,
@@ -795,21 +742,21 @@ class LLMOptimizerTest(unittest.TestCase):
         restored_model = TinyLLM()
         restored_optimizer = create_muon_adamw_optimizer(
             restored_model,
-            muon_lr=1.0,
-            adamw_lr=1.0,
+            muon=_muon_options(1.0),
+            adamw=_adamw_options(1.0),
             excluded_modules=(restored_model.lm_head,),
         )
         restored_scheduler = create_scheduler_from_config(
             restored_optimizer,
-            SchedulerConfig(
+            Schedule(
                 phases=(
-                    SchedulerPhaseConfig(
+                    Phase(
                         shape=CurveShape.LINEAR,
                         duration_steps=2,
                         start_lr_ratio=0.0,
                         end_lr_ratio=1.0,
                     ),
-                    SchedulerPhaseConfig(
+                    Phase(
                         shape=CurveShape.COSINE,
                         duration_steps=4,
                         end_lr_ratio=0.1,
@@ -941,15 +888,15 @@ class LLMOptimizerTest(unittest.TestCase):
         optimizer = torch.optim.AdamW(model.parameters(), lr=1.0)
         scheduler = create_scheduler_from_config(
             optimizer,
-            SchedulerConfig(
+            Schedule(
                 phases=(
-                    SchedulerPhaseConfig(
+                    Phase(
                         shape="linear",
                         duration_steps=2,
                         start_lr_ratio=0.0,
                         end_lr_ratio=1.0,
                     ),
-                    SchedulerPhaseConfig(shape="constant", duration_steps=-1),
+                    Phase(shape="constant", duration_steps=-1),
                 )
             ),
         )
@@ -960,8 +907,8 @@ class LLMOptimizerTest(unittest.TestCase):
             scheduler.step()
         self.assertEqual(optimizer.param_groups[0]["lr"], 1.0)
 
-    def test_scheduler_phase_config_accepts_schedule_shape_enum(self):
-        config = SchedulerPhaseConfig(
+    def test_phase_accepts_schedule_shape_enum(self):
+        config = Phase(
             shape=CurveShape.LINEAR,
             duration_steps=1,
             start_lr_ratio=0.0,
@@ -989,18 +936,18 @@ class LLMOptimizerTest(unittest.TestCase):
 
     def test_make_scheduler_config_rejects_non_final_infinite_phase(self):
         with self.assertRaisesRegex(ValueError, "unreachable"):
-            SchedulerConfig(
+            Schedule(
                 phases=(
-                    SchedulerPhaseConfig(shape="constant", duration_steps=-1),
-                    SchedulerPhaseConfig(shape="cosine", duration_steps=-1),
+                    Phase(shape="constant", duration_steps=-1),
+                    Phase(shape="cosine", duration_steps=-1),
                 )
             )
 
     def test_scheduler_config_rejects_infinite_non_constant_phase(self):
         with self.assertRaisesRegex(ValueError, "constant"):
-            SchedulerConfig(phases=(SchedulerPhaseConfig(shape="cosine", duration_steps=-1),))
+            Schedule(phases=(Phase(shape="cosine", duration_steps=-1),))
 
-    def test_llm_muon_defaults_reuse_adamw_lr_and_weight_decay(self):
+    def test_llm_muon_defaults_share_lr_but_split_weight_decay(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer(
             model,
@@ -1010,8 +957,10 @@ class LLMOptimizerTest(unittest.TestCase):
 
         self.assertIsInstance(optimizer, CompositeOptimizer)
         muon_group = optimizer.optimizers["muon"].param_groups[0]
+        adamw_optimizer = optimizer.optimizers["adamw"]
         self.assertEqual(muon_group["lr"], 3e-4)
-        self.assertEqual(muon_group["weight_decay"], 0.1)
+        self.assertEqual(muon_group["weight_decay"], 0.0)
+        self.assertEqual(adamw_optimizer.defaults["weight_decay"], 0.01)
         self.assertEqual(muon_group["adjust_lr_fn"], MuonAdjustLRFn.MATCH_RMS_ADAMW)
 
     def test_llm_flat_optimizer_does_not_accept_muon_options(self):
@@ -1027,27 +976,58 @@ class LLMOptimizerTest(unittest.TestCase):
 class OptimConfigTest(unittest.TestCase):
     def test_top_level_optim_api_hides_config_classes(self):
         self.assertNotIn("AdamWConfig", optim_api.__all__)
-        self.assertNotIn("SchedulerConfig", optim_api.__all__)
+        self.assertNotIn("AdamWOptions", optim_api.__all__)
+        self.assertNotIn("Schedule", optim_api.__all__)
+
+    def test_scheduler_api_does_not_export_legacy_aliases(self):
+        self.assertFalse(hasattr(scheduler_api, "SchedulerConfig"))
+        self.assertFalse(hasattr(scheduler_api, "SchedulerPhaseConfig"))
+        self.assertFalse(hasattr(scheduler_api, "SchedulerPhaseLike"))
+
+    def test_scheduler_api_hides_internal_helpers(self):
+        self.assertNotIn("SchedulerOption", scheduler_api.__all__)
+        self.assertNotIn("lr_ratio", scheduler_api.__all__)
+        self.assertFalse(hasattr(scheduler_api, "normalize_curve_shape"))
 
     def test_top_level_optim_api_exports_lr_scale_rules(self):
         self.assertIn("LRScaleRule", optim_api.__all__)
         self.assertIn("LRScaleRules", optim_api.__all__)
 
-    def test_adamw_config_rejects_invalid_betas(self):
-        with self.assertRaisesRegex(ValueError, "betas"):
-            AdamWConfig(lr=1e-4, betas=(0.9, 1.0))
+    def test_adamw_options_delegate_invalid_betas_to_torch(self):
+        with self.assertRaisesRegex(ValueError, "Invalid beta"):
+            create_llm_optimizer_from_config(
+                nn.Linear(2, 2),
+                LLMOptimizationConfig(optimizer_options={"lr": 1e-4, "betas": (0.9, 1.0)}),
+            )
 
-    def test_muon_config_defaults_to_match_rms_adamw(self):
-        self.assertEqual(MuonConfig(lr=1e-4).adjust_lr_fn, MuonAdjustLRFn.MATCH_RMS_ADAMW)
+    def test_muon_options_default_to_match_rms_adamw(self):
+        optimizer = create_muon_adamw_optimizer(
+            TinyLLM(),
+            muon=_muon_options(1e-4),
+            adamw=_adamw_options(1e-4),
+        )
 
-    def test_muon_config_accepts_adjust_lr_fn_string(self):
-        config = MuonConfig(lr=1e-4, adjust_lr_fn="original")
+        self.assertEqual(
+            optimizer.optimizers["muon"].param_groups[0]["adjust_lr_fn"],
+            MuonAdjustLRFn.MATCH_RMS_ADAMW,
+        )
 
-        self.assertEqual(config.adjust_lr_fn, MuonAdjustLRFn.ORIGINAL)
+    def test_muon_options_accept_adjust_lr_fn_string(self):
+        optimizer = create_muon_adamw_optimizer(
+            TinyLLM(),
+            muon={**_muon_options(1e-4), "adjust_lr_fn": "original"},
+            adamw=_adamw_options(1e-4),
+        )
 
-    def test_muon_config_rejects_invalid_adjust_lr_fn(self):
-        with self.assertRaisesRegex(ValueError, "adjust_lr_fn"):
-            MuonConfig(lr=1e-4, adjust_lr_fn="scaled")
+        self.assertEqual(optimizer.optimizers["muon"].param_groups[0]["adjust_lr_fn"], "original")
+
+    def test_muon_options_delegate_invalid_adjust_lr_fn_to_torch(self):
+        with self.assertRaisesRegex(ValueError, "Adjust learning rate"):
+            create_muon_adamw_optimizer(
+                TinyLLM(),
+                muon={**_muon_options(1e-4), "adjust_lr_fn": "scaled"},
+                adamw=_adamw_options(1e-4),
+            )
 
 
 if __name__ == "__main__":

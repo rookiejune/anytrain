@@ -1,4 +1,4 @@
-from .adamw import AdamWDecayPolicy, create_adamw_optimizer, split_adamw_decay_params
+from .adamw import create_adamw_optimizer, split_adamw_decay_params
 from .compose import CompositeOptimizer
 from .llm import create_lightning_optimizers as create_llm_lightning_optimizers
 from .llm import create_optimizer as create_llm_optimizer
@@ -8,7 +8,6 @@ from .muon import (
 )
 from .rules import (
     ExcludedModules,
-    ExcludedModuleTypes,
     LRScaleRule,
     LRScaleRules,
 )
@@ -17,10 +16,8 @@ from .scheduler import (
 )
 
 __all__ = [
-    "AdamWDecayPolicy",
     "CompositeOptimizer",
     "ExcludedModules",
-    "ExcludedModuleTypes",
     "LRScaleRule",
     "LRScaleRules",
     "create_adamw_optimizer",

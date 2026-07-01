@@ -15,19 +15,22 @@ src/anytrain/optim/
   _params.py
   adamw.py
   compose.py
-  config.py
   llm.py
   muon.py
+  options.py
   rules.py
-  scheduler.py
+  scheduler/
+    __init__.py
+    compose.py
+    curve.py
+    presets.py
+    types.py
 ```
 
 当前公开导出：
 
-- `AdamWDecayPolicy`
 - `CompositeOptimizer`
 - `ExcludedModules`
-- `ExcludedModuleTypes`
 - `LRScaleRule`
 - `LRScaleRules`
 - `create_adamw_optimizer`
@@ -38,15 +41,20 @@ src/anytrain/optim/
 - `create_llm_optimizer`
 - `create_llm_lightning_optimizers`
 
-高级配置对象保留在子模块：
+高级对象和 options 类型保留在子模块：
 
-- `anytrain.optim.adamw`: `create_adamw_optimizer_from_config`
-- `anytrain.optim.config`: `AdamWConfig`、`MuonConfig`、`MuonAdamWConfig`、`MuonAdjustLRFn`
-- `anytrain.optim.muon`: `create_muon_adamw_optimizer_from_config`
-- `anytrain.optim.scheduler`: `CurveShape`、`SchedulerConfig`、`SchedulerPhaseConfig`、`SchedulerPhaseLike`、`make_scheduler_config`、`create_scheduler_from_config`
+- `anytrain.optim.adamw`: `create_adamw_optimizer`
+- `anytrain.optim.options`: `AdamWOptions`、`MuonOptions`、`MuonAdamWOptions`、`OptimizerOptions`、`MuonAdjustLRFn`
+- `anytrain.optim.muon`: `create_muon_adamw_optimizer`
+- `anytrain.optim.scheduler`: `CurveShape`、`Phase`、`Schedule`、`PhaseLike`、`make_scheduler_config`、`create_scheduler_from_config`
 - `anytrain.optim.llm`: `OptimizationConfig`、`create_optimizer_from_config`、`create_lightning_optimizers_from_config`
 
 `torch.optim.Muon` 是依赖边界之一，因此 `anytrain` 要求 `torch>=2.12`。
+
+AdamW / Muon 的高级入口接收 typed dict options，不再提供 dataclass config，也不重复校验
+torch 原生参数。`anytrain` 只校验自己定义的边界：参数分组、排除 module、lr scale rules、
+composite optimizer 参数互斥和 scheduler DSL。`betas`、`eps`、`momentum`、`adjust_lr_fn` 等
+optimizer 参数由对应的 torch optimizer 暴露错误。
 
 ## LR Scale Rules
 
@@ -56,7 +64,7 @@ src/anytrain/optim/
 ```python
 optimizer = create_adamw_optimizer(
     model,
-    lr=3e-4,
+    {"lr": 3e-4},
     lr_scale_rules=[
         {"name": "encoder", "lr_scale": 0.5},
         {"name": "encoder.layers.23", "lr_scale": 1.0},
@@ -73,17 +81,15 @@ LLM preset 会把规则透传给底层 optimizer。
 
 ## AdamW
 
-`create_adamw_optimizer(module, lr=..., weight_decay=...)` 会拆分 decay / no-decay 参数组。默认 `decay_policy=AdamWDecayPolicy.STANDARD`，也就是常见 AdamW 规则：
+`create_adamw_optimizer(module, {"lr": ..., "weight_decay": ...})` 会按常见 AdamW 规则拆分 decay / no-decay 参数组：
 
 - decay：非 embedding / norm / 显式排除 module 中，名称为 `weight` 且维度不小于 2 的参数。
-- no-decay：bias、norm、embedding，以及用户显式排除的 module / module type。
-
-LLM 预设会显式使用 `decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE`，让 AdamW decay 规则和 Muon 参数语义一致：只 decay 适合放进 Muon 的 hidden 2D weight。为了方便 YAML/JSON 配置，`decay_policy` 也接受字符串 `"standard"` 和 `"muon_eligible"`。
+- no-decay：bias、norm、embedding，以及用户显式排除的 module。
 
 `optim` 不按名字猜 output head。需要排除 head 时，显式传 module 对象：
 
 ```python
-optimizer = create_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_head,))
+optimizer = create_adamw_optimizer(model, {"lr": 3e-4}, excluded_modules=(model.lm_head,))
 ```
 
 ## Muon
@@ -95,27 +101,26 @@ optimizer = create_adamw_optimizer(model, lr=3e-4, excluded_modules=(model.lm_he
 - bias 和非 `weight` 参数。
 - 非 2D weight。
 - `excluded_modules` 传入的 module 及其子 module。
-- `excluded_module_types` 匹配的 module。
 
 因此 head 不再因为名字包含 `head` 自动排除；如果要让 head 走 AdamW，传入具体 module：
 
 ```python
 optimizer = create_muon_adamw_optimizer(
     model,
-    muon_lr=3e-4,
-    adamw_lr=3e-4,
+    muon={"lr": 3e-4},
+    adamw={"lr": 3e-4},
     excluded_modules=(model.lm_head,),
 )
 ```
 
 `lr_scale_rules` 同样会作用到 Muon 和 AdamW fallback 子 optimizer 的参数组。
 
-`create_muon_adamw_optimizer(module, muon_lr=..., adamw_lr=..., ...)` 返回 `CompositeOptimizer`：
+`create_muon_adamw_optimizer(module, muon={...}, adamw={...}, ...)` 返回 `CompositeOptimizer`：
 
 - `"muon"` 子 optimizer 处理 Muon 参数。
 - `"adamw"` 子 optimizer 处理其余参数，并继续按 AdamW 规则拆分 decay / no-decay。
 
-`MuonConfig.adjust_lr_fn` 默认是 `MuonAdjustLRFn.MATCH_RMS_ADAMW`，用于和 AdamW 常用 lr/wd 配置对齐。PyTorch 原生 `torch.optim.Muon` 默认不设置 `adjust_lr_fn`；这里显式改成 LLM 训练更常用的对齐口径。为了方便 YAML/JSON 配置，`adjust_lr_fn` 也接受字符串 `"original"` 和 `"match_rms_adamw"`。
+`MuonOptions.adjust_lr_fn` 默认是 `MuonAdjustLRFn.MATCH_RMS_ADAMW`，用于和 AdamW 常用 lr/wd 配置对齐。PyTorch 原生 `torch.optim.Muon` 默认不设置 `adjust_lr_fn`；这里显式改成 LLM 训练更常用的对齐口径。为了方便 YAML/JSON 配置，`adjust_lr_fn` 也接受字符串 `"original"` 和 `"match_rms_adamw"`。高级 options 中显式传入 `adjust_lr_fn=None` 时，会保留 PyTorch 原生行为。
 
 ## Scheduler
 
@@ -137,10 +142,10 @@ create_scheduler(
 - `warmup_cosine`: 线性 warmup 后做 cosine decay。
 - `wsd`: warmup + stable + cosine decay。
 
-如果需要完整 phase DSL，继续用 `anytrain.optim.scheduler` 子模块。每个 `SchedulerPhaseConfig` 表示一个连续 phase：
+如果需要完整 phase DSL，继续用 `anytrain.optim.scheduler` 子模块。每个 `Phase` 表示一个连续 phase：
 
 ```python
-SchedulerPhaseConfig(
+Phase(
     shape="linear",          # 也可以用 CurveShape.LINEAR
     duration_steps=1000,    # -1 表示无限尾段，只能用于最后一个 constant phase
     start_lr_ratio=0.0,     # None 表示接上一个 phase 的 end_lr_ratio
@@ -149,14 +154,16 @@ SchedulerPhaseConfig(
 ```
 
 `shape` 会规范化为 `CurveShape`，可选值是 `CONSTANT`、`LINEAR`、`COSINE`。
+内部实现拆成三层：`curve` 定义单段曲线，`compose` 负责把 phase 串成 step-level lambda，
+`presets` 把命名 schedule 转成 phase 列表。`Phase` / `Schedule` 是对外领域名。
 
-多个 phase 通过 `SchedulerConfig(phases=(...))` 串起来。旧的 warmup + cosine 可以写成：
+多个 phase 通过 `Schedule(phases=(...))` 串起来。旧的 warmup + cosine 可以写成：
 
 ```python
-SchedulerConfig(
+Schedule(
     phases=(
-        SchedulerPhaseConfig("linear", duration_steps=1000, start_lr_ratio=0.0, end_lr_ratio=1.0),
-        SchedulerPhaseConfig("cosine", duration_steps=99000, end_lr_ratio=0.1),
+        Phase("linear", duration_steps=1000, start_lr_ratio=0.0, end_lr_ratio=1.0),
+        Phase("cosine", duration_steps=99000, end_lr_ratio=0.1),
     )
 )
 ```
@@ -164,11 +171,11 @@ SchedulerConfig(
 WSD 可以写成：
 
 ```python
-SchedulerConfig(
+Schedule(
     phases=(
-        SchedulerPhaseConfig("linear", duration_steps=1000, start_lr_ratio=0.0, end_lr_ratio=1.0),
-        SchedulerPhaseConfig("constant", duration_steps=90000, end_lr_ratio=1.0),
-        SchedulerPhaseConfig("cosine", duration_steps=10000, end_lr_ratio=0.1),
+        Phase("linear", duration_steps=1000, start_lr_ratio=0.0, end_lr_ratio=1.0),
+        Phase("constant", duration_steps=90000, end_lr_ratio=1.0),
+        Phase("cosine", duration_steps=10000, end_lr_ratio=0.1),
     )
 )
 ```
@@ -213,9 +220,10 @@ optimizer = create_llm_optimizer(
 )
 ```
 
-LLM 预设下 Muon 和 AdamW fallback 共用同一套 `lr` / `weight_decay`。需要局部调整学习率时使用
-`lr_scale_rules`；需要控制 Muon 专属超参时，直接使用 `anytrain.optim.muon` 或
-`OptimizationConfig(optimizer_config=MuonAdamWConfig(...))`。
+LLM 预设下 AdamW 默认 `weight_decay=0.01`，Muon 默认 `weight_decay=0.0`。Muon 和 AdamW fallback
+共用同一套 `lr`，顶层 `weight_decay` override 只作用于 AdamW options。需要局部调整学习率时使用
+`lr_scale_rules`；需要控制 Muon 专属超参或 Muon weight decay 时，直接使用 `anytrain.optim.muon` 或
+`OptimizationConfig(optimizer_options={"muon": ..., "adamw": ...})`。
 
 `create_llm_lightning_optimizers()` 直接返回 Lightning `configure_optimizers()` 可用的 dict：
 

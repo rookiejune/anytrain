@@ -7,27 +7,21 @@ import torch
 from torch import nn
 
 from ._llm_config import (
-    OptimizerConfig,
     SchedulerInput,
-    as_adamw_config,
-    as_muon_config,
-    make_optimizer_config,
+    is_muon_adamw_options,
+    make_optimizer_options,
     make_scheduler_config_from_input,
 )
-from .adamw import AdamWDecayPolicy, create_adamw_optimizer_from_config
-from .config import AdamWConfig, MuonAdamWConfig
-from .muon import (
-    create_muon_adamw_optimizer_from_config,
-)
+from .adamw import create_adamw_optimizer
+from .muon import create_muon_adamw_optimizer
+from .options import OptimizerOptions
 from .rules import (
     ExcludedModules,
-    ExcludedModuleTypes,
     LRScaleRules,
-    validate_excluded_module_types,
     validate_excluded_modules,
 )
 from .scheduler import (
-    SchedulerConfig,
+    Schedule,
     create_scheduler,
     create_scheduler_from_config,
 )
@@ -45,17 +39,14 @@ class LightningOptimizerConfig(TypedDict):
 
 @dataclass(frozen=True)
 class OptimizationConfig:
-    optimizer_config: OptimizerConfig
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    optimizer_options: OptimizerOptions
+    scheduler: Schedule = field(default_factory=Schedule)
     excluded_modules: ExcludedModules = ()
-    excluded_module_types: ExcludedModuleTypes = ()
     lr_scale_rules: LRScaleRules = ()
 
     def __post_init__(self) -> None:
-        _validate_optimizer_config(self.optimizer_config)
         _validate_scheduler_config(self.scheduler)
         validate_excluded_modules(self.excluded_modules)
-        validate_excluded_module_types(self.excluded_module_types)
 
     @classmethod
     def from_preset(
@@ -70,11 +61,10 @@ class OptimizationConfig:
         fused: bool | None = None,
         scheduler: SchedulerInput | None = None,
         excluded_modules: ExcludedModules = (),
-        excluded_module_types: ExcludedModuleTypes = (),
         lr_scale_rules: LRScaleRules = (),
     ) -> OptimizationConfig:
         return cls(
-            optimizer_config=make_optimizer_config(
+            optimizer_options=make_optimizer_options(
                 preset,
                 optimizer=optimizer,
                 lr=lr,
@@ -85,7 +75,6 @@ class OptimizationConfig:
             ),
             scheduler=make_scheduler_config_from_input(scheduler),
             excluded_modules=excluded_modules,
-            excluded_module_types=excluded_module_types,
             lr_scale_rules=lr_scale_rules,
         )
 
@@ -101,7 +90,6 @@ def create_optimizer(
     eps: float | None = None,
     fused: bool | None = None,
     excluded_modules: ExcludedModules = (),
-    excluded_module_types: ExcludedModuleTypes = (),
     lr_scale_rules: LRScaleRules = (),
 ) -> torch.optim.Optimizer:
     return create_optimizer_from_config(
@@ -115,7 +103,6 @@ def create_optimizer(
             eps=eps,
             fused=fused,
             excluded_modules=excluded_modules,
-            excluded_module_types=excluded_module_types,
             lr_scale_rules=lr_scale_rules,
         ),
     )
@@ -125,23 +112,20 @@ def create_optimizer_from_config(
     module: nn.Module,
     config: OptimizationConfig,
 ) -> torch.optim.Optimizer:
-    optimizer_config = config.optimizer_config
-    if isinstance(optimizer_config, AdamWConfig):
-        return create_adamw_optimizer_from_config(
+    optimizer_options = config.optimizer_options
+    if not is_muon_adamw_options(optimizer_options):
+        return create_adamw_optimizer(
             module,
-            optimizer_config,
+            optimizer_options,
             excluded_modules=config.excluded_modules,
-            excluded_module_types=config.excluded_module_types,
-            decay_policy=AdamWDecayPolicy.MUON_ELIGIBLE,
             lr_scale_rules=config.lr_scale_rules,
         )
 
-    return create_muon_adamw_optimizer_from_config(
+    return create_muon_adamw_optimizer(
         module,
-        muon=as_muon_config(optimizer_config),
-        adamw=as_adamw_config(optimizer_config),
+        muon=optimizer_options["muon"],
+        adamw=optimizer_options["adamw"],
         excluded_modules=config.excluded_modules,
-        excluded_module_types=config.excluded_module_types,
         lr_scale_rules=config.lr_scale_rules,
     )
 
@@ -163,7 +147,6 @@ def create_lightning_optimizers(
     decay_steps: int | None = None,
     min_lr_ratio: float = 0.1,
     excluded_modules: ExcludedModules = (),
-    excluded_module_types: ExcludedModuleTypes = (),
     lr_scale_rules: LRScaleRules = (),
 ) -> LightningOptimizerConfig:
     optimizer_instance = create_optimizer(
@@ -176,7 +159,6 @@ def create_lightning_optimizers(
         eps=eps,
         fused=fused,
         excluded_modules=excluded_modules,
-        excluded_module_types=excluded_module_types,
         lr_scale_rules=lr_scale_rules,
     )
     scheduler = create_scheduler(
@@ -212,18 +194,10 @@ def create_lightning_optimizers_from_config(
     }
 
 
-def _validate_optimizer_config(
-    optimizer_config: OptimizerConfig,
-) -> None:
-    if isinstance(optimizer_config, (AdamWConfig, MuonAdamWConfig)):
+def _validate_scheduler_config(config: Schedule) -> None:
+    if isinstance(config, Schedule):
         return
-    raise TypeError("optimizer_config must be an AdamWConfig or MuonAdamWConfig.")
-
-
-def _validate_scheduler_config(config: SchedulerConfig) -> None:
-    if isinstance(config, SchedulerConfig):
-        return
-    raise TypeError("scheduler must be a SchedulerConfig.")
+    raise TypeError("scheduler must be a Schedule.")
 
 
 __all__ = [

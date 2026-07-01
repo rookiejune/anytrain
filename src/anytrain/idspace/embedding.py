@@ -10,7 +10,8 @@ from torch import nn
 from .space import IdSpace, Modality
 
 type _HeadSpecial = tuple[int, nn.Parameter]
-type _HeadBlock = tuple[int, int, int, nn.Embedding]
+type _EmbeddingLike = nn.Module
+type _HeadBlock = tuple[int, int, int, _EmbeddingLike]
 
 
 class IdSpaceEmbedding(nn.Module):
@@ -20,7 +21,7 @@ class IdSpaceEmbedding(nn.Module):
         dim: int | None = None,
         *,
         special_embeddings: nn.ParameterDict | None = None,
-        modality_embeddings: Mapping[Modality, nn.Embedding] | None = None,
+        modality_embeddings: Mapping[Modality, _EmbeddingLike] | None = None,
         init_missing_special_embeddings: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
@@ -109,14 +110,14 @@ class IdSpaceEmbedding(nn.Module):
         weight = torch.zeros(self.num_embeddings, self.embedding_dim, device=device, dtype=dtype)
         for modality_block in self.space.modality_blocks:
             embed = self._modality_embedding(modality_block.modality)
-            weight[modality_block.start : modality_block.end] = embed.weight
+            weight[modality_block.start : modality_block.end] = _embedding_weight(embed)
         for name, global_id in self.space.special_token_ids.items():
             if name not in self.special_embeddings:
                 continue
             weight[global_id] = self.special_embeddings[name]
         return weight
 
-    def as_head(
+    def head_view(
         self,
         *,
         special_tokens: bool | Sequence[str] = True,
@@ -126,7 +127,10 @@ class IdSpaceEmbedding(nn.Module):
         missing = [name for name in special_names if name not in self.special_embeddings]
         if missing:
             raise ValueError("head special tokens must have explicit special embeddings.")
-        specials = tuple((self.space.special_token_id(name), self.special_embeddings[name]) for name in special_names)
+        specials = tuple(
+            (self.space.special_token_id(name), self.special_embeddings[name])
+            for name in special_names
+        )
 
         blocks: list[_HeadBlock] = []
         for modality in _normalize_head_modalities(self.space, modalities):
@@ -142,10 +146,9 @@ class IdSpaceEmbedding(nn.Module):
             blocks,
         )
 
-    def _modality_embedding(self, modality: Modality) -> nn.Embedding:
+    def _modality_embedding(self, modality: Modality) -> _EmbeddingLike:
         embed = self.modality_embeddings[modality.value]
-        if not isinstance(embed, nn.Embedding):
-            raise TypeError(f"modality_embeddings[{modality!r}] must be an nn.Embedding.")
+        _validate_embedding_like(embed, name=f"modality_embeddings[{modality!r}]")
         return embed
 
     def _weight_device_dtype(self) -> tuple[torch.device, torch.dtype]:
@@ -154,7 +157,8 @@ class IdSpaceEmbedding(nn.Module):
             return param.device, param.dtype
         modality = self.space.modality_blocks[0].modality
         embed = self._modality_embedding(modality)
-        return embed.weight.device, embed.weight.dtype
+        weight = _embedding_weight(embed)
+        return weight.device, weight.dtype
 
 
 class _IdSpaceHead(nn.Module):
@@ -214,7 +218,7 @@ class _IdSpaceHead(nn.Module):
             head_end = head_start + size
             logits[..., head_start:head_end] = F.linear(
                 x,
-                embed.weight[local_start : local_start + size],
+                _embedding_weight(embed)[local_start : local_start + size],
             )
             head_start = head_end
         return logits
@@ -284,7 +288,7 @@ class _IdSpaceHead(nn.Module):
 
 def _resolve_device_dtype(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, nn.Embedding] | None,
+    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
     *,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
@@ -292,7 +296,7 @@ def _resolve_device_dtype(
     if special_embeddings is not None and not isinstance(special_embeddings, nn.ParameterDict):
         raise TypeError("special_embeddings must be an nn.ParameterDict.")
     if modality_embeddings is not None and not isinstance(modality_embeddings, Mapping):
-        raise TypeError("modality_embeddings must be a mapping of Modality to nn.Embedding.")
+        raise TypeError("modality_embeddings must be a mapping of Modality to embedding modules.")
 
     if device is not None and dtype is not None:
         return device, dtype
@@ -309,7 +313,7 @@ def _resolve_device_dtype(
 def _resolve_dim(
     dim: int | None,
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, nn.Embedding] | None,
+    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
 ) -> int:
     if dim is not None:
         _validate_positive_int(dim, name="dim")
@@ -323,7 +327,7 @@ def _resolve_dim(
 
 def _first_explicit_dim(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, nn.Embedding] | None,
+    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
 ) -> int | None:
     if special_embeddings is not None:
         for param in special_embeddings.values():
@@ -331,14 +335,15 @@ def _first_explicit_dim(
                 return param.size(0)
     if modality_embeddings is not None:
         for embed in modality_embeddings.values():
-            if isinstance(embed, nn.Embedding):
+            if isinstance(embed, nn.Module):
+                _validate_embedding_like(embed, name="modality_embeddings value")
                 return embed.embedding_dim
     return None
 
 
 def _first_explicit_weight(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, nn.Embedding] | None,
+    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
 ) -> torch.Tensor | None:
     if special_embeddings is not None:
         for param in special_embeddings.values():
@@ -346,9 +351,35 @@ def _first_explicit_weight(
                 return param
     if modality_embeddings is not None:
         for embed in modality_embeddings.values():
-            if isinstance(embed, nn.Embedding):
-                return embed.weight
+            if isinstance(embed, nn.Module):
+                _validate_embedding_like(embed, name="modality_embeddings value")
+                return _embedding_weight(embed)
     return None
+
+
+def _embedding_weight(embed: _EmbeddingLike) -> torch.Tensor:
+    weight = getattr(embed, "weight", None)
+    if not isinstance(weight, torch.Tensor):
+        raise TypeError("embedding module must expose a tensor weight.")
+    return weight
+
+
+def _validate_embedding_like(embed: object, *, name: str) -> None:
+    if not isinstance(embed, nn.Module):
+        raise TypeError(f"{name} must be an nn.Module.")
+    num_embeddings = getattr(embed, "num_embeddings", None)
+    if not isinstance(num_embeddings, int):
+        raise TypeError(f"{name}.num_embeddings must be an integer.")
+    embedding_dim = getattr(embed, "embedding_dim", None)
+    if not isinstance(embedding_dim, int):
+        raise TypeError(f"{name}.embedding_dim must be an integer.")
+    if not callable(getattr(embed, "forward", None)):
+        raise TypeError(f"{name} must be callable on token ids.")
+    weight = _embedding_weight(embed)
+    if weight.dim() != 2:
+        raise ValueError(f"{name}.weight must be a 2D tensor.")
+    if tuple(weight.shape) != (num_embeddings, embedding_dim):
+        raise ValueError(f"{name}.weight shape must match num_embeddings and embedding_dim.")
 
 
 def _init_special_embeddings(
@@ -406,7 +437,7 @@ def _validate_missing_special_embeddings_are_covered(
 def _init_modality_embeddings(
     space: IdSpace,
     dim: int,
-    modality_embeddings: Mapping[Modality, nn.Embedding] | None,
+    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
     *,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
@@ -414,7 +445,7 @@ def _init_modality_embeddings(
     if modality_embeddings is None:
         modality_embeddings = {}
     elif not isinstance(modality_embeddings, Mapping):
-        raise TypeError("modality_embeddings must be a mapping of Modality to nn.Embedding.")
+        raise TypeError("modality_embeddings must be a mapping of Modality to embedding modules.")
 
     expected = {modality_block.modality for modality_block in space.modality_blocks}
     for modality in modality_embeddings:
@@ -437,10 +468,10 @@ def _init_modality_embeddings(
                 device=device,
                 dtype=dtype,
             )
-        if not isinstance(embed, nn.Embedding):
-            raise TypeError(
-                f"modality_embeddings[{modality_block.modality!r}] must be an nn.Embedding."
-            )
+        _validate_embedding_like(
+            embed,
+            name=f"modality_embeddings[{modality_block.modality!r}]",
+        )
         if embed.num_embeddings != modality_block.vocab_size:
             raise ValueError(
                 f"modality_embeddings[{modality_block.modality!r}].num_embeddings must match id space."
@@ -472,7 +503,9 @@ def _normalize_head_special_tokens(
     if isinstance(special_tokens, bool):
         if not special_tokens:
             return ()
-        return tuple(name for name, _ in sorted(space.special_token_ids.items(), key=lambda item: item[1]))
+        return tuple(
+            name for name, _ in sorted(space.special_token_ids.items(), key=lambda item: item[1])
+        )
     if not isinstance(special_tokens, Sequence) or isinstance(special_tokens, str | bytes):
         raise TypeError("special_tokens must be a bool or a sequence of special token names.")
 

@@ -3,6 +3,7 @@ import warnings
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 from anytrain.idspace import (
     IdSpace,
     IdSpaceEmbedding,
@@ -31,7 +32,7 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         expected = torch.tensor([[[1.0, 0.0], [0.0, 3.0], [5.0, 5.0], [2.0, 0.0], [0.0, 4.0]]])
         self.assertTrue(torch.equal(y, expected))
 
-    def test_head_matches_compact_weight_without_registering_params(self):
+    def test_head_view_selects_specials_and_modality_blocks(self):
         space = IdSpace({"pad": 0, "eos": 3}, [ModalityBlock(Modality.TEXT, 0, 5)])
         embed = IdSpaceEmbedding(space, 2)
         with torch.no_grad():
@@ -48,7 +49,7 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
                     ]
                 )
             )
-        head = embed.as_head()
+        head = embed.head_view()
         parent = torch.nn.Module()
         parent.embed = embed
         parent.head = head
@@ -72,13 +73,13 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
             )
         )
 
-    def test_head_can_select_subset_and_skip_specials(self):
+    def test_head_view_can_select_subset_and_skip_specials(self):
         space = IdSpace(
             {"pad": 0, "bos": 1, "eos": 2},
             [ModalityBlock(Modality.TEXT, 3, 2), ModalityBlock(Modality.AUDIO, 5, 2)],
         )
         embed = IdSpaceEmbedding(space, 2)
-        head = embed.as_head(special_tokens=False, modalities=[Modality.AUDIO])
+        head = embed.head_view(special_tokens=False, modalities=[Modality.AUDIO])
 
         self.assertEqual(head.global_ids, (5, 6))
         self.assertEqual(head.to_head_ids([5, 6]), [0, 1])
@@ -92,6 +93,25 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
                 ),
             )
         )
+
+    def test_head_view_uses_embedding_like_weight_property(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.AUDIO, 1, 2)])
+        audio = ProjectedEmbedding(
+            torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            torch.tensor([[1.0, 0.0], [0.0, 2.0]]),
+        )
+        embed = IdSpaceEmbedding(
+            space,
+            2,
+            modality_embeddings={Modality.AUDIO: audio},
+        )
+        head = embed.head_view(special_tokens=False, modalities=[Modality.AUDIO])
+        x = torch.tensor([[1.0, 1.0]])
+
+        self.assertIs(embed.modality_embeddings[Modality.AUDIO], audio)
+        self.assertTrue(torch.equal(embed.weight[1:3], audio.weight))
+        self.assertTrue(torch.equal(embed(torch.tensor([1, 2])), audio(torch.tensor([0, 1]))))
+        self.assertTrue(torch.equal(head(x), F.linear(x, audio.weight)))
 
     def test_weight_is_dense_global_tensor(self):
         space = IdSpace(
@@ -270,7 +290,7 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         )
         self.assertTrue(torch.equal(embed.weight[0], text.weight[0]))
         with self.assertRaisesRegex(ValueError, "explicit special embeddings"):
-            embed.as_head(special_tokens=["bos"])
+            embed.head_view(special_tokens=["bos"])
 
     def test_init_requires_dim_without_explicit_weights(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])
@@ -309,6 +329,24 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
                 2,
                 modality_embeddings={Modality.TEXT: torch.nn.Embedding(3, 2)},
             )
+
+
+class ProjectedEmbedding(nn.Module):
+    def __init__(self, base_weight: torch.Tensor, shift_weight: torch.Tensor) -> None:
+        super().__init__()
+        self.register_buffer("base_weight", base_weight)
+        self.shift = nn.Linear(shift_weight.size(1), shift_weight.size(1), bias=False)
+        with torch.no_grad():
+            self.shift.weight.copy_(shift_weight)
+        self.num_embeddings = base_weight.size(0)
+        self.embedding_dim = base_weight.size(1)
+
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.base_weight + self.shift(self.base_weight)
+
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        return self.weight[ids]
 
 
 if __name__ == "__main__":

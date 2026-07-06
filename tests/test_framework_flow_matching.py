@@ -57,20 +57,24 @@ class FlowMatchingComponentTest(unittest.TestCase):
 
     def test_default_time_sampler_is_logit_normal(self):
         from anytrain.framework.flow_matching import (
-            ContinuousFlowMatcher,
+            ContinuousFlowRuntime,
             DiscreteFlowMatcher,
             LogitNormalTimeSampler,
         )
 
-        self.assertIsInstance(ContinuousFlowMatcher().time_sampler, LogitNormalTimeSampler)
+        self.assertIsInstance(ContinuousFlowRuntime().time_sampler, LogitNormalTimeSampler)
         self.assertIsInstance(DiscreteFlowMatcher(6).time_sampler, LogitNormalTimeSampler)
-        self.assertEqual(ContinuousFlowMatcher().time_sampler.t_min, 0.0)
-        self.assertEqual(ContinuousFlowMatcher().time_sampler.t_max, 1.0)
+        self.assertEqual(ContinuousFlowRuntime().time_sampler.t_min, 0.0)
+        self.assertEqual(ContinuousFlowRuntime().time_sampler.t_max, 1.0)
         self.assertEqual(DiscreteFlowMatcher(6).time_sampler.t_min, 0.0)
         self.assertLess(DiscreteFlowMatcher(6).time_sampler.t_max, 1.0)
 
     def test_continuous_loss_backward_and_sample_shape(self):
-        from anytrain.framework.flow_matching import ContinuousFlowMatcher
+        from anytrain.framework.flow_matching import (
+            ContinuousFlowRuntime,
+            ContinuousVelocityObjective,
+            ODESampler,
+        )
 
         class ToyVelocity(nn.Module):
             def __init__(self):
@@ -83,23 +87,25 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 return self.proj(x_t) + scale
 
         model = ToyVelocity()
-        matcher = ContinuousFlowMatcher()
+        runtime = ContinuousFlowRuntime()
+        objective = ContinuousVelocityObjective(runtime=runtime)
+        sampler = ODESampler()
         x_1 = torch.randn(4, 3, 2)
 
-        loss = matcher.loss(model, x_1, condition=torch.zeros(4, 1))
+        loss = objective(model, x_1, condition=torch.zeros(4, 1))
         loss.backward()
 
         self.assertEqual(loss.ndim, 0)
         self.assertTrue(torch.isfinite(loss))
         self.assertIsNotNone(model.proj.weight.grad)
 
-        output = matcher.sample(model, torch.randn(4, 3, 2), condition=torch.zeros(4, 1))
+        output = sampler.sample(model, torch.randn(4, 3, 2), condition=torch.zeros(4, 1))
         self.assertEqual(output.final.shape, x_1.shape)
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
 
     def test_continuous_loss_accepts_custom_masked_loss(self):
-        from anytrain.framework.flow_matching import ContinuousFlowMatcher
+        from anytrain.framework.flow_matching import ContinuousVelocityObjective
 
         class ZeroVelocity(nn.Module):
             def forward(self, x_t, t, mask=None):
@@ -113,7 +119,7 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 weights.sum() * prediction.size(-1)
             )
 
-        matcher = ContinuousFlowMatcher(loss_fn=masked_loss)
+        objective = ContinuousVelocityObjective(loss_fn=masked_loss)
         x_1 = torch.tensor(
             [
                 [[1.0, 2.0], [10.0, 20.0]],
@@ -123,13 +129,13 @@ class FlowMatchingComponentTest(unittest.TestCase):
         x_0 = torch.zeros_like(x_1)
         mask = torch.tensor([[True, False], [True, False]])
 
-        loss = matcher.loss(ZeroVelocity(), x_1, x_0=x_0, mask=mask)
+        loss = objective(ZeroVelocity(), x_1, x_0=x_0, mask=mask)
 
         expected = torch.tensor([1.0, 2.0, 3.0, 4.0]).square().mean()
         self.assertTrue(torch.equal(loss, expected))
 
     def test_continuous_custom_loss_must_return_scalar(self):
-        from anytrain.framework.flow_matching import ContinuousFlowMatcher
+        from anytrain.framework.flow_matching import ContinuousVelocityObjective
 
         class ZeroVelocity(nn.Module):
             def forward(self, x_t, t):
@@ -140,10 +146,10 @@ class FlowMatchingComponentTest(unittest.TestCase):
             del extras
             return (prediction - target).square().mean(dim=-1)
 
-        matcher = ContinuousFlowMatcher(loss_fn=vector_loss)
+        objective = ContinuousVelocityObjective(loss_fn=vector_loss)
 
         with self.assertRaisesRegex(ValueError, "scalar"):
-            matcher.loss(ZeroVelocity(), torch.randn(2, 3, 4))
+            objective(ZeroVelocity(), torch.randn(2, 3, 4))
 
     def test_ode_sampler_expands_scalar_time_to_batch(self):
         from anytrain.framework.flow_matching import ODESampler

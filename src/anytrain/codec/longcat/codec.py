@@ -29,6 +29,15 @@ class LongCatAudioCodec(nn.Module):
         self.device = device
         self.assets = assets
 
+    @property
+    def semantic_codebook(self) -> Tensor:
+        codebook = self.encoder.get_semantic_codebook()
+        if not isinstance(codebook, Tensor):
+            raise TypeError("LongCat semantic codebook must be a Tensor.")
+        if codebook.dim() != 2:
+            raise ValueError("LongCat semantic codebook must have shape [dim, vocab].")
+        return codebook.transpose(0, 1).contiguous().to(self.device)
+
     @classmethod
     def from_pretrained(
         cls,

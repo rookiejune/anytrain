@@ -1,5 +1,7 @@
 import unittest
 
+import torch
+
 from anytrain.idspace import IdSpace, Modality, ModalityBlock
 
 
@@ -19,6 +21,70 @@ class IdSpaceTest(unittest.TestCase):
         self.assertEqual(space.vocab_size, 9)
         with self.assertRaises(TypeError):
             space.special_token_ids["pad"] = 9
+
+    def test_space_converts_tensor_to_global_ids(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 1, "eos": 2},
+            [ModalityBlock(Modality.TEXT, 3, 4), ModalityBlock(Modality.AUDIO, 7, 2)],
+        )
+
+        ids = torch.tensor([[0, 3], [1, 2]])
+        global_ids = space.to_global(Modality.TEXT, ids)
+
+        self.assertTrue(torch.equal(global_ids, torch.tensor([[3, 6], [4, 5]])))
+        self.assertEqual(global_ids.shape, ids.shape)
+        self.assertEqual(global_ids.device, ids.device)
+        self.assertEqual(global_ids.dtype, ids.dtype)
+
+    def test_space_converts_tensor_to_local_ids(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 1, "eos": 2},
+            [ModalityBlock(Modality.TEXT, 3, 4), ModalityBlock(Modality.AUDIO, 7, 2)],
+        )
+
+        ids = torch.tensor([[3, 6], [4, 5]])
+        local_ids = space.to_local(Modality.TEXT, ids)
+
+        self.assertTrue(torch.equal(local_ids, torch.tensor([[0, 3], [1, 2]])))
+        self.assertEqual(local_ids.shape, ids.shape)
+        self.assertEqual(local_ids.device, ids.device)
+        self.assertEqual(local_ids.dtype, ids.dtype)
+
+    def test_space_skips_special_tokens_in_tensor_local_conversion(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 3, "eos": 5},
+            [ModalityBlock(Modality.TEXT, 0, 6)],
+        )
+
+        local_ids = space.to_local(Modality.TEXT, torch.tensor([[0, 1, 3], [4, 5, 2]]), skip_special=True)
+
+        self.assertTrue(torch.equal(local_ids, torch.tensor([1, 4, 2])))
+
+    def test_space_rejects_invalid_tensor_global_conversion(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 3, "eos": 5},
+            [ModalityBlock(Modality.TEXT, 0, 6)],
+        )
+
+        with self.assertRaisesRegex(TypeError, "integer ids"):
+            space.to_global(Modality.TEXT, torch.tensor([1.0]))
+        with self.assertRaisesRegex(ValueError, "vocab_size"):
+            space.to_global(Modality.TEXT, torch.tensor([-1]))
+        with self.assertRaisesRegex(ValueError, "special"):
+            space.to_global(Modality.TEXT, torch.tensor([3]))
+
+    def test_space_rejects_invalid_tensor_local_conversion(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 3, "eos": 5},
+            [ModalityBlock(Modality.TEXT, 0, 6)],
+        )
+
+        with self.assertRaisesRegex(TypeError, "integer ids"):
+            space.to_local(Modality.TEXT, torch.tensor([1.0]))
+        with self.assertRaisesRegex(ValueError, "outside modality"):
+            space.to_local(Modality.TEXT, torch.tensor([6]))
+        with self.assertRaisesRegex(ValueError, "special"):
+            space.to_local(Modality.TEXT, torch.tensor([3]))
 
     def test_space_rejects_special_token_ids_inside_modality_decode(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])

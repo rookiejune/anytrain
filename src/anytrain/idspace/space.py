@@ -5,6 +5,15 @@ from dataclasses import dataclass
 from enum import StrEnum, auto
 from types import MappingProxyType
 
+import torch
+
+from ._ids import (
+    int_sequence,
+    validate_id_tensor,
+    validate_non_negative_int,
+    validate_positive_int,
+)
+
 
 class Modality(StrEnum):
     TEXT = auto()
@@ -19,15 +28,14 @@ class ModalityBlock:
 
     def __post_init__(self) -> None:
         _validate_modality(self.modality, name="modality")
-        _validate_non_negative_int(self.start, name="start")
-        _validate_positive_int(self.vocab_size, name="vocab_size")
+        validate_non_negative_int(self.start, name="start")
+        validate_positive_int(self.vocab_size, name="vocab_size")
 
     @property
     def end(self) -> int:
         return self.start + self.vocab_size
 
     def contains(self, token_id: int) -> bool:
-        _validate_int(token_id, name="token_id")
         return self.start <= token_id < self.end
 
 
@@ -79,11 +87,9 @@ class IdSpace:
             raise KeyError(f"unknown special token {name!r}.") from error
 
     def is_special_token_id(self, token_id: int) -> bool:
-        _validate_int(token_id, name="token_id")
         return token_id in self._special_token_name_by_id
 
     def modality_block_for_id(self, token_id: int) -> ModalityBlock:
-        _validate_int(token_id, name="token_id")
         if self.is_special_token_id(token_id):
             raise ValueError(f"token_id is a special token id: {token_id}.")
         for modality_block in self.modality_blocks:
@@ -107,9 +113,11 @@ class IdSpace:
             blocks.append((cursor, modality_block.end - cursor))
         return tuple(blocks)
 
-    def to_global(self, modality: Modality, ids: Sequence[int]) -> list[int]:
+    def to_global(self, modality: Modality, ids: Sequence[int] | torch.Tensor) -> list[int] | torch.Tensor:
         modality_block = self.modality_block(modality)
-        local_ids = _normalize_ids(ids, name="ids")
+        if isinstance(ids, torch.Tensor):
+            return self._to_global_tensor(modality_block, ids)
+        local_ids = int_sequence(ids, name="ids")
         global_ids: list[int] = []
         for local_id in local_ids:
             _validate_local_id(local_id, modality_block.vocab_size, name="ids")
@@ -122,12 +130,14 @@ class IdSpace:
     def to_local(
         self,
         modality: Modality,
-        ids: Sequence[int],
+        ids: Sequence[int] | torch.Tensor,
         *,
         skip_special: bool = False,
-    ) -> list[int]:
+    ) -> list[int] | torch.Tensor:
         modality_block = self.modality_block(modality)
-        global_ids = _normalize_ids(ids, name="ids")
+        if isinstance(ids, torch.Tensor):
+            return self._to_local_tensor(modality_block, ids, skip_special=skip_special)
+        global_ids = int_sequence(ids, name="ids")
         local_ids: list[int] = []
         for token_id in global_ids:
             if self.is_special_token_id(token_id):
@@ -139,15 +149,55 @@ class IdSpace:
             local_ids.append(token_id - modality_block.start)
         return local_ids
 
+    def _to_local_tensor(
+        self,
+        modality_block: ModalityBlock,
+        ids: torch.Tensor,
+        *,
+        skip_special: bool,
+    ) -> torch.Tensor:
+        validate_id_tensor(ids, name="ids")
+        special = torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
+        for special_id in self.all_special_ids:
+            if special_id < modality_block.start:
+                continue
+            if special_id >= modality_block.end:
+                break
+            special |= ids == special_id
+        if bool(special.any()) and not skip_special:
+            bad_id = int(ids[special].reshape(-1)[0].detach().cpu())
+            raise ValueError(f"ids contains special token id: {bad_id}.")
 
-def _normalize_ids(ids: Sequence[int], *, name: str) -> list[int]:
-    if not isinstance(ids, Sequence) or isinstance(ids, str | bytes):
-        raise TypeError(f"{name} must be a sequence of integer ids.")
-    normalized: list[int] = []
-    for index, token_id in enumerate(ids):
-        _validate_int(token_id, name=f"{name}[{index}]")
-        normalized.append(token_id)
-    return normalized
+        regular = (
+            (ids >= modality_block.start)
+            & (ids < modality_block.end)
+            & ~special
+        )
+        if not bool((regular | special).all()):
+            bad_id = int(ids[~(regular | special)].reshape(-1)[0].detach().cpu())
+            raise ValueError(
+                f"ids contains token outside modality {modality_block.modality!r}: {bad_id}."
+            )
+        if skip_special:
+            return ids[regular] - modality_block.start
+        return ids - modality_block.start
+
+    def _to_global_tensor(self, modality_block: ModalityBlock, ids: torch.Tensor) -> torch.Tensor:
+        validate_id_tensor(ids, name="ids")
+        out_of_range = (ids < 0) | (ids >= modality_block.vocab_size)
+        if bool(out_of_range.any()):
+            raise ValueError("ids must be in [0, vocab_size).")
+        global_ids = ids + modality_block.start
+        for special_id in self.all_special_ids:
+            if special_id < modality_block.start:
+                continue
+            if special_id >= modality_block.end:
+                break
+            special = global_ids == special_id
+            if bool(special.any()):
+                bad_id = int(global_ids[special].reshape(-1)[0].detach().cpu())
+                raise ValueError(f"ids contains special token id: {bad_id}.")
+        return global_ids
 
 
 def _normalize_special_token_ids(special_token_ids: Mapping[str, int]) -> dict[str, int]:
@@ -158,7 +208,7 @@ def _normalize_special_token_ids(special_token_ids: Mapping[str, int]) -> dict[s
     ids: set[int] = set()
     for name, token_id in special_token_ids.items():
         _validate_name(name, name="special name")
-        _validate_non_negative_int(token_id, name=f"special_token_ids[{name!r}]")
+        validate_non_negative_int(token_id, name=f"special_token_ids[{name!r}]")
         if name in normalized:
             raise ValueError("special names must be unique.")
         if token_id in ids:
@@ -206,7 +256,6 @@ def _vocab_size(
 
 
 def _validate_local_id(token_id: int, vocab_size: int, *, name: str) -> None:
-    _validate_int(token_id, name=name)
     if token_id < 0 or token_id >= vocab_size:
         raise ValueError(f"{name} must be in [0, vocab_size).")
 
@@ -221,23 +270,6 @@ def _validate_name(value: str, *, name: str) -> None:
 def _validate_modality(value: Modality, *, name: str) -> None:
     if not isinstance(value, Modality):
         raise TypeError(f"{name} must be a Modality.")
-
-
-def _validate_int(value: int, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer.")
-
-
-def _validate_positive_int(value: int, *, name: str) -> None:
-    _validate_int(value, name=name)
-    if value <= 0:
-        raise ValueError(f"{name} must be positive.")
-
-
-def _validate_non_negative_int(value: int, *, name: str) -> None:
-    _validate_int(value, name=name)
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative.")
 
 
 __all__ = [

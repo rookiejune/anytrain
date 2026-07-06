@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
+from typing import Iterator
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ._ids import id_sequence, validate_id_tensor, validate_non_negative_int, validate_positive_int
+from .protocol import EmbeddingProtocol
 from .space import IdSpace, Modality
 
 type _HeadSpecial = tuple[int, nn.Parameter]
-type _EmbeddingLike = nn.Module
-type _HeadBlock = tuple[int, int, int, _EmbeddingLike]
+type _HeadBlock = tuple[int, int, int, EmbeddingProtocol]
 
 
 class IdSpaceEmbedding(nn.Module):
@@ -21,7 +24,7 @@ class IdSpaceEmbedding(nn.Module):
         dim: int | None = None,
         *,
         special_embeddings: nn.ParameterDict | None = None,
-        modality_embeddings: Mapping[Modality, _EmbeddingLike] | None = None,
+        modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None = None,
         init_missing_special_embeddings: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
@@ -56,6 +59,8 @@ class IdSpaceEmbedding(nn.Module):
             dtype=dtype,
         )
         self._dim = dim
+        self._weight_cache_depth = 0
+        self._weight_cache: dict[int, torch.Tensor] = {}
 
     @property
     def dim(self) -> int:
@@ -74,7 +79,7 @@ class IdSpaceEmbedding(nn.Module):
         return self.num_embeddings
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        _validate_ids(input_ids, name="input_ids")
+        validate_id_tensor(input_ids, name="input_ids")
         device, dtype = self._weight_device_dtype()
         if input_ids.device != device:
             raise ValueError("input_ids device must match embedding weights.")
@@ -110,12 +115,22 @@ class IdSpaceEmbedding(nn.Module):
         weight = torch.zeros(self.num_embeddings, self.embedding_dim, device=device, dtype=dtype)
         for modality_block in self.space.modality_blocks:
             embed = self._modality_embedding(modality_block.modality)
-            weight[modality_block.start : modality_block.end] = _embedding_weight(embed)
+            weight[modality_block.start : modality_block.end] = self._embedding_weight(embed)
         for name, global_id in self.space.special_token_ids.items():
             if name not in self.special_embeddings:
                 continue
             weight[global_id] = self.special_embeddings[name]
         return weight
+
+    @contextmanager
+    def cache_weights(self) -> Iterator[None]:
+        self._weight_cache_depth += 1
+        try:
+            yield
+        finally:
+            self._weight_cache_depth -= 1
+            if self._weight_cache_depth == 0:
+                self._weight_cache.clear()
 
     def head_view(
         self,
@@ -144,11 +159,11 @@ class IdSpaceEmbedding(nn.Module):
             self.dim,
             specials,
             blocks,
+            self._embedding_weight,
         )
 
-    def _modality_embedding(self, modality: Modality) -> _EmbeddingLike:
+    def _modality_embedding(self, modality: Modality) -> EmbeddingProtocol:
         embed = self.modality_embeddings[modality.value]
-        _validate_embedding_like(embed, name=f"modality_embeddings[{modality!r}]")
         return embed
 
     def _weight_device_dtype(self) -> tuple[torch.device, torch.dtype]:
@@ -157,8 +172,18 @@ class IdSpaceEmbedding(nn.Module):
             return param.device, param.dtype
         modality = self.space.modality_blocks[0].modality
         embed = self._modality_embedding(modality)
-        weight = _embedding_weight(embed)
+        weight = self._embedding_weight(embed)
         return weight.device, weight.dtype
+
+    def _embedding_weight(self, embed: EmbeddingProtocol) -> torch.Tensor:
+        if self._weight_cache_depth <= 0:
+            return _embedding_weight(embed)
+        key = id(embed)
+        weight = self._weight_cache.get(key)
+        if weight is None:
+            weight = _embedding_weight(embed)
+            self._weight_cache[key] = weight
+        return weight
 
 
 class _IdSpaceHead(nn.Module):
@@ -167,14 +192,16 @@ class _IdSpaceHead(nn.Module):
         dim: int,
         specials: Sequence[_HeadSpecial],
         blocks: Sequence[_HeadBlock],
+        embedding_weight: Callable[[EmbeddingProtocol], torch.Tensor],
     ) -> None:
         super().__init__()
-        _validate_positive_int(dim, name="dim")
+        validate_positive_int(dim, name="dim")
         if not specials and not blocks:
             raise ValueError("head must contain at least one weight.")
         self._dim: int = dim
         self._specials: tuple[_HeadSpecial, ...] = tuple(specials)
         self._blocks: tuple[_HeadBlock, ...] = tuple(blocks)
+        self._embedding_weight = embedding_weight
         self._global_ids = _global_ids(self._specials, self._blocks)
         self._head_id_by_global_id = {
             global_id: head_id for head_id, global_id in enumerate(self._global_ids)
@@ -195,12 +222,12 @@ class _IdSpaceHead(nn.Module):
     def to_head_ids(self, ids: Sequence[int] | torch.Tensor) -> list[int] | torch.Tensor:
         if isinstance(ids, torch.Tensor):
             return self._to_head_tensor(ids)
-        return [self._to_head_id(token_id) for token_id in _normalize_id_sequence(ids, name="ids")]
+        return [self._to_head_id(token_id) for token_id in id_sequence(ids, name="ids")]
 
     def to_global_ids(self, ids: Sequence[int] | torch.Tensor) -> list[int] | torch.Tensor:
         if isinstance(ids, torch.Tensor):
             return self._to_global_tensor(ids)
-        return [self._to_global_id(head_id) for head_id in _normalize_id_sequence(ids, name="ids")]
+        return [self._to_global_id(head_id) for head_id in id_sequence(ids, name="ids")]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 0:
@@ -218,26 +245,26 @@ class _IdSpaceHead(nn.Module):
             head_end = head_start + size
             logits[..., head_start:head_end] = F.linear(
                 x,
-                _embedding_weight(embed)[local_start : local_start + size],
+                self._embedding_weight(embed)[local_start : local_start + size],
             )
             head_start = head_end
         return logits
 
     def _to_head_id(self, token_id: int) -> int:
-        _validate_non_negative_int(token_id, name="global_id")
+        validate_non_negative_int(token_id, name="global_id")
         try:
             return self._head_id_by_global_id[token_id]
         except KeyError as error:
             raise ValueError(f"global_id is outside head: {token_id}.") from error
 
     def _to_global_id(self, head_id: int) -> int:
-        _validate_non_negative_int(head_id, name="head_id")
+        validate_non_negative_int(head_id, name="head_id")
         if head_id >= self.vocab_size:
             raise ValueError(f"head_id is outside head: {head_id}.")
         return self._global_ids[head_id]
 
     def _to_head_tensor(self, ids: torch.Tensor) -> torch.Tensor:
-        _validate_ids(ids, name="ids")
+        validate_id_tensor(ids, name="ids")
         head_ids = torch.empty_like(ids)
         covered = torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
         for head_id, (global_id, _) in enumerate(self._specials):
@@ -261,7 +288,7 @@ class _IdSpaceHead(nn.Module):
         return head_ids
 
     def _to_global_tensor(self, ids: torch.Tensor) -> torch.Tensor:
-        _validate_ids(ids, name="ids")
+        validate_id_tensor(ids, name="ids")
         global_ids = torch.empty_like(ids)
         covered = torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
         for head_id, (global_id, _) in enumerate(self._specials):
@@ -288,7 +315,7 @@ class _IdSpaceHead(nn.Module):
 
 def _resolve_device_dtype(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
+    modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None,
     *,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
@@ -313,10 +340,10 @@ def _resolve_device_dtype(
 def _resolve_dim(
     dim: int | None,
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
+    modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None,
 ) -> int:
     if dim is not None:
-        _validate_positive_int(dim, name="dim")
+        validate_positive_int(dim, name="dim")
         return dim
 
     inferred = _first_explicit_dim(special_embeddings, modality_embeddings)
@@ -327,7 +354,7 @@ def _resolve_dim(
 
 def _first_explicit_dim(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
+    modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None,
 ) -> int | None:
     if special_embeddings is not None:
         for param in special_embeddings.values():
@@ -336,14 +363,13 @@ def _first_explicit_dim(
     if modality_embeddings is not None:
         for embed in modality_embeddings.values():
             if isinstance(embed, nn.Module):
-                _validate_embedding_like(embed, name="modality_embeddings value")
                 return embed.embedding_dim
     return None
 
 
 def _first_explicit_weight(
     special_embeddings: nn.ParameterDict | None,
-    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
+    modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None,
 ) -> torch.Tensor | None:
     if special_embeddings is not None:
         for param in special_embeddings.values():
@@ -352,34 +378,15 @@ def _first_explicit_weight(
     if modality_embeddings is not None:
         for embed in modality_embeddings.values():
             if isinstance(embed, nn.Module):
-                _validate_embedding_like(embed, name="modality_embeddings value")
                 return _embedding_weight(embed)
     return None
 
 
-def _embedding_weight(embed: _EmbeddingLike) -> torch.Tensor:
+def _embedding_weight(embed: EmbeddingProtocol) -> torch.Tensor:
     weight = getattr(embed, "weight", None)
     if not isinstance(weight, torch.Tensor):
         raise TypeError("embedding module must expose a tensor weight.")
     return weight
-
-
-def _validate_embedding_like(embed: object, *, name: str) -> None:
-    if not isinstance(embed, nn.Module):
-        raise TypeError(f"{name} must be an nn.Module.")
-    num_embeddings = getattr(embed, "num_embeddings", None)
-    if not isinstance(num_embeddings, int):
-        raise TypeError(f"{name}.num_embeddings must be an integer.")
-    embedding_dim = getattr(embed, "embedding_dim", None)
-    if not isinstance(embedding_dim, int):
-        raise TypeError(f"{name}.embedding_dim must be an integer.")
-    if not callable(getattr(embed, "forward", None)):
-        raise TypeError(f"{name} must be callable on token ids.")
-    weight = _embedding_weight(embed)
-    if weight.dim() != 2:
-        raise ValueError(f"{name}.weight must be a 2D tensor.")
-    if tuple(weight.shape) != (num_embeddings, embedding_dim):
-        raise ValueError(f"{name}.weight shape must match num_embeddings and embedding_dim.")
 
 
 def _init_special_embeddings(
@@ -409,9 +416,7 @@ def _init_special_embeddings(
     if not init_missing:
         _validate_missing_special_embeddings_are_covered(space, special_embeddings)
         return special_embeddings
-    missing_names = [
-        name for name in space.special_token_ids if name not in special_embeddings
-    ]
+    missing_names = [name for name in space.special_token_ids if name not in special_embeddings]
     if missing_names:
         _warn_default_initialization("special embeddings", missing_names)
     for name in space.special_token_ids:
@@ -431,13 +436,15 @@ def _validate_missing_special_embeddings_are_covered(
         if name in special_embeddings:
             continue
         if not any(block.contains(token_id) for block in space.modality_blocks):
-            raise ValueError("special tokens without explicit embeddings must be inside a modality block.")
+            raise ValueError(
+                "special tokens without explicit embeddings must be inside a modality block."
+            )
 
 
 def _init_modality_embeddings(
     space: IdSpace,
     dim: int,
-    modality_embeddings: Mapping[Modality, _EmbeddingLike] | None,
+    modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None,
     *,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
@@ -468,10 +475,7 @@ def _init_modality_embeddings(
                 device=device,
                 dtype=dtype,
             )
-        _validate_embedding_like(
-            embed,
-            name=f"modality_embeddings[{modality_block.modality!r}]",
-        )
+
         if embed.num_embeddings != modality_block.vocab_size:
             raise ValueError(
                 f"modality_embeddings[{modality_block.modality!r}].num_embeddings must match id space."
@@ -553,37 +557,6 @@ def _global_ids(
     for global_start, _, size, _ in blocks:
         global_ids.extend(range(global_start, global_start + size))
     return tuple(global_ids)
-
-
-def _normalize_id_sequence(ids: Sequence[int], *, name: str) -> list[int]:
-    if not isinstance(ids, Sequence) or isinstance(ids, str | bytes):
-        raise TypeError(f"{name} must be a sequence of integer ids.")
-    normalized: list[int] = []
-    for index, token_id in enumerate(ids):
-        _validate_non_negative_int(token_id, name=f"{name}[{index}]")
-        normalized.append(token_id)
-    return normalized
-
-
-def _validate_ids(ids: torch.Tensor, *, name: str) -> None:
-    if not isinstance(ids, torch.Tensor):
-        raise TypeError(f"{name} must be a torch.Tensor.")
-    if ids.dtype == torch.bool or torch.is_floating_point(ids) or torch.is_complex(ids):
-        raise TypeError(f"{name} must contain integer ids.")
-
-
-def _validate_positive_int(value: int, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer.")
-    if value <= 0:
-        raise ValueError(f"{name} must be positive.")
-
-
-def _validate_non_negative_int(value: int, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative.")
 
 
 __all__ = [

@@ -1,6 +1,6 @@
 """Composable wrappers around Facebook flow_matching."""
 
-from .continuous import ContinuousFlowMatcher
+from .continuous import ContinuousFlowRuntime
 from .discrete import DiscreteFlowMatcher
 from .objective import (
     ContinuousVelocityObjective,
@@ -11,6 +11,7 @@ from .sampler import DiscreteEulerSampler, ODESampler
 from .source import GaussianSource, MaskTokenSource, UniformSource, UniformTokenSource
 from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler, UniformTimeSampler
 from .types import (
+    ContinuousTrainingSample,
     FlowLossFn,
     FlowSampleOutput,
     ModelCaller,
@@ -21,7 +22,8 @@ from .types import (
 )
 
 __all__ = [
-    "ContinuousFlowMatcher",
+    "ContinuousFlowRuntime",
+    "ContinuousTrainingSample",
     "ContinuousVelocityObjective",
     "DEFAULT_TIME_EPS",
     "DiscreteEulerSampler",

@@ -5,11 +5,11 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from ._deps import (
-    CondOTProbPath,
     MixtureDiscreteProbPath,
     MixturePathGeneralizedKL,
     PolynomialConvexScheduler,
 )
+from .continuous import ContinuousFlowRuntime
 from .source import GaussianSource, UniformTokenSource
 from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler
 from .types import FlowLossFn, ModelCaller, ModelExtras, Source, TimeSampler, default_call_model
@@ -41,16 +41,12 @@ class ContinuousVelocityObjective(nn.Module):
     def __init__(
         self,
         *,
-        path: CondOTProbPath | None = None,
-        source: Source | None = None,
-        time_sampler: TimeSampler | None = None,
+        runtime: ContinuousFlowRuntime | None = None,
         call_model: ModelCaller = default_call_model,
         loss_fn: FlowLossFn = mse_velocity_loss,
     ):
         super().__init__()
-        self.path = CondOTProbPath() if path is None else path
-        self.source = GaussianSource() if source is None else source
-        self.time_sampler = LogitNormalTimeSampler() if time_sampler is None else time_sampler
+        self.runtime = ContinuousFlowRuntime() if runtime is None else runtime
         self.call_model = call_model
         self.loss_fn = loss_fn
 
@@ -61,17 +57,10 @@ class ContinuousVelocityObjective(nn.Module):
         x_0: Tensor | None = None,
         **model_extras: object,
     ) -> Tensor:
-        _require_batch(x_1, "x_1")
-        if x_0 is None:
-            x_0 = self.source.sample_like(x_1)
-        if x_0.shape != x_1.shape:
-            raise ValueError(f"x_0 and x_1 must have the same shape, got {x_0.shape} and {x_1.shape}.")
-
-        t = self.time_sampler.sample(x_1.shape[0], x_1.device)
-        path_sample = self.path.sample(x_0=x_0, x_1=x_1, t=t)
-        prediction = self.call_model(model, path_sample.x_t, path_sample.t, model_extras)
+        sample = self.runtime.training_sample(x_1, x_0=x_0)
+        prediction = self.call_model(model, sample.x_t, sample.t, model_extras)
         return _require_scalar_loss(
-            self.loss_fn(prediction, path_sample.dx_t, model_extras)
+            self.loss_fn(prediction, sample.velocity, model_extras)
         )
 
 

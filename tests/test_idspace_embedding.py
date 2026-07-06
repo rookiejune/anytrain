@@ -32,6 +32,13 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         expected = torch.tensor([[[1.0, 0.0], [0.0, 3.0], [5.0, 5.0], [2.0, 0.0], [0.0, 4.0]]])
         self.assertTrue(torch.equal(y, expected))
 
+    def test_forward_rejects_non_tensor_ids(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])
+        embed = IdSpaceEmbedding(space, 2)
+
+        with self.assertRaisesRegex(TypeError, "torch.Tensor"):
+            embed([0, 1])
+
     def test_head_view_selects_specials_and_modality_blocks(self):
         space = IdSpace({"pad": 0, "eos": 3}, [ModalityBlock(Modality.TEXT, 0, 5)])
         embed = IdSpaceEmbedding(space, 2)
@@ -143,6 +150,31 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         self.assertIsNotNone(embed.special_embeddings["pad"].grad)
         self.assertIsNotNone(embed.modality_embeddings[Modality.TEXT].weight.grad)
         self.assertIsNotNone(embed.modality_embeddings[Modality.AUDIO].weight.grad)
+
+    def test_cache_weights_reuses_modality_weight_inside_context(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.AUDIO, 1, 2)])
+        audio = CountingEmbedding(
+            torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            torch.tensor([[1.0, 0.0], [0.0, 2.0]]),
+        )
+        embed = IdSpaceEmbedding(
+            space,
+            2,
+            modality_embeddings={Modality.AUDIO: audio},
+        )
+        head = embed.head_view(special_tokens=False, modalities=[Modality.AUDIO])
+        x = torch.tensor([[1.0, 1.0]])
+        expected_weight = audio.uncounted_weight
+        expected_logits = F.linear(x, expected_weight)
+        audio.weight_calls = 0
+
+        with embed.cache_weights():
+            self.assertTrue(torch.equal(embed.weight[1:3], expected_weight))
+            self.assertTrue(torch.equal(head(x), expected_logits))
+            self.assertEqual(audio.weight_calls, 1)
+
+        self.assertTrue(torch.equal(head(x), expected_logits))
+        self.assertEqual(audio.weight_calls, 2)
 
     def test_init_defaults(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 3)])
@@ -347,6 +379,21 @@ class ProjectedEmbedding(nn.Module):
 
     def forward(self, ids: torch.Tensor) -> torch.Tensor:
         return self.weight[ids]
+
+
+class CountingEmbedding(ProjectedEmbedding):
+    def __init__(self, base_weight: torch.Tensor, shift_weight: torch.Tensor) -> None:
+        super().__init__(base_weight, shift_weight)
+        self.weight_calls = 0
+
+    @property
+    def weight(self) -> torch.Tensor:
+        self.weight_calls += 1
+        return super().weight
+
+    @property
+    def uncounted_weight(self) -> torch.Tensor:
+        return super().weight
 
 
 if __name__ == "__main__":

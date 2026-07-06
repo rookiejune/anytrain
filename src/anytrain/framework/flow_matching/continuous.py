@@ -3,61 +3,58 @@ from __future__ import annotations
 from torch import Tensor, nn
 
 from ._deps import CondOTProbPath
-from .objective import ContinuousVelocityObjective, mse_velocity_loss
-from .sampler import ODESampler
 from .source import GaussianSource
 from .time import LogitNormalTimeSampler
 from .types import (
-    FlowLossFn,
-    FlowSampleOutput,
-    ModelCaller,
+    ContinuousTrainingSample,
     Source,
     TimeSampler,
-    default_call_model,
 )
 
 
-class ContinuousFlowMatcher(nn.Module):
+class ContinuousFlowRuntime(nn.Module):
     def __init__(
         self,
         *,
         path: CondOTProbPath | None = None,
         source: Source | None = None,
         time_sampler: TimeSampler | None = None,
-        sampler: ODESampler | None = None,
-        call_model: ModelCaller = default_call_model,
-        loss_fn: FlowLossFn = mse_velocity_loss,
     ):
         super().__init__()
+        self.path = CondOTProbPath() if path is None else path
         self.source = GaussianSource() if source is None else source
         self.time_sampler = LogitNormalTimeSampler() if time_sampler is None else time_sampler
-        self.objective = ContinuousVelocityObjective(
-            path=path,
-            source=self.source,
-            time_sampler=self.time_sampler,
-            call_model=call_model,
-            loss_fn=loss_fn,
-        )
-        self.sampler = ODESampler(call_model=call_model) if sampler is None else sampler
 
-    def loss(
+    def source_like(self, x_1: Tensor) -> Tensor:
+        return self.source.sample_like(x_1)
+
+    def training_sample(
         self,
-        model: nn.Module,
         x_1: Tensor,
-        x_0: Tensor | None = None,
-        **model_extras: object,
-    ) -> Tensor:
-        return self.objective(model, x_1, x_0=x_0, **model_extras)
-
-    def sample(
-        self,
-        model: nn.Module,
-        x_0: Tensor,
         *,
-        time_grid: Tensor | None = None,
-        **model_extras: object,
-    ) -> FlowSampleOutput:
-        return self.sampler.sample(model, x_0, time_grid=time_grid, **model_extras)
+        x_0: Tensor | None = None,
+    ) -> ContinuousTrainingSample:
+        _require_batch(x_1, "x_1")
+        if x_0 is None:
+            x_0 = self.source_like(x_1)
+        if x_0.shape != x_1.shape:
+            raise ValueError(
+                f"x_0 and x_1 must have the same shape, got {x_0.shape} and {x_1.shape}."
+            )
+        t = self.time_sampler.sample(x_1.shape[0], x_1.device)
+        sample = self.path.sample(x_0=x_0, x_1=x_1, t=t)
+        return ContinuousTrainingSample(
+            x_t=sample.x_t,
+            t=sample.t,
+            velocity=sample.dx_t,
+        )
 
 
-__all__ = ["ContinuousFlowMatcher"]
+def _require_batch(x: Tensor, name: str) -> None:
+    if x.ndim == 0:
+        raise ValueError(f"{name} must include a batch dimension.")
+    if x.shape[0] <= 0:
+        raise ValueError(f"{name} batch size must be positive.")
+
+
+__all__ = ["ContinuousFlowRuntime"]

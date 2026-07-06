@@ -28,6 +28,13 @@ class FlowSampleOutput:
     time_grid: Tensor | None = None
 
 
+@dataclass(eq=False)
+class ContinuousTrainingSample:
+    x_t: Tensor
+    t: Tensor
+    velocity: Tensor
+
+
 def default_call_model(
     model: nn.Module,
     x_t: Tensor,
@@ -38,6 +45,7 @@ def default_call_model(
 
 
 __all__ = [
+    "ContinuousTrainingSample",
     "FlowSampleOutput",
     "FlowLossFn",
     "ModelCaller",

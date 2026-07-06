@@ -190,16 +190,21 @@ prob = model(x_t, t, **extras).softmax(dim=-1)
 
 离散 sampler 的默认时间网格是 `[0, 1 - eps]`，和离散训练 objective 保持同一个有效时间区间。`vocab_size` 表示目标 token 空间大小；mask token 是否属于模型输入 embedding，由下游模型自己处理。
 
-## 便利封装
+## Continuous runtime / objective / sampler
 
-为保留 deepaudio 的易用性，可以提供两个 preset：
+continuous flow 不提供 matcher preset。`path/source/time_sampler` 只由 runtime 持有；训练 objective 和 generation sampler 分别组合 runtime / sampler：
 
 ```python
-matcher = ContinuousFlowMatcher()
-loss = matcher.loss(model, x_1, condition=condition)
-x_0 = matcher.source.sample_like(x_1)
-samples = matcher.sample(model, x_0, condition=condition)
+runtime = ContinuousFlowRuntime()
+objective = ContinuousVelocityObjective(runtime=runtime)
+sampler = ODESampler()
+
+loss = objective(model, x_1, condition=condition)
+x_0 = runtime.source_like(x_1)
+samples = sampler.sample(model, x_0, condition=condition)
 ```
+
+## Discrete 便利封装
 
 ```python
 matcher = DiscreteFlowMatcher(vocab_size=1024, source=MaskTokenSource(mask_id=1024))
@@ -208,7 +213,7 @@ x_0 = matcher.source.sample_like(tokens)
 samples = matcher.sample(model, x_0, condition=condition)
 ```
 
-这些类只是组合器，不继承或替代下游 `LightningModule`。用户也可以绕过 preset，单独组合 source、objective 和 sampler。
+`DiscreteFlowMatcher` 只是组合器，不继承或替代下游 `LightningModule`。用户也可以绕过 preset，单独组合 source、objective 和 sampler。
 
 ## 依赖策略
 
@@ -230,7 +235,8 @@ flow = ["flow_matching"]
 
 ```python
 from anytrain.framework.flow_matching import (
-    ContinuousFlowMatcher,
+    ContinuousFlowRuntime,
+    ContinuousVelocityObjective,
     DiscreteFlowMatcher,
     FlowSampleOutput,
     GaussianSource,
@@ -268,7 +274,7 @@ from anytrain.framework.flow_matching import (
 
 - 实现 `ContinuousVelocityObjective`。
 - 实现 `ODESampler`。
-- 实现 `ContinuousFlowMatcher` preset。
+- 实现 continuous `ContinuousFlowRuntime`、`ContinuousVelocityObjective` 和 `ODESampler` 分层。
 - 增加 CPU toy model 测试：loss finite、backward finite、sample shape 正确。
 
 ### P3: Discrete 最小闭环

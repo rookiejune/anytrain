@@ -49,3 +49,11 @@
 ## LongCat Audio Codec
 
 - 用真实短音频跑一次 encode/decode smoke，确认 LongCat 上游权重和 torchaudio 版本在本地 `torch2.12` 环境可用。
+
+## UniCodec
+
+- 用真实 24 kHz 短音频跑一次 encode/decode smoke，确认 `rookiejune/UniCodec` fork、`Yidiii/UniCodec_ckpt` 权重和本地 `torch2.12` 环境可用。
+
+## Stable Codec
+
+- 在兼容 `stable-codec` 官方依赖的环境里跑真实 16 kHz 短音频 encode/decode smoke；当前官方包 `stable-codec==0.1.2` 仍硬性依赖 `torch==2.4` 和 FlashAttention，不适合直接放进 `anytrain` extra。

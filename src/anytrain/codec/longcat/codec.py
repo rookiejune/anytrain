@@ -14,7 +14,7 @@ from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
 
 
-class LongCatAudioCodec(nn.Module):
+class LongCat(nn.Module):
     def __init__(
         self,
         encoder: Any,
@@ -47,7 +47,7 @@ class LongCatAudioCodec(nn.Module):
         device: str | torch.device | None = None,
         local_files_only: bool = False,
         force_download: bool = False,
-    ) -> LongCatAudioCodec:
+    ) -> LongCat:
         load_encoder, load_decoder = _load_longcat_loaders()
         decoder_names = _validate_decoders(decoders)
         assets = ensure_longcat_assets(
@@ -203,7 +203,7 @@ def _load_longcat_loaders():
         from longcat_audio_codec import load_decoder, load_encoder
     except ImportError as exc:
         raise ImportError(
-            "LongCatAudioCodec requires the installable LongCat fork. Install "
+            "LongCat requires the installable LongCat fork. Install "
             "`anytrain[longcat]` or install "
             "`longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git`."
         ) from exc

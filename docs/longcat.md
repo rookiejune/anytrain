@@ -45,9 +45,9 @@ config 在 `$HF_HOME/longcat-audio-codec/configs`。
 ## 使用
 
 ```python
-from anytrain.codec.longcat import LongCatAudioCodec
+from anytrain.codec.longcat import LongCat
 
-codec = LongCatAudioCodec.from_pretrained(
+codec = LongCat.from_pretrained(
     device="cuda",
     decoders=("24k_4codebooks",),
 )

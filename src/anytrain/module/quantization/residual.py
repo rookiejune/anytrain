@@ -120,7 +120,7 @@ class ResidualVectorQuantizer(nn.Module):
         flat_size = flat_latents.size(0)
 
         active_mask = self._sample_active_mask(flat_size, active_count, flat_latents.device)
-        residual = flat_latents
+        residual = flat_latents.clone()
         quantized_sum = torch.zeros_like(flat_latents)
         indices_list: list[Tensor] = []
         vector_list: list[Tensor] = []
@@ -135,8 +135,6 @@ class ResidualVectorQuantizer(nn.Module):
             if bool(mask.any().item()):
                 output = quantizer(residual[mask])
                 selected_quantized = output.quantized_latents
-                residual = residual.clone()
-                quantized_sum = quantized_sum.clone()
                 residual[mask] = residual[mask] - selected_quantized
                 quantized_sum[mask] = quantized_sum[mask] + selected_quantized
 
@@ -343,13 +341,13 @@ class ResidualVectorQuantizer(nn.Module):
 
         active_per_vector = torch.full((flat_size,), active_count, dtype=torch.long, device=device)
         dropout_mask = torch.rand(flat_size, device=device) < self.config.dropout
-        if bool(dropout_mask.any().item()):
-            active_per_vector[dropout_mask] = torch.randint(
-                1,
-                active_count + 1,
-                size=(int(dropout_mask.sum().item()),),
-                device=device,
-            )
+        sampled_active = torch.randint(
+            1,
+            active_count + 1,
+            size=(flat_size,),
+            device=device,
+        )
+        active_per_vector = torch.where(dropout_mask, sampled_active, active_per_vector)
         positions = torch.arange(active_count, device=device).unsqueeze(0)
         return positions < active_per_vector.unsqueeze(1)
 

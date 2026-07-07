@@ -89,6 +89,24 @@ class ResidualVectorQuantizerTest(unittest.TestCase):
         self.assertTrue((output.indices == -1).any())
         self.assertFalse(output.active_codebook_mask.all())
 
+    def test_sample_active_mask_dropout_boundaries(self):
+        quantizer = ResidualVectorQuantizer(
+            RVQConfig.from_kwargs(input_dim=4, num_codebooks=4, codebook_size=8, dropout=0.0)
+        )
+
+        mask = quantizer._sample_active_mask(16, 4, torch.device("cpu"))
+
+        self.assertTrue(mask.all())
+
+        quantizer.config.dropout = 1.0
+        torch.manual_seed(0)
+        mask = quantizer._sample_active_mask(64, 4, torch.device("cpu"))
+        active_counts = mask.sum(dim=-1)
+
+        self.assertTrue((active_counts >= 1).all())
+        self.assertTrue((active_counts <= 4).all())
+        self.assertTrue((active_counts < 4).any())
+
     def test_dropout_has_no_effect_with_one_active_codebook(self):
         quantizer = ResidualVectorQuantizer(
             RVQConfig.from_kwargs(input_dim=4, num_codebooks=4, codebook_size=8, dropout=1.0)

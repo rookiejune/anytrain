@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import torch
 from anytrain.codec.longcat.assets import LongCatAssets, LongCatConfigPaths
-from anytrain.codec.longcat.codec import LongCatAudioCodec
+from anytrain.codec.longcat.codec import LongCat
 from torch import nn
 
 
@@ -53,7 +53,7 @@ class LongCatCodecTest(unittest.TestCase):
                         return_value=(fake_load_encoder, fake_load_decoder),
                     ),
                 ):
-                    codec = LongCatAudioCodec.from_pretrained(device="cpu")
+                    codec = LongCat.from_pretrained(device="cpu")
 
                 self.assertIsInstance(codec.encoder, nn.Identity)
                 self.assertIsInstance(codec.decoders["16k_4codebooks"], nn.Identity)
@@ -61,7 +61,7 @@ class LongCatCodecTest(unittest.TestCase):
 
     def test_acoustic_codes_to_features_exposes_decoder_latents_as_time_major(self):
         decoder = FakeLongCatDecoder()
-        codec = LongCatAudioCodec(
+        codec = LongCat(
             encoder=nn.Identity(),
             decoders={"16k_4codebooks": decoder},
             device=torch.device("cpu"),
@@ -77,7 +77,7 @@ class LongCatCodecTest(unittest.TestCase):
 
     def test_decode_features_feeds_longcat_decoder_with_channel_major_latents(self):
         decoder = FakeLongCatDecoder()
-        codec = LongCatAudioCodec(
+        codec = LongCat(
             encoder=nn.Identity(),
             decoders={"16k_4codebooks": decoder},
             device=torch.device("cpu"),
@@ -93,7 +93,7 @@ class LongCatCodecTest(unittest.TestCase):
         self.assertTrue(torch.equal(decoder.acoustic, acoustic_features.transpose(1, 2)))
 
     def test_decode_features_requires_semantic_and_acoustic_time_alignment(self):
-        codec = LongCatAudioCodec(
+        codec = LongCat(
             encoder=nn.Identity(),
             decoders={"16k_4codebooks": FakeLongCatDecoder()},
             device=torch.device("cpu"),

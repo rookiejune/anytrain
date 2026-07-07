@@ -1,6 +1,8 @@
 import unittest
 
 import torch
+from torch import nn
+
 from anytrain.loss import (
     FixedWeightLossBalancer,
     LossABC,
@@ -21,13 +23,24 @@ from anytrain.loss.spectral import (
 )
 from anytrain.loss.task import CodecLoss, CodecLossPreset
 from anytrain.loss.temporal import SDRLoss
-from torch import nn
 
 
 class DetailLoss(LossABC):
     def compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
         loss = (prediction - target).abs().mean()
         return loss, {"raw": loss}
+
+
+class CountingDetailLoss(DetailLoss):
+    def __init__(self):
+        super().__init__()
+        self.call_count = 0
+        self.batch_sizes: list[int] = []
+
+    def compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
+        self.call_count += 1
+        self.batch_sizes.append(prediction.size(0))
+        return super().compute_loss(prediction, target)
 
 
 class VectorLoss(LossABC):
@@ -324,6 +337,19 @@ class LossTest(unittest.TestCase):
         self.assertTrue(torch.isclose(details["l1"], torch.tensor(2.0)))
         total.backward()
         self.assertEqual(float(estimate.grad[0, 0, 2]), 0.0)
+
+    def test_codec_loss_groups_repeated_lengths(self):
+        estimate = torch.randn(4, 1, 4)
+        reference = torch.zeros_like(estimate)
+        counting_loss = CountingDetailLoss()
+        loss = CodecLoss({"counting": counting_loss})
+
+        total, details = loss(estimate, reference, lengths=[2, 4, 2, 4])
+
+        self.assertEqual(counting_loss.call_count, 2)
+        self.assertEqual(counting_loss.batch_sizes, [2, 2])
+        self.assertEqual(total.ndim, 0)
+        self.assertIn("counting/raw", details)
 
     def test_codec_loss_rejects_invalid_lengths(self):
         loss = CodecLoss({"l1": nn.L1Loss()})

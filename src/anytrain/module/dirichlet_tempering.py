@@ -100,6 +100,7 @@ class AdaptiveDirichletTempering(nn.Module):
     _expert_logs: Tensor
     _temperature_ema: Tensor
     _num_updates: Tensor
+    _num_updates_value: int
     prior_mean: Tensor
     prior_var: Tensor
     prior_log: Tensor
@@ -119,6 +120,7 @@ class AdaptiveDirichletTempering(nn.Module):
 
         self._temperature_ema = nn.Buffer(torch.ones(config.num_experts))
         self._num_updates = nn.Buffer(torch.zeros((), dtype=torch.long))
+        self._num_updates_value = 0
 
         self._disabled = False
         self._stats_frozen = False
@@ -147,11 +149,12 @@ class AdaptiveDirichletTempering(nn.Module):
         self._expert_logs.zero_()
         self._temperature_ema.fill_(1)
         self._num_updates.zero_()
+        self._num_updates_value = 0
         return self
 
     @property
     def num_updates(self) -> int:
-        return int(self._num_updates.item())
+        return self._num_updates_value
 
     @property
     def expert_means(self) -> Tensor:
@@ -208,7 +211,10 @@ class AdaptiveDirichletTempering(nn.Module):
             return
 
         self._validate_logits(logits)
-        sums, square_sums, log_sums, count = self._router_stat_sums(logits, mask=mask)
+        sums, square_sums, log_sums, count, local_count = self._router_stat_sums(
+            logits,
+            mask=mask,
+        )
         if self.config.sync_distributed_stats:
             sums, square_sums, log_sums, count = self._sync_stat_sums(
                 sums,
@@ -216,7 +222,9 @@ class AdaptiveDirichletTempering(nn.Module):
                 log_sums,
                 count,
             )
-        if count.item() == 0:
+            if count.item() == 0:
+                return
+        elif local_count == 0:
             return
 
         means = sums / count
@@ -244,6 +252,7 @@ class AdaptiveDirichletTempering(nn.Module):
             )
 
         self._num_updates.add_(1)
+        self._num_updates_value += 1
 
     def forward(
         self,
@@ -348,27 +357,32 @@ class AdaptiveDirichletTempering(nn.Module):
         return temperature
 
     def _in_warmup(self) -> bool:
-        return self.num_updates < self.config.temperature_warmup_steps
+        return self._num_updates_value < self.config.temperature_warmup_steps
+
+    def _load_from_state_dict(self, *args, **kwargs) -> None:
+        super()._load_from_state_dict(*args, **kwargs)
+        self._num_updates_value = int(self._num_updates.item())
 
     def _router_stat_sums(
         self,
         logits: Tensor,
         *,
         mask: Tensor | None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, int]:
         flat_logits = logits.reshape(-1, self.config.num_experts)
         if mask is not None:
             flat_mask = self._flatten_mask(mask, logits=logits)
             flat_logits = flat_logits[flat_mask]
 
+        count_value = flat_logits.size(0)
         count = torch.tensor(
-            flat_logits.size(0),
+            count_value,
             device=logits.device,
             dtype=logits.dtype,
         )
         zeros = torch.zeros(self.config.num_experts, device=logits.device, dtype=logits.dtype)
-        if flat_logits.size(0) == 0:
-            return zeros, zeros.clone(), zeros.clone(), count
+        if count_value == 0:
+            return zeros, zeros.clone(), zeros.clone(), count, count_value
 
         expert_weights = flat_logits.softmax(dim=-1)
         sums = expert_weights.sum(dim=0)
@@ -377,7 +391,7 @@ class AdaptiveDirichletTempering(nn.Module):
             log_sums = zeros
         else:
             log_sums = expert_weights.clamp_min(self._eps).log().sum(dim=0)
-        return sums, square_sums, log_sums, count
+        return sums, square_sums, log_sums, count, count_value
 
     def _flatten_mask(self, mask: Tensor, *, logits: Tensor) -> Tensor:
         if mask.dtype != torch.bool:

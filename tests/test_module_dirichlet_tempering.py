@@ -2,6 +2,7 @@ import unittest
 from dataclasses import fields
 
 import torch
+
 from anytrain.module.dirichlet_tempering import (
     ADT,
     AdaptiveDirichletTempering,
@@ -150,6 +151,25 @@ class AdaptiveDirichletTemperingTest(unittest.TestCase):
 
         self.assertEqual(adt.num_updates, 1)
         self.assertTrue(torch.allclose(weights, logits.softmax(dim=-1), atol=1e-6))
+
+    def test_num_updates_restores_from_state_dict(self):
+        adt = ADT.from_kwargs(
+            num_experts=3,
+            temperature_warmup_steps=1,
+            stat_ema_decays=(0.0, 0.0, 0.0),
+        )
+        adt(torch.tensor([[8.0, -2.0, -2.0]]))
+
+        restored = ADT.from_kwargs(
+            num_experts=3,
+            temperature_warmup_steps=1,
+            stat_ema_decays=(0.0, 0.0, 0.0),
+        )
+        restored.load_state_dict(adt.state_dict())
+
+        self.assertEqual(restored.num_updates, 1)
+        weights = restored(torch.tensor([[4.0, 0.0, -1.0]]))
+        self.assertFalse(torch.allclose(weights, torch.tensor([[4.0, 0.0, -1.0]]).softmax(dim=-1)))
 
     def test_mask_excludes_invalid_sequence_positions_from_stats(self):
         adt = ADT.from_kwargs(num_experts=3, stat_ema_decays=(0.0, 0.0, 0.0))

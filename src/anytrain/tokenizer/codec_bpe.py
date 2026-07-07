@@ -797,16 +797,10 @@ class CodecBPE:
         if codec.num_codebooks == 1:
             return base_ids.unsqueeze(-1)
 
-        if mask is None:
-            mask = torch.ones_like(base_ids, dtype=torch.bool)
         frames: list[Frame] = []
         flat_ids = [int(value) for value in base_ids.detach().cpu().reshape(-1).tolist()]
-        flat_mask = [bool(value) for value in mask.detach().cpu().reshape(-1).tolist()]
-        for base_id, valid in strict_zip(flat_ids, flat_mask):
-            if valid:
-                frames.append(codec.decode(base_id))
-            else:
-                frames.append(codec.decode(base_id))
+        for base_id in flat_ids:
+            frames.append(codec.decode(base_id))
         return torch.tensor(
             frames,
             dtype=base_ids.dtype,

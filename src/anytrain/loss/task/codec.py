@@ -117,14 +117,15 @@ class CodecLoss(LossGroup):
         length_values = _validate_lengths(lengths, batch_size=input.size(0), max_length=input.size(-1))
         total = input.new_zeros(())
         detail_sums: dict[str, Tensor] = {}
-        for batch_index, sample_length in enumerate(length_values):
-            sample_input = input[batch_index : batch_index + 1, ..., :sample_length]
-            sample_target = target[batch_index : batch_index + 1, ..., :sample_length]
-            sample_total, sample_details = super().forward(sample_input, sample_target)
-            total = total + sample_total
-            for name, value in sample_details.items():
+        for sample_length, batch_indices in _group_length_indices(length_values):
+            group_input = input[batch_indices, ..., :sample_length]
+            group_target = target[batch_indices, ..., :sample_length]
+            group_total, group_details = super().forward(group_input, group_target)
+            weight = input.new_tensor(float(len(batch_indices)))
+            total = total + group_total * weight
+            for name, value in group_details.items():
                 value_tensor = _detail_to_tensor(value, device=input.device, dtype=input.dtype)
-                detail_sums[name] = detail_sums.get(name, input.new_zeros(())) + value_tensor
+                detail_sums[name] = detail_sums.get(name, input.new_zeros(())) + value_tensor * weight
 
         divisor = input.new_tensor(float(len(length_values)))
         details = {name: value / divisor for name, value in detail_sums.items()}
@@ -164,6 +165,13 @@ def _validate_lengths(
                 f"lengths cannot exceed audio time dimension: got {length}, max {max_length}."
             )
     return tuple(raw_lengths)
+
+
+def _group_length_indices(lengths: Sequence[int]) -> tuple[tuple[int, list[int]], ...]:
+    groups: dict[int, list[int]] = {}
+    for index, length in enumerate(lengths):
+        groups.setdefault(length, []).append(index)
+    return tuple(groups.items())
 
 
 def _detail_to_tensor(value: float | Tensor, *, device: torch.device, dtype: torch.dtype) -> Tensor:

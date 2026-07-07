@@ -29,6 +29,16 @@ def _validate_ordered_loss_names(loss_names: list[str], *, label: str) -> list[s
     return validated
 
 
+def _stack_named_losses(losses: LossTensorDict, loss_names: list[str]) -> Tensor:
+    missing = [name for name in loss_names if name not in losses]
+    if missing:
+        raise ValueError(f"losses missing configured loss names: {missing}.")
+    extra = [name for name in losses if name not in loss_names]
+    if extra:
+        raise ValueError(f"losses contains unknown loss names: {extra}.")
+    return torch.stack([losses[name] for name in loss_names])
+
+
 class LossBalancerABC(nn.Module, ABC):
     @abstractmethod
     def forward(self, losses: LossTensorDict) -> LossResult:
@@ -67,13 +77,7 @@ class FixedWeightLossBalancer(LossBalancerABC):
         }
 
     def _stack_losses(self, losses: LossTensorDict) -> Tensor:
-        missing = [name for name in self.loss_names if name not in losses]
-        if missing:
-            raise ValueError(f"losses missing configured loss names: {missing}.")
-        extra = [name for name in losses if name not in self.loss_names]
-        if extra:
-            raise ValueError(f"losses contains unknown loss names: {extra}.")
-        return torch.stack([losses[name] for name in self.loss_names])
+        return _stack_named_losses(losses, self.loss_names)
 
 
 class UncertaintyLossBalancer(LossBalancerABC):
@@ -118,10 +122,4 @@ class UncertaintyLossBalancer(LossBalancerABC):
         }
 
     def _stack_losses(self, losses: LossTensorDict) -> Tensor:
-        missing = [name for name in self.loss_names if name not in losses]
-        if missing:
-            raise ValueError(f"losses missing configured loss names: {missing}.")
-        extra = [name for name in losses if name not in self.loss_names]
-        if extra:
-            raise ValueError(f"losses contains unknown loss names: {extra}.")
-        return torch.stack([losses[name] for name in self.loss_names])
+        return _stack_named_losses(losses, self.loss_names)

@@ -10,7 +10,7 @@ from ._deps import (
     PolynomialConvexScheduler,
 )
 from .continuous import ContinuousFlowRuntime
-from .source import GaussianSource, UniformTokenSource
+from .source import UniformTokenSource
 from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler
 from .types import FlowLossFn, ModelCaller, ModelExtras, Source, TimeSampler, default_call_model
 

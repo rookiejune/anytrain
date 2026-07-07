@@ -132,7 +132,7 @@ class UniCodec(nn.Module):
 
 
 def _resolve_domains(domain: Domain | Sequence[Domain], batch_size: int) -> tuple[str, ...]:
-    if isinstance(domain, str) or isinstance(domain, int):
+    if isinstance(domain, (str, int)):
         domains = (domain,) * batch_size
     else:
         domains = tuple(domain)

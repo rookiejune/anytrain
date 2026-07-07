@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Iterator
 
 import torch
 import torch.nn.functional as F
@@ -13,8 +12,8 @@ from ._ids import id_sequence, validate_id_tensor, validate_non_negative_int, va
 from .protocol import EmbeddingProtocol
 from .space import IdSpace, Modality
 
-type _HeadSpecial = tuple[int, nn.Parameter]
-type _HeadBlock = tuple[int, int, int, EmbeddingProtocol]
+_HeadSpecial = tuple[int, nn.Parameter]
+_HeadBlock = tuple[int, int, int, EmbeddingProtocol]
 
 
 class IdSpaceEmbedding(nn.Module):

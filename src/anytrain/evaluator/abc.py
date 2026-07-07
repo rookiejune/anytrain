@@ -6,8 +6,8 @@ from typing import Any
 import torch
 from torch import nn
 
-type MetricValue = float | torch.Tensor
-type MetricDict = dict[str, MetricValue]
+MetricValue = float | torch.Tensor
+MetricDict = dict[str, MetricValue]
 
 
 class EvaluatorABC(nn.Module, ABC):

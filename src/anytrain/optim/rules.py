@@ -13,7 +13,7 @@ class LRScaleRule(TypedDict):
     lr_scale: float
 
 
-type LRScaleRules = Sequence[LRScaleRule]
+LRScaleRules = Sequence[LRScaleRule]
 
 _EMBEDDING_MODULE_TYPES: Final[tuple[type[nn.Module], ...]] = (nn.Embedding, nn.EmbeddingBag)
 _NORMALIZATION_MODULE_TYPES: Final[tuple[type[nn.Module], ...]] = (

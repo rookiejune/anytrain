@@ -266,18 +266,16 @@ class FiniteScalarQuantizer(nn.Module):
 
 
 def default_fsq_levels(power: Literal[8, 9, 10, 12, 14, 16]) -> tuple[int, ...]:
-    match power:
-        case 8:
-            return (7, 7, 5)
-        case 9:
-            return (5, 5, 5, 5)
-        case 10:
-            return (7, 7, 7, 3)
-        case 12:
-            return (7, 5, 5, 5, 5)
-        case 14:
-            return (11, 11, 9, 5, 3)
-        case 16:
-            return DEFAULT_FSQ_LEVELS
-        case _:
-            raise ValueError(f"power={power} is not supported.")
+    if power == 8:
+        return (7, 7, 5)
+    if power == 9:
+        return (5, 5, 5, 5)
+    if power == 10:
+        return (7, 7, 7, 3)
+    if power == 12:
+        return (7, 5, 5, 5, 5)
+    if power == 14:
+        return (11, 11, 9, 5, 3)
+    if power == 16:
+        return DEFAULT_FSQ_LEVELS
+    raise ValueError(f"power={power} is not supported.")

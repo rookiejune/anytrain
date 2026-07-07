@@ -4,7 +4,9 @@ from collections.abc import Sequence
 
 from torch import Tensor
 
-type Features = list[list[Tensor]]
+from anytrain._compat import strict_zip
+
+Features = list[list[Tensor]]
 
 
 def split(output: object) -> tuple[Features, list[Tensor]]:
@@ -37,14 +39,14 @@ def validate_matching_features(
         raise ValueError("fake and real discriminator outputs must have the same branch count.")
 
     found_feature = False
-    for branch_index, (fake_branch, real_branch) in enumerate(zip(fake, real, strict=True)):
+    for branch_index, (fake_branch, real_branch) in enumerate(strict_zip(fake, real)):
         if len(fake_branch) != len(real_branch):
             raise ValueError(
                 "fake and real discriminator outputs must have the same feature count "
                 f"in branch {branch_index}."
             )
         for feature_index, (fake_feature, real_feature) in enumerate(
-            zip(fake_branch, real_branch, strict=True)
+            strict_zip(fake_branch, real_branch)
         ):
             found_feature = True
             if fake_feature.shape != real_feature.shape:

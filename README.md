@@ -23,7 +23,7 @@ python -m pip install -e ".[test]"
 python -m pip install -e ".[logger,module,plot]"
 ```
 
-当前包要求 Python `>=3.12`，核心依赖包括 `torch>=2.12` 和 `lightning>=2.0`。
+当前包要求 Python `>=3.9`，核心依赖包括 `torch>=2.12` 和 `lightning>=2.0`。
 
 ## Quick Start
 

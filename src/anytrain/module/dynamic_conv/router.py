@@ -189,43 +189,37 @@ class ADTRouter2d(nn.Module):
 
 
 def build_activation(name: ActivationName) -> nn.Module:
-    match name:
-        case "gelu":
-            return nn.GELU()
-        case "identity":
-            return nn.Identity()
-        case "relu":
-            return nn.ReLU()
-        case "silu":
-            return nn.SiLU()
-        case _:
-            raise ValueError(f"Unsupported activation {name!r}.")
+    if name == "gelu":
+        return nn.GELU()
+    if name == "identity":
+        return nn.Identity()
+    if name == "relu":
+        return nn.ReLU()
+    if name == "silu":
+        return nn.SiLU()
+    raise ValueError(f"Unsupported activation {name!r}.")
 
 
 def build_norm_1d(name: NormName, channels: int, *, norm_groups: int | None) -> nn.Module:
-    match name:
-        case "batch":
-            return nn.BatchNorm1d(channels)
-        case "group":
-            groups = _resolve_group_count(channels, norm_groups)
-            return nn.GroupNorm(groups, channels)
-        case "identity":
-            return nn.Identity()
-        case _:
-            raise ValueError(f"Unsupported norm {name!r}.")
+    if name == "batch":
+        return nn.BatchNorm1d(channels)
+    if name == "group":
+        groups = _resolve_group_count(channels, norm_groups)
+        return nn.GroupNorm(groups, channels)
+    if name == "identity":
+        return nn.Identity()
+    raise ValueError(f"Unsupported norm {name!r}.")
 
 
 def build_norm_2d(name: NormName, channels: int, *, norm_groups: int | None) -> nn.Module:
-    match name:
-        case "batch":
-            return nn.BatchNorm2d(channels)
-        case "group":
-            groups = _resolve_group_count(channels, norm_groups)
-            return nn.GroupNorm(groups, channels)
-        case "identity":
-            return nn.Identity()
-        case _:
-            raise ValueError(f"Unsupported norm {name!r}.")
+    if name == "batch":
+        return nn.BatchNorm2d(channels)
+    if name == "group":
+        groups = _resolve_group_count(channels, norm_groups)
+        return nn.GroupNorm(groups, channels)
+    if name == "identity":
+        return nn.Identity()
+    raise ValueError(f"Unsupported norm {name!r}.")
 
 
 def _resolve_group_count(channels: int, requested_groups: int | None) -> int:

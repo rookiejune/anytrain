@@ -18,6 +18,7 @@ from typing import Any, Protocol, TypedDict, Unpack, cast, overload
 import torch
 from torch import Tensor, nn
 
+from anytrain._compat import strict_zip
 from anytrain.tts import (
     AudioReference,
     TTSOptions,
@@ -300,7 +301,7 @@ class MossTTS:
                     **_processor_message_kwargs(text, options, reference)
                 )
             ]
-            for text, reference in zip(texts, references, strict=True)
+            for text, reference in strict_zip(texts, references)
         ]
         batch = self.processor(conversations, mode="generation")
         inputs = _processor_batch_inputs(batch, self.device)

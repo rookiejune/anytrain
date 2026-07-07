@@ -7,6 +7,8 @@ from typing import Any
 
 import torch
 
+from anytrain._compat import strict_zip
+
 from ...env import whisper_root
 from ..abc import EvaluatorABC, MetricDict
 from ..text import TextComparisonEvaluator, TextInput
@@ -156,7 +158,7 @@ class _OpenAIWhisperBackend:
             decoding = whisper.DecodingOptions(**decode_kwargs, temperature=temperature)
             batch = self._coerce_decode_result_batch(model.decode(mel[active], decoding), len(active))
             next_active: list[int] = []
-            for sample_index, result in zip(active, batch, strict=True):
+            for sample_index, result in strict_zip(active, batch):
                 if index < len(temperatures) - 1 and self._needs_temperature_fallback(
                     result,
                     compression_threshold=compression_threshold,
@@ -317,10 +319,7 @@ class _OpenAIWhisperBackend:
         return should_skip
 
     def _result_float(self, result: object, name: str) -> float | None:
-        if isinstance(result, Mapping):
-            value = result.get(name)
-        else:
-            value = getattr(result, name, None)
+        value = result.get(name) if isinstance(result, Mapping) else getattr(result, name, None)
         if value is None:
             return None
         return float(value)

@@ -5,7 +5,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-type TextInput = str | Sequence[str]
+TextInput = str | Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -66,11 +66,9 @@ def remove_punctuation(text: str) -> str:
 
 
 def normalize_chinese(text: str, target: str) -> str:
-    match target:
-        case "simplified":
-            return text.translate(_TRADITIONAL_TO_SIMPLIFIED)
-        case _:
-            raise ValueError("chinese normalization must be 'simplified' or None.")
+    if target == "simplified":
+        return text.translate(_TRADITIONAL_TO_SIMPLIFIED)
+    raise ValueError("chinese normalization must be 'simplified' or None.")
 
 
 _TRADITIONAL_TO_SIMPLIFIED = str.maketrans(

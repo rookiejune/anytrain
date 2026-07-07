@@ -6,6 +6,8 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from anytrain._compat import strict_zip
+
 from ._output import Features, validate_matching_features
 from .types import Reduction
 
@@ -30,8 +32,8 @@ class _FeatureMatching(nn.Module):
     ) -> tuple[Tensor, dict[str, Tensor]]:
         validate_matching_features(fake, real, require_features=True)
         losses: list[Tensor] = []
-        for fake_branch, real_branch in zip(fake, real, strict=True):
-            for fake_feature, real_feature in zip(fake_branch, real_branch, strict=True):
+        for fake_branch, real_branch in strict_zip(fake, real):
+            for fake_feature, real_feature in strict_zip(fake_branch, real_branch):
                 target = real_feature.detach() if self.detach_real else real_feature
                 loss = self.loss_fn(fake_feature, target)
                 if loss.ndim != 0:
@@ -45,8 +47,8 @@ class _FeatureMatching(nn.Module):
         if not losses:
             raise ValueError("feature matching requires at least one feature map.")
         stacked = torch.stack(losses)
-        match self.reduction:
-            case Reduction.Mean:
-                return stacked.mean()
-            case Reduction.Sum:
-                return stacked.sum()
+        if self.reduction == Reduction.Mean:
+            return stacked.mean()
+        if self.reduction == Reduction.Sum:
+            return stacked.sum()
+        raise ValueError(f"Unsupported GAN reduction {self.reduction!r}.")

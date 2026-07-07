@@ -8,7 +8,7 @@ from torch import Tensor, nn
 
 from .abc import LossResult
 
-type LossTensorDict = Mapping[str, Tensor]
+LossTensorDict = Mapping[str, Tensor]
 
 
 def _validate_ordered_loss_names(loss_names: list[str], *, label: str) -> list[str]:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import StrEnum, auto
+from enum import auto
 from typing import TypeGuard
+
+from anytrain._compat import StrEnum
 
 from .options import (
     DEFAULT_MUON_ADJUST_LR_FN,
@@ -16,7 +18,7 @@ from .options import (
 from .scheduler import PhaseLike, Schedule
 from .scheduler import make_scheduler_config as make_phase_scheduler_config
 
-type SchedulerInput = Sequence[PhaseLike]
+SchedulerInput = Sequence[PhaseLike]
 DEFAULT_ADAMW_WEIGHT_DECAY = 0.01
 DEFAULT_MUON_WEIGHT_DECAY = 0.0
 

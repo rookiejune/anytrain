@@ -7,11 +7,12 @@ name = "anytrain"
 version = "0.1.0"
 description = "Components for building PyTorch and Lightning training code."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
     "torch>=2.12",
     "lightning>=2.0",
     "einops>=0.7",
+    "typing-extensions>=4.0",
     "tqdm>=4.0",
 ]
 
@@ -51,7 +52,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

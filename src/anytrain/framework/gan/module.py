@@ -55,13 +55,13 @@ class Loss(nn.Module):
         gp_weight: float | None = None,
         **kwargs,
     ) -> Loss:
-        match resolve_preset(preset):
-            case Preset.DAC:
-                from .audio import DACDiscriminator
+        resolved = resolve_preset(preset)
+        if resolved == Preset.DAC:
+            from .audio import DACDiscriminator
 
-                discriminator = DACDiscriminator(**kwargs)
-            case _:
-                raise NotImplementedError(f"Unsupported GAN preset: {preset.value}")
+            discriminator = DACDiscriminator(**kwargs)
+        else:
+            raise NotImplementedError(f"Unsupported GAN preset: {resolved.value}")
         return cls(
             discriminator,
             gan=gan,

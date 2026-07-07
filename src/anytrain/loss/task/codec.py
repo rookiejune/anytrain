@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import StrEnum
 from typing import Any
 
 import torch
 from torch import Tensor
+
+from anytrain._compat import StrEnum
 
 from ..balancer import FixedWeightLossBalancer, LossBalancerABC
 from ..group import LossGroup
@@ -55,41 +56,41 @@ class CodecLoss(LossGroup):
         backend: str = "auto",
     ) -> CodecLoss:
         preset = cls._resolve_preset(preset)
-        match preset:
-            case CodecLossPreset.DAC:
-                return cls(
-                    {
-                        "multi_mel": MultiScaleMelLoss(
-                            sample_rate=sample_rate,
-                            n_fft_list=mel_n_fft_list,
-                            n_mels_list=mel_n_mels_list,
-                            loss_kwargs=mel_loss_kwargs,
-                            mel_scale=mel_scale,
-                            backend=backend,
-                        )
-                    },
-                    balancer=balancer,
-                )
-            case CodecLossPreset.DYNACODEC:
-                return cls(
-                    {
-                        "si_sdr": SDRLoss(),
-                        "multi_mel": MultiScaleMelLoss(
-                            sample_rate=sample_rate,
-                            n_fft_list=mel_n_fft_list,
-                            n_mels_list=mel_n_mels_list,
-                            loss_kwargs=mel_loss_kwargs,
-                            mel_scale=mel_scale,
-                            backend=backend,
-                        ),
-                        "multi_stft": MultiScaleSTFTLoss(
-                            n_fft_list=stft_n_fft_list,
-                            loss_kwargs=stft_loss_kwargs,
-                            backend=backend,
-                        ),
-                    },
-                    balancer=balancer or FixedWeightLossBalancer(DYNACODEC_LOSS_WEIGHTS),
-                )
+        if preset == CodecLossPreset.DAC:
+            return cls(
+                {
+                    "multi_mel": MultiScaleMelLoss(
+                        sample_rate=sample_rate,
+                        n_fft_list=mel_n_fft_list,
+                        n_mels_list=mel_n_mels_list,
+                        loss_kwargs=mel_loss_kwargs,
+                        mel_scale=mel_scale,
+                        backend=backend,
+                    )
+                },
+                balancer=balancer,
+            )
+        if preset == CodecLossPreset.DYNACODEC:
+            return cls(
+                {
+                    "si_sdr": SDRLoss(),
+                    "multi_mel": MultiScaleMelLoss(
+                        sample_rate=sample_rate,
+                        n_fft_list=mel_n_fft_list,
+                        n_mels_list=mel_n_mels_list,
+                        loss_kwargs=mel_loss_kwargs,
+                        mel_scale=mel_scale,
+                        backend=backend,
+                    ),
+                    "multi_stft": MultiScaleSTFTLoss(
+                        n_fft_list=stft_n_fft_list,
+                        loss_kwargs=stft_loss_kwargs,
+                        backend=backend,
+                    ),
+                },
+                balancer=balancer or FixedWeightLossBalancer(DYNACODEC_LOSS_WEIGHTS),
+            )
+        raise ValueError(f"Unsupported codec loss preset {preset!r}.")
 
     @staticmethod
     def _resolve_preset(preset: CodecLossPreset | str) -> CodecLossPreset:

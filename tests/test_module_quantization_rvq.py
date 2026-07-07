@@ -1,6 +1,8 @@
 import unittest
 
 import torch
+
+from anytrain._compat import strict_zip
 from anytrain.module.quantization import (
     ResidualVectorQuantizer,
     RVQConfig,
@@ -73,7 +75,7 @@ class ResidualVectorQuantizerTest(unittest.TestCase):
         vectors = quantizer.latents_to_codebook_vectors(torch.randn(16, 4))
 
         self.assertEqual(vectors.shape, (16, 3, 4))
-        for book, before in zip(quantizer.quantizers, before_counts, strict=True):
+        for book, before in strict_zip(quantizer.quantizers, before_counts):
             self.assertTrue(torch.equal(book.ema_counts, before))
 
     def test_dropout_marks_inactive_codebooks_during_training(self):

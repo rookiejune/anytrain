@@ -8,7 +8,7 @@ from typing import Protocol, TypedDict, Unpack, overload
 import torch
 from torch import Tensor
 
-type AudioReference = str | PathLike[str]
+AudioReference = str | PathLike[str]
 
 
 class TTSKwargs(TypedDict, total=False):

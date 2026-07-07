@@ -138,13 +138,11 @@ class STFTTransform(nn.Module):
         return self._get_window_fn(window)(win_length)
 
     def _get_window_fn(self, window: str):
-        match window:
-            case "hann":
-                return torch.hann_window
-            case "none":
-                return torch.ones
-            case _:
-                raise ValueError(f"Unsupported window type {window!r}.")
+        if window == "hann":
+            return torch.hann_window
+        if window == "none":
+            return torch.ones
+        raise ValueError(f"Unsupported window type {window!r}.")
 
 
 class MelSpectrogramTransform(nn.Module):

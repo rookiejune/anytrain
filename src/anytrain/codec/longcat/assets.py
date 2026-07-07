@@ -10,7 +10,7 @@ from .cache import resolve_longcat_cache_dir
 
 DEFAULT_HF_REPO_ID = "meituan-longcat/LongCat-Audio-Codec"
 
-type LongCatDecoderName = Literal[
+LongCatDecoderName = Literal[
     "16k_4codebooks",
     "24k_2codebooks",
     "24k_4codebooks",

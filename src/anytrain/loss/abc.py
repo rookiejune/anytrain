@@ -7,9 +7,9 @@ from typing import Any
 import torch
 from torch import nn
 
-type LossDetailValue = float | torch.Tensor
-type LossDetails = dict[str, LossDetailValue]
-type LossResult = torch.Tensor | tuple[torch.Tensor, LossDetails]
+LossDetailValue = float | torch.Tensor
+LossDetails = dict[str, LossDetailValue]
+LossResult = torch.Tensor | tuple[torch.Tensor, LossDetails]
 
 
 class LossABC(nn.Module, ABC):

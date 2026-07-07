@@ -83,13 +83,10 @@ class ADTConfig:
                 "temperature_smoothing_decay must be in [0, 1), "
                 f"got {self.temperature_smoothing_decay}."
             )
-        match self.dispersion_strategy:
-            case "std" | "var" | "range":
-                pass
-            case _:
-                raise ValueError(
-                    f"Unsupported ADT dispersion strategy {self.dispersion_strategy!r}."
-                )
+        if self.dispersion_strategy not in {"std", "var", "range"}:
+            raise ValueError(
+                f"Unsupported ADT dispersion strategy {self.dispersion_strategy!r}."
+            )
 
 
 class AdaptiveDirichletTempering(nn.Module):
@@ -330,17 +327,15 @@ class AdaptiveDirichletTempering(nn.Module):
         return self._temperature_ema
 
     def _strategy_dispersion(self, alpha: Tensor) -> Tensor:
-        match self.config.dispersion_strategy:
-            case "var":
-                return alpha.var(dim=-1, unbiased=False)
-            case "std":
-                return alpha.std(dim=-1, unbiased=False)
-            case "range":
-                return alpha.max(dim=-1).values - alpha.min(dim=-1).values
-            case _:
-                raise ValueError(
-                    f"Unsupported ADT dispersion strategy {self.config.dispersion_strategy!r}."
-                )
+        if self.config.dispersion_strategy == "var":
+            return alpha.var(dim=-1, unbiased=False)
+        if self.config.dispersion_strategy == "std":
+            return alpha.std(dim=-1, unbiased=False)
+        if self.config.dispersion_strategy == "range":
+            return alpha.max(dim=-1).values - alpha.min(dim=-1).values
+        raise ValueError(
+            f"Unsupported ADT dispersion strategy {self.config.dispersion_strategy!r}."
+        )
 
     def _transform_temperature(self, dispersion: Tensor) -> Tensor:
         return 1 + torch.log1p(dispersion)

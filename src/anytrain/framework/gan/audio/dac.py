@@ -8,6 +8,8 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.nn.utils import parametrizations
 
+from anytrain._compat import strict_zip
+
 _BANDS = (0.1, 0.25, 0.5, 0.75)
 
 
@@ -185,7 +187,7 @@ class _MRD(nn.Module):
 
         features: list[Tensor] = []
         bands: list[Tensor] = []
-        for band, stack in zip(torch.tensor_split(spec, self.bands, dim=-1), self.stacks, strict=True):
+        for band, stack in strict_zip(torch.tensor_split(spec, self.bands, dim=-1), self.stacks):
             band_features = stack(band)
             features.extend(band_features)
             band = band_features[-1]

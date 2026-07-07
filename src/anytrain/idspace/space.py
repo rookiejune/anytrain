@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from enum import StrEnum, auto
+from enum import auto
 from types import MappingProxyType
 
 import torch
+
+from anytrain._compat import StrEnum
 
 from ._ids import (
     int_sequence,
@@ -20,7 +22,7 @@ class Modality(StrEnum):
     AUDIO = auto()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ModalityBlock:
     modality: Modality
     start: int

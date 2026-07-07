@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from enum import StrEnum, auto
+from enum import auto
+
+from anytrain._compat import StrEnum
 
 
 class GAN(StrEnum):

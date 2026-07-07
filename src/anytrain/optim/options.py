@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from enum import StrEnum, auto
+from enum import auto
 from typing import Final, Required, TypedDict
+
+from anytrain._compat import StrEnum
 
 
 class MuonAdjustLRFn(StrEnum):
@@ -36,7 +38,7 @@ class MuonAdamWOptions(TypedDict):
     adamw: AdamWOptions
 
 
-type OptimizerOptions = AdamWOptions | MuonAdamWOptions
+OptimizerOptions = AdamWOptions | MuonAdamWOptions
 
 
 __all__ = [

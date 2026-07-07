@@ -4,6 +4,8 @@ from collections import Counter
 from collections.abc import Sequence
 from math import exp, log
 
+from anytrain._compat import strict_zip
+
 
 def corpus_bleu_score(
     predictions: Sequence[str],
@@ -18,7 +20,7 @@ def corpus_bleu_score(
     matches_by_order = [0] * max_order
     possible_matches_by_order = [0] * max_order
 
-    for prediction, target in zip(predictions, targets, strict=True):
+    for prediction, target in strict_zip(predictions, targets):
         prediction_tokens = prediction.split()
         target_tokens = target.split()
         prediction_length += len(prediction_tokens)
@@ -37,7 +39,7 @@ def corpus_bleu_score(
         return 0.0
 
     precisions: list[float] = []
-    for matches, possible in zip(matches_by_order, possible_matches_by_order, strict=True):
+    for matches, possible in strict_zip(matches_by_order, possible_matches_by_order):
         if possible == 0:
             continue
         if matches == 0:
@@ -63,7 +65,7 @@ def word_error_rate(predictions: Sequence[str], targets: Sequence[str]) -> float
     total_reference_tokens = 0
     total_empty_reference_errors = 0
     total_empty_references = 0
-    for prediction, target in zip(predictions, targets, strict=True):
+    for prediction, target in strict_zip(predictions, targets):
         prediction_tokens = prediction.split()
         target_tokens = target.split()
         if not target_tokens:
@@ -90,11 +92,11 @@ def corpus_chrf_score(
     beta: float,
 ) -> float:
     stats = [0] * (3 * max_order)
-    for prediction, target in zip(predictions, targets, strict=True):
+    for prediction, target in strict_zip(predictions, targets):
         prediction_ngrams = _all_char_ngram_counts(prediction, max_order)
         target_ngrams = _all_char_ngram_counts(target, max_order)
         for index, (prediction_order, target_order) in enumerate(
-            zip(prediction_ngrams, target_ngrams, strict=True)
+            strict_zip(prediction_ngrams, target_ngrams)
         ):
             offset = 3 * index
             prediction_count, target_count, match_count = _match_statistics(

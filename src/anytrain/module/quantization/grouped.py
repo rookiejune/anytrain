@@ -8,6 +8,8 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from anytrain._compat import strict_zip
+
 from .lookup import nearest_codebook_indices
 from .output import QuantizationLoss, QuantizeOutput
 from .projection import make_projection
@@ -99,7 +101,7 @@ class GroupedVectorQuantizer(nn.Module):
             weight_norm=config.weight_norm,
         )
         self.codebooks = nn.ParameterList(
-            [nn.Parameter(torch.empty(size, dim)) for size, dim in zip(config.group_sizes, group_dims, strict=True)]
+            [nn.Parameter(torch.empty(size, dim)) for size, dim in strict_zip(config.group_sizes, group_dims)]
         )
         self._basis = nn.Buffer(torch.cumprod(torch.tensor([1, *config.group_sizes[:-1]]), dim=0))
         self._group_sizes = nn.Buffer(torch.tensor(config.group_sizes), persistent=False)
@@ -198,7 +200,7 @@ class GroupedVectorQuantizer(nn.Module):
         parts = projected_latents.split(self.group_dims, dim=-1)
         vector_parts = []
         index_parts = []
-        for part, codebook in zip(parts, self.codebooks, strict=True):
+        for part, codebook in strict_zip(parts, self.codebooks):
             indices = self._nearest_indices(part, codebook)
             vector_parts.append(codebook[indices])
             index_parts.append(indices)

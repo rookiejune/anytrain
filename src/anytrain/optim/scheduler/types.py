@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum, auto
+from enum import auto
+
+from anytrain._compat import StrEnum
 
 from ._shape import CurveShape, normalize_curve_shape
 

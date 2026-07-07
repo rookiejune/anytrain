@@ -5,6 +5,8 @@ from typing import Any
 
 from torch import Tensor, nn
 
+from anytrain._compat import strict_zip
+
 from ..balancer import LossBalancerABC
 from ..group import LossGroup
 from .single import LogMagnitudeLoss
@@ -108,7 +110,7 @@ class MultiScaleMelLoss(LossGroup):
                 backend=backend,
                 **loss_kwargs,
             )
-            for n_fft, n_mels in zip(fft_sizes, mel_bins, strict=True)
+            for n_fft, n_mels in strict_zip(fft_sizes, mel_bins)
         }
         super().__init__(losses, balancer=balancer)
 

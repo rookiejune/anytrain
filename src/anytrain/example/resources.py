@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
+
+from anytrain._compat import StrEnum
 
 
 class ExampleAudio(StrEnum):
@@ -41,8 +42,8 @@ def _resolve_audio(name: ExampleAudio | str) -> ExampleAudio:
 
 
 def _relative_parts(name: ExampleAudio) -> tuple[str, ...]:
-    match name:
-        case ExampleAudio.VCTK:
-            return ("assets", "speech", "p225_001_mic1.flac")
-        case ExampleAudio.COLOR_YOUR_NIGHT:
-            return ("assets", "music", "color_your_night.mp3")
+    if name == ExampleAudio.VCTK:
+        return ("assets", "speech", "p225_001_mic1.flac")
+    if name == ExampleAudio.COLOR_YOUR_NIGHT:
+        return ("assets", "music", "color_your_night.mp3")
+    raise ValueError(f"Unknown example audio {name!r}.")

@@ -58,8 +58,8 @@ def _sample_scores(logits: Sequence[Tensor], *, reduction: Reduction) -> Tensor:
         branch_scores.append(branch_logits.reshape(branch_logits.shape[0], -1).mean(dim=1))
 
     stacked = torch.stack(branch_scores)
-    match reduction:
-        case Reduction.Mean:
-            return stacked.mean(dim=0)
-        case Reduction.Sum:
-            return stacked.sum(dim=0)
+    if reduction == Reduction.Mean:
+        return stacked.mean(dim=0)
+    if reduction == Reduction.Sum:
+        return stacked.sum(dim=0)
+    raise ValueError(f"Unsupported GAN reduction {reduction!r}.")

@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum, auto
+from enum import auto
 from typing import Any, Literal, NamedTuple, TypedDict
+
+from anytrain._compat import StrEnum
 
 DEEPSEEK_BASE_URL_ENV = "DEEPSEEK_BASE_URL"
 DEEPSEEK_MODEL_ENV = "DEEPSEEK_MODEL"

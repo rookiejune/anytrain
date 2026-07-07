@@ -5,7 +5,9 @@ from typing import overload
 
 from torch import Size
 
-type SizeLike = int | Sequence[int] | Size
+from anytrain._compat import strict_zip
+
+SizeLike = int | Sequence[int] | Size
 
 
 @overload
@@ -92,7 +94,7 @@ def infer_padding_2d(effective_kernel_size: Size, stride: Size) -> Size:
     return Size(
         [
             _infer_padding_axis(kernel, stride_value)
-            for kernel, stride_value in zip(kernels, strides, strict=True)
+            for kernel, stride_value in strict_zip(kernels, strides)
         ]
     )
 

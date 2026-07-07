@@ -6,9 +6,11 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, Self, TypedDict, TypeVar
+from typing import TYPE_CHECKING, TypedDict, TypeVar
 
 import torch
+
+from anytrain._compat import NotRequired, Self, strict_zip
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
@@ -51,14 +53,14 @@ class CodecBPEState(TypedDict):
 
 
 # `tokenizers.models.BPE` is a Rust extension type and cannot be subclassed in Python.
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Merge:
     left: int
     right: int
     token_id: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CompressionStats:
     num_sequences: int
     original_tokens: int
@@ -70,7 +72,7 @@ class CompressionStats:
     compression_gain: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TokenCount:
     token_id: int
     count: int
@@ -78,7 +80,7 @@ class TokenCount:
     length: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TokenFrequencyStats:
     total_tokens: int
     token_count_histogram: dict[int, int]
@@ -88,7 +90,7 @@ class TokenFrequencyStats:
     entropy: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TokenLengthStats:
     used_token_length_counts: tuple[int, ...]
     used_token_length_frequencies: tuple[float, ...]
@@ -102,7 +104,7 @@ class TokenLengthStats:
     vocab_token_length_quantiles: dict[str, float]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CodecBPEEvalStats:
     compression: CompressionStats
     token_frequency: TokenFrequencyStats
@@ -133,7 +135,7 @@ class _FrameCodec:
 
     def encode(self, frame: FrameInput) -> int:
         values = self.normalize(frame)
-        return sum(value * stride for value, stride in zip(values, self.strides, strict=True))
+        return sum(value * stride for value, stride in strict_zip(values, self.strides))
 
     def decode(self, frame_id: int) -> Frame:
         frame_id = _normalize_base_id(frame_id)
@@ -400,7 +402,7 @@ class _CoreBPE:
             device=token_ids.device,
         )
 
-        for row, (row_x, row_ids) in enumerate(zip(expanded_rows, expanded_id_rows, strict=True)):
+        for row, (row_x, row_ids) in enumerate(strict_zip(expanded_rows, expanded_id_rows)):
             length = row_ids.numel()
             row_target = expanded_x.select(0, row)
             slices = [slice(None)] * row_target.dim()
@@ -800,7 +802,7 @@ class CodecBPE:
         frames: list[Frame] = []
         flat_ids = [int(value) for value in base_ids.detach().cpu().reshape(-1).tolist()]
         flat_mask = [bool(value) for value in mask.detach().cpu().reshape(-1).tolist()]
-        for base_id, valid in zip(flat_ids, flat_mask, strict=True):
+        for base_id, valid in strict_zip(flat_ids, flat_mask):
             if valid:
                 frames.append(codec.decode(base_id))
             else:
@@ -976,7 +978,7 @@ def _normalize_frame(frame: FrameInput, codebook_sizes: Sequence[int]) -> Frame:
     if len(values) != len(codebook_sizes):
         raise ValueError("frames must match the configured number of codebooks")
 
-    for index, (value, size) in enumerate(zip(values, codebook_sizes, strict=True)):
+    for index, (value, size) in enumerate(strict_zip(values, codebook_sizes)):
         if value >= size:
             raise ValueError(f"frame code id at codebook {index} must be in [0, {size})")
     return values
@@ -998,7 +1000,7 @@ def _normalize_base_id(base_id: int) -> int:
     return base_id
 
 
-def _corpus_factory[CorpusT: Iterable[object]](
+def _corpus_factory(
     corpus: CorpusT | Callable[[], CorpusT],
 ) -> Callable[[], CorpusT]:
     if callable(corpus):

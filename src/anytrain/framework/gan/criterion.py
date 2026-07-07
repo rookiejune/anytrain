@@ -37,36 +37,36 @@ class _LogitCriterion(nn.Module):
         return adv_loss, {"adv": adv_loss}
 
     def real_loss(self, real_logits: Tensor) -> Tensor:
-        match self.gan:
-            case GAN.Hinge:
-                return F.relu(1 - real_logits).mean()
-            case GAN.LSGAN:
-                return torch.mean((1 - real_logits) ** 2)
-            case GAN.WGAN:
-                return -real_logits.mean()
+        if self.gan == GAN.Hinge:
+            return F.relu(1 - real_logits).mean()
+        if self.gan == GAN.LSGAN:
+            return torch.mean((1 - real_logits) ** 2)
+        if self.gan == GAN.WGAN:
+            return -real_logits.mean()
+        raise ValueError(f"Unsupported GAN type {self.gan!r}.")
 
     def fake_loss(self, fake_logits: Tensor) -> Tensor:
-        match self.gan:
-            case GAN.Hinge:
-                return F.relu(1 + fake_logits).mean()
-            case GAN.LSGAN:
-                return (fake_logits**2).mean()
-            case GAN.WGAN:
-                return fake_logits.mean()
+        if self.gan == GAN.Hinge:
+            return F.relu(1 + fake_logits).mean()
+        if self.gan == GAN.LSGAN:
+            return (fake_logits**2).mean()
+        if self.gan == GAN.WGAN:
+            return fake_logits.mean()
+        raise ValueError(f"Unsupported GAN type {self.gan!r}.")
 
     def adv_loss(self, fake_logits: Tensor) -> Tensor:
-        match self.gan:
-            case GAN.Hinge | GAN.WGAN:
-                return -fake_logits.mean()
-            case GAN.LSGAN:
-                return torch.mean((1 - fake_logits) ** 2)
+        if self.gan in {GAN.Hinge, GAN.WGAN}:
+            return -fake_logits.mean()
+        if self.gan == GAN.LSGAN:
+            return torch.mean((1 - fake_logits) ** 2)
+        raise ValueError(f"Unsupported GAN type {self.gan!r}.")
 
     def _reduce(self, losses: list[Tensor]) -> Tensor:
         if not losses:
             raise ValueError("at least one discriminator branch is required.")
         stacked = torch.stack(losses)
-        match self.reduction:
-            case Reduction.Mean:
-                return stacked.mean()
-            case Reduction.Sum:
-                return stacked.sum()
+        if self.reduction == Reduction.Mean:
+            return stacked.mean()
+        if self.reduction == Reduction.Sum:
+            return stacked.sum()
+        raise ValueError(f"Unsupported GAN reduction {self.reduction!r}.")

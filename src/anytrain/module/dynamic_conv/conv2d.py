@@ -5,7 +5,13 @@ from einops import rearrange
 from torch import Size, Tensor, nn
 from torch.nn import functional as F
 
-from .conv1d import _expand_expert_weights, _validate_channels, _validate_expert_weights
+from .conv1d import (
+    _expand_expert_weights,
+    _mix_expert_bias,
+    _mix_expert_weights,
+    _validate_channels,
+    _validate_expert_weights,
+)
 from .segment import PaddingMode
 from .shape import (
     SizeLike,
@@ -127,7 +133,7 @@ class DynamicConv2d(nn.Module):
 
     def apply_conv(self, x: Tensor, expert_weights: Tensor) -> Tensor:
         expert_weights = _expand_expert_weights(expert_weights, batch_size=x.size(0))
-        weight = torch.einsum("be,eockw->bockw", expert_weights, self.weight)
+        weight = _mix_expert_weights(expert_weights, self.weight)
         x = rearrange(x, "b c h w -> 1 (b c) h w")
         weight = rearrange(weight, "b o c kh kw -> (b o) c kh kw")
 
@@ -143,7 +149,7 @@ class DynamicConv2d(nn.Module):
         output = rearrange(output, "1 (b o) h w -> b o h w", b=expert_weights.size(0))
 
         if self.bias is not None:
-            bias = torch.einsum("be,eo->bo", expert_weights, self.bias)
+            bias = _mix_expert_bias(expert_weights, self.bias)
             output = output + bias[..., None, None]
         return output
 

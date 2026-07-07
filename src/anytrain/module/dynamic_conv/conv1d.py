@@ -229,7 +229,7 @@ class DynamicConv1d(nn.Module):
 
     def apply_conv(self, x: Tensor, expert_weights: Tensor) -> Tensor:
         expert_weights = _expand_expert_weights(expert_weights, batch_size=x.size(0))
-        weight = torch.einsum("be,eock->bock", expert_weights, self.weight)
+        weight = _mix_expert_weights(expert_weights, self.weight)
         x = rearrange(x, "b c t -> 1 (b c) t")
         weight = rearrange(weight, "b o c k -> (b o) c k")
 
@@ -250,7 +250,7 @@ class DynamicConv1d(nn.Module):
         output = rearrange(output, "1 (b o) t -> b o t", b=expert_weights.size(0))
 
         if self.bias is not None:
-            bias = torch.einsum("be,eo->bo", expert_weights, self.bias)
+            bias = _mix_expert_bias(expert_weights, self.bias)
             output = output + bias[..., None]
         return output
 
@@ -435,7 +435,7 @@ class DynamicConvTranspose1d(nn.Module):
 
     def apply_conv(self, x: Tensor, expert_weights: Tensor) -> Tensor:
         expert_weights = _expand_expert_weights(expert_weights, batch_size=x.size(0))
-        weight = torch.einsum("be,eiok->biok", expert_weights, self.weight)
+        weight = _mix_expert_weights(expert_weights, self.weight)
         x = rearrange(x, "b c t -> 1 (b c) t")
         weight = rearrange(weight, "b i o k -> (b i) o k")
 
@@ -484,7 +484,7 @@ class DynamicConvTranspose1d(nn.Module):
             expert_weights,
             batch_size=cache.batch_size * num_segments,
         )
-        bias = torch.einsum("be,eo->bo", expert_weights, self.bias)
+        bias = _mix_expert_bias(expert_weights, self.bias)
         if num_segments == 1:
             return output + bias[..., None]
 
@@ -592,6 +592,17 @@ def _expand_expert_weights(
         f"expert_weights batch size {expert_weights.size(0)} must match input batch size "
         f"{batch_size} or be 1."
     )
+
+
+def _mix_expert_weights(expert_weights: Tensor, weight: Tensor) -> Tensor:
+    return torch.matmul(expert_weights, weight.flatten(start_dim=1)).reshape(
+        expert_weights.size(0),
+        *weight.shape[1:],
+    )
+
+
+def _mix_expert_bias(expert_weights: Tensor, bias: Tensor) -> Tensor:
+    return expert_weights @ bias
 
 
 def _validate_output_padding(*, output_padding: int, stride: int, dilation: int) -> None:

@@ -188,17 +188,98 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            embed = IdSpaceEmbedding(space, 4, dtype=torch.float64)
+            embed = IdSpaceEmbedding(space, 4)
 
         self.assertEqual(embed.dim, 4)
         self.assertEqual(embed.embedding_dim, 4)
         self.assertEqual(embed.num_embeddings, 4)
         self.assertEqual(set(embed.special_embeddings), {"pad"})
         self.assertEqual(tuple(embed.special_embeddings["pad"].shape), (4,))
-        self.assertEqual(embed.special_embeddings["pad"].dtype, torch.float64)
         self.assertEqual(embed.modality_embeddings[Modality.TEXT].num_embeddings, 3)
         self.assertEqual(embed.modality_embeddings[Modality.TEXT].embedding_dim, 4)
-        self.assertEqual(embed.modality_embeddings[Modality.TEXT].weight.dtype, torch.float64)
+
+    def test_adapters_project_lookup_rows_only(self):
+        space = IdSpace(
+            {"pad": 0},
+            [ModalityBlock(Modality.TEXT, 1, 2), ModalityBlock(Modality.AUDIO, 3, 2)],
+        )
+        text = nn.Embedding(2, 4)
+        audio = nn.Embedding(2, 2)
+        adapter = nn.Linear(2, 4, bias=False)
+        with torch.no_grad():
+            text.weight.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]))
+            audio.weight.copy_(torch.tensor([[1.0, 0.0], [0.0, 1.0]]))
+            adapter.weight.copy_(torch.tensor([[2.0, 0.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]]))
+            pad = nn.Parameter(torch.tensor([9.0, 9.0, 9.0, 9.0]))
+
+        embed = IdSpaceEmbedding(
+            space,
+            4,
+            special_embeddings=nn.ParameterDict({"pad": pad}),
+            modality_embeddings={Modality.TEXT: text, Modality.AUDIO: audio},
+            adapters={Modality.AUDIO: adapter},
+        )
+
+        y = embed(torch.tensor([0, 1, 3, 4]))
+        expected = torch.stack(
+            [
+                pad,
+                text.weight[0],
+                adapter(audio.weight[0]),
+                adapter(audio.weight[1]),
+            ]
+        )
+        self.assertTrue(torch.allclose(y, expected))
+        self.assertTrue(torch.equal(embed.modality_embeddings[Modality.AUDIO].weight, audio.weight))
+        with self.assertRaisesRegex(ValueError, "weight requires all modality embedding dims"):
+            _ = embed.weight
+
+        head = embed.head_view(special_tokens=False, modalities=[Modality.AUDIO])
+        self.assertEqual(head.dim, 2)
+        x = torch.tensor([[1.0, 0.0]])
+        self.assertTrue(torch.allclose(head(x), F.linear(x, audio.weight)))
+
+    def test_head_view_rejects_mixed_native_dims(self):
+        space = IdSpace(
+            {"pad": 0},
+            [ModalityBlock(Modality.TEXT, 1, 1), ModalityBlock(Modality.AUDIO, 2, 1)],
+        )
+        embed = IdSpaceEmbedding(
+            space,
+            4,
+            special_embeddings=nn.ParameterDict({"pad": nn.Parameter(torch.zeros(4))}),
+            modality_embeddings={
+                Modality.TEXT: nn.Embedding(1, 4),
+                Modality.AUDIO: nn.Embedding(1, 2),
+            },
+            adapters={Modality.AUDIO: nn.Linear(2, 4, bias=False)},
+        )
+
+        with self.assertRaisesRegex(ValueError, "share the same native embedding dim"):
+            embed.head_view(special_tokens=False)
+
+    def test_adapter_without_explicit_embedding_is_rejected(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.AUDIO, 1, 2)])
+
+        with self.assertRaisesRegex(ValueError, "requires an explicit modality embedding"):
+            IdSpaceEmbedding(
+                space,
+                4,
+                special_embeddings=nn.ParameterDict({"pad": nn.Parameter(torch.zeros(4))}),
+                adapters={Modality.AUDIO: nn.Linear(2, 4, bias=False)},
+            )
+
+    def test_adapter_output_dim_must_match_dim(self):
+        space = IdSpace({"pad": 0}, [ModalityBlock(Modality.AUDIO, 1, 2)])
+
+        with self.assertRaisesRegex(ValueError, "output dim must match dim"):
+            IdSpaceEmbedding(
+                space,
+                4,
+                special_embeddings=nn.ParameterDict({"pad": nn.Parameter(torch.zeros(4))}),
+                modality_embeddings={Modality.AUDIO: nn.Embedding(2, 2)},
+                adapters={Modality.AUDIO: nn.Linear(2, 3, bias=False)},
+            )
 
     def test_init_warns_when_using_default_initialization(self):
         space = IdSpace(

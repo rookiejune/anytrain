@@ -91,12 +91,19 @@ class IdSpace:
     def is_special_token_id(self, token_id: int) -> bool:
         return token_id in self._special_token_name_by_id
 
-    def modality_block_for_id(self, token_id: int) -> ModalityBlock:
-        if self.is_special_token_id(token_id):
-            raise ValueError(f"token_id is a special token id: {token_id}.")
+    def block_containing_id(self, token_id: int) -> ModalityBlock | None:
+        validate_non_negative_int(token_id, name="token_id")
         for modality_block in self.modality_blocks:
             if modality_block.contains(token_id):
                 return modality_block
+        return None
+
+    def modality_block_for_id(self, token_id: int) -> ModalityBlock:
+        if self.is_special_token_id(token_id):
+            raise ValueError(f"token_id is a special token id: {token_id}.")
+        modality_block = self.block_containing_id(token_id)
+        if modality_block is not None:
+            return modality_block
         raise ValueError(f"token_id is outside all modality blocks: {token_id}.")
 
     def regular_blocks(self, modality: Modality) -> tuple[tuple[int, int], ...]:

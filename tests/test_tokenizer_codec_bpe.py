@@ -25,7 +25,6 @@ def state():
             {"left": 0, "right": 1, "token_id": 3},
             {"left": 3, "right": 2, "token_id": 4},
         ],
-        "strict": True,
     }
 
 
@@ -34,8 +33,8 @@ class BPETest(unittest.TestCase):
     def test_from_dict_accepts_frame_tokens_and_merges(self):
         bpe = CodecBPE.from_dict(state())
 
-        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
-        self.assertEqual(bpe.expand_ids([4]), [(1,), (2,), (3,)])
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [4])
+        self.assertEqual(bpe.decode([4]), [(1,), (2,), (3,)])
 
     def test_from_pretrained_round_trip(self):
         bpe = CodecBPE.from_dict(state())
@@ -45,7 +44,7 @@ class BPETest(unittest.TestCase):
             loaded = CodecBPE.from_pretrained(tmp)
 
         self.assertEqual(loaded.to_dict(), bpe.to_dict())
-        self.assertEqual(loaded.encode_frames([[1], [2], [3]]), [4])
+        self.assertEqual(loaded.encode([[1], [2], [3]]), [4])
         self.assertEqual(loaded.vocab_size, 5)
         self.assertEqual(loaded.codebook_sizes, (16,))
 
@@ -66,7 +65,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE()
 
         with self.assertRaisesRegex(ValueError, "not initialized"):
-            bpe.encode_frames([[1], [2], [3]])
+            bpe.encode([[1], [2], [3]])
 
     def test_train_merges_single_codebook_frames_and_round_trips(self):
         bpe = CodecBPE.train(
@@ -78,21 +77,21 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.vocab_size, 5)
         self.assertEqual(bpe.tokens[3], ((1,), (2,)))
         self.assertEqual(bpe.tokens[4], ((1,), (2,), (3,)))
-        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [4])
 
-        token_ids = bpe.encode_frames([[1], [2], [1], [2], [3]])
+        token_ids = bpe.encode([[1], [2], [1], [2], [3]])
 
         self.assertEqual(token_ids, [3, 4])
-        self.assertEqual(bpe.expand_ids(token_ids), [(1,), (2,), (1,), (2,), (3,)])
+        self.assertEqual(bpe.decode(token_ids), [(1,), (2,), (1,), (2,), (3,)])
 
     def test_train_supports_longcat_scale_frame_vocab(self):
         frames = [[value] for value in range(8192)]
 
         bpe = CodecBPE.train([frames], codebook_sizes=(8192,), vocab_size=8192)
 
-        encoded = bpe.encode_frames([[0], [4096], [8191]])
+        encoded = bpe.encode([[0], [4096], [8191]])
         self.assertEqual(encoded, [0, 4096, 8191])
-        self.assertEqual(bpe.expand_ids(encoded), [(0,), (4096,), (8191,)])
+        self.assertEqual(bpe.decode(encoded), [(0,), (4096,), (8191,)])
         self.assertEqual(len(bpe.token_text(8191)), 1)
 
     def test_train_keeps_alphabet_when_vocab_size_is_smaller(self):
@@ -104,7 +103,7 @@ class BPETest(unittest.TestCase):
         )
 
         self.assertEqual(bpe.vocab_size, 3)
-        self.assertEqual(bpe.encode_frames([[100], [101], [102]]), [0, 1, 2])
+        self.assertEqual(bpe.encode([[100], [101], [102]]), [0, 1, 2])
 
         bpe = CodecBPE.train(
             [[[100], [101], [100], [101]]],
@@ -116,7 +115,7 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.tokens[0], ((100,),))
         self.assertEqual(bpe.tokens[1], ((101,),))
         self.assertEqual(bpe.tokens[2], ((100,), (101,)))
-        self.assertEqual(bpe.encode_frames([[100], [101]]), [2])
+        self.assertEqual(bpe.encode([[100], [101]]), [2])
 
     def test_train_compacts_sparse_frame_ids(self):
         bpe = CodecBPE.train(
@@ -126,7 +125,7 @@ class BPETest(unittest.TestCase):
         )
 
         self.assertEqual(bpe.vocab_size, 3)
-        self.assertEqual(bpe.encode_frames([[100], [101], [100], [101]]), [2, 2])
+        self.assertEqual(bpe.encode([[100], [101], [100], [101]]), [2, 2])
 
     def test_train_respects_min_frequency(self):
         bpe = CodecBPE.train(
@@ -138,7 +137,7 @@ class BPETest(unittest.TestCase):
         )
 
         self.assertEqual(bpe.vocab_size, 2)
-        self.assertEqual(bpe.encode_frames([[1], [2]]), [0, 1])
+        self.assertEqual(bpe.encode([[1], [2]]), [0, 1])
 
     def test_train_respects_max_token_length(self):
         bpe = CodecBPE.train(
@@ -151,7 +150,7 @@ class BPETest(unittest.TestCase):
 
         self.assertEqual(bpe.vocab_size, 4)
         self.assertEqual(bpe.tokens[3], ((1,), (2,)))
-        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [3, 2])
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [3, 2])
 
     def test_train_merges_multi_codebook_frames_and_round_trips(self):
         corpus = [
@@ -165,12 +164,12 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.tokens[0], ((1, 4),))
         self.assertEqual(bpe.tokens[3], ((1, 4), (2, 7)))
         self.assertEqual(bpe.tokens[4], ((1, 4), (2, 7), (3, 8)))
-        self.assertEqual(bpe.encode_frames([[1, 4], [2, 7], [3, 8]]), [4])
+        self.assertEqual(bpe.encode([[1, 4], [2, 7], [3, 8]]), [4])
 
-        token_ids = bpe.encode_frames(corpus[0])
+        token_ids = bpe.encode(corpus[0])
 
         self.assertEqual(token_ids, [3, 4])
-        self.assertEqual(bpe.expand_ids(token_ids), [(1, 4), (2, 7), (1, 4), (2, 7), (3, 8)])
+        self.assertEqual(bpe.decode(token_ids), [(1, 4), (2, 7), (1, 4), (2, 7), (3, 8)])
 
     def test_multi_codebook_frames_round_trip_through_pretrained_state(self):
         bpe = CodecBPE.train(
@@ -184,8 +183,8 @@ class BPETest(unittest.TestCase):
             loaded = CodecBPE.from_pretrained(tmp)
 
         self.assertEqual(loaded.to_dict(), bpe.to_dict())
-        self.assertEqual(loaded.encode_frames([[1, 4], [2, 7]]), [2])
-        self.assertEqual(loaded.expand_ids([2]), [(1, 4), (2, 7)])
+        self.assertEqual(loaded.encode([[1, 4], [2, 7]]), [2])
+        self.assertEqual(loaded.decode([2]), [(1, 4), (2, 7)])
 
     def test_frames_must_match_codebooks(self):
         with self.assertRaisesRegex(ValueError, "number of codebooks"):
@@ -196,7 +195,7 @@ class BPETest(unittest.TestCase):
 
         bpe = CodecBPE.train([[[1, 4], [2, 7]]], codebook_sizes=(4, 16))
         with self.assertRaisesRegex(ValueError, "number of codebooks"):
-            bpe.encode_frames([[1, 4, 9]])
+            bpe.encode([[1, 4, 9]])
 
     def test_train_rejects_1d_inputs(self):
         with self.assertRaisesRegex(TypeError, "frames"):
@@ -204,7 +203,7 @@ class BPETest(unittest.TestCase):
 
         bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,))
         with self.assertRaisesRegex(TypeError, "frames"):
-            bpe.encode_frames([1, 2, 3])
+            bpe.encode([1, 2, 3])
 
     def test_train_progress_keeps_same_result(self):
         corpus = [[[1], [2], [1], [2], [3]], [[1], [2], [3]]]
@@ -233,7 +232,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
 
         self.assertEqual(corpus.iterations, 2)
-        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [4])
 
     def test_train_accepts_corpus_factory(self):
         calls = 0
@@ -246,7 +245,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
 
         self.assertEqual(calls, 2)
-        self.assertEqual(bpe.encode_frames([[1], [2], [3]]), [4])
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [4])
 
     def test_train_rejects_one_shot_iterator(self):
         corpus = iter([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
@@ -254,17 +253,61 @@ class BPETest(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "re-iterable"):
             CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
 
-    def test_expand_with_counts_returns_frames_and_lengths(self):
+    def test_decode_with_counts_returns_frames_and_lengths(self):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
             vocab_size=5,
         )
 
-        frames, counts = bpe.expand_with_counts([3, 4])
+        frames, counts = bpe.decode_with_counts([3, 4])
 
         self.assertEqual(frames, [(1,), (2,), (1,), (2,), (3,)])
         self.assertEqual(counts, [2, 3])
+
+    def test_encode_decode_supports_single_codebook_tensors(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+        )
+        frames = torch.tensor([1, 2, 1, 2, 3], dtype=torch.int32)
+
+        token_ids = bpe.encode(frames)
+        decoded, counts = bpe.decode_with_counts(token_ids)
+
+        self.assertTrue(torch.equal(token_ids, torch.tensor([3, 4])))
+        self.assertEqual(token_ids.dtype, torch.long)
+        self.assertTrue(torch.equal(decoded, torch.tensor([1, 2, 1, 2, 3])))
+        self.assertTrue(torch.equal(counts, torch.tensor([2, 3])))
+        self.assertTrue(torch.equal(bpe.decode(token_ids), frames.to(dtype=torch.long)))
+
+    def test_encode_decode_supports_multi_codebook_tensors(self):
+        corpus = [
+            [[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]],
+            [[1, 4], [2, 7], [3, 8]],
+        ]
+        bpe = CodecBPE.train(corpus, codebook_sizes=(4, 16), vocab_size=5)
+        frames = torch.tensor([[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]])
+
+        token_ids = bpe.encode(frames)
+        decoded, counts = bpe.decode_with_counts(token_ids)
+
+        self.assertTrue(torch.equal(token_ids, torch.tensor([3, 4])))
+        self.assertTrue(torch.equal(decoded, frames))
+        self.assertTrue(torch.equal(counts, torch.tensor([2, 3])))
+
+    def test_tensor_encode_decode_rejects_batched_shapes(self):
+        bpe = CodecBPE.train(
+            [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
+            codebook_sizes=(16,),
+            vocab_size=5,
+        )
+
+        with self.assertRaisesRegex(ValueError, "shape \\[time\\]"):
+            bpe.encode(torch.tensor([[1, 2, 3]]))
+        with self.assertRaisesRegex(ValueError, "shape \\[tokens\\]"):
+            bpe.decode(torch.tensor([[3, 4]]))
 
     def test_repeat_interleave_uses_expansion_counts(self):
         bpe = CodecBPE.train(
@@ -504,7 +547,7 @@ class BPETest(unittest.TestCase):
         )
         self.assertTrue(torch.equal(expanded_mask, torch.ones((2, 5), dtype=torch.bool)))
 
-    def test_strict_rejects_empty_inputs_and_unknown_ids(self):
+    def test_rejects_empty_inputs_and_unknown_ids(self):
         bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "empty"):
@@ -512,11 +555,11 @@ class BPETest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "empty"):
             CodecBPE.train([[]], codebook_sizes=(16,))
         with self.assertRaisesRegex(ValueError, "empty"):
-            bpe.encode_frames([])
+            bpe.encode([])
         with self.assertRaisesRegex(KeyError, "unknown frame"):
-            bpe.encode_frames([[9]])
+            bpe.encode([[9]])
         with self.assertRaisesRegex(KeyError, "unknown token_id"):
-            bpe.expand_ids([9])
+            bpe.decode([9])
 
     def test_train_rejects_negative_frame_ids(self):
         with self.assertRaisesRegex(ValueError, "non-negative"):
@@ -528,18 +571,8 @@ class BPETest(unittest.TestCase):
                     "codebook_sizes": [16],
                     "tokens": {"-1": [[-1]]},
                     "merges": [],
-                    "strict": True,
                 }
             )
-
-    def test_non_strict_allows_empty_input_but_not_unknown_frames(self):
-        bpe = CodecBPE.train([[[1], [2], [3]]], codebook_sizes=(16,), vocab_size=4, strict=False)
-
-        self.assertEqual(bpe.encode_frames([]), [])
-        with self.assertRaisesRegex(KeyError, "unknown frame"):
-            bpe.encode_frames([[9]])
-        with self.assertRaisesRegex(KeyError, "unknown token_id"):
-            bpe.expand_ids([9])
 
     def test_repeat_interleave_rejects_misaligned_inputs(self):
         bpe = CodecBPE.train(
@@ -593,22 +626,21 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.model.id_to_token(3), bpe.token_text(3))
         self.assertEqual(bpe.model.id_to_token(4), bpe.token_text(4))
 
-    def test_codec_bpe_encode_matches_core(self):
+    def test_codec_bpe_encode_matches_tokenizer(self):
         bpe = CodecBPE.train(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             codebook_sizes=(16,),
             vocab_size=5,
         )
         frames = [[1], [2], [1], [2], [3]]
-        base_ids = [1, 2, 1, 2, 3]
 
-        self.assertEqual(bpe.encode_frames(frames), bpe.core.encode_ids(base_ids))
-        self.assertEqual(bpe.expand_ids(bpe.encode_frames(frames)), [(1,), (2,), (1,), (2,), (3,)])
+        token_ids = bpe.encode(frames)
+        self.assertEqual(token_ids, [3, 4])
+        self.assertEqual(bpe.decode(token_ids), [(1,), (2,), (1,), (2,), (3,)])
 
         tokenizer = bpe.tokenizer()
         encoded = tokenizer.encode(bpe.frames_text(frames))
-
-        self.assertEqual(encoded.ids, bpe.core.encode_ids(base_ids))
+        self.assertEqual(encoded.ids, token_ids)
 
     def test_eval_reports_expected_compression(self):
         bpe = CodecBPE.train(
@@ -624,7 +656,7 @@ class BPETest(unittest.TestCase):
 
         compression = stats.compression
         self.assertEqual(compression.num_sequences, 2)
-        self.assertEqual(compression.original_tokens, 8)
+        self.assertEqual(compression.original_frames, 8)
         self.assertEqual(compression.encoded_tokens, 3)
         self.assertEqual(compression.mean_original_length, 4.0)
         self.assertEqual(compression.mean_encoded_length, 1.5)

@@ -41,10 +41,17 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
 
     def test_head_view_selects_specials_and_modality_blocks(self):
         space = IdSpace({"pad": 0, "eos": 3}, [ModalityBlock(Modality.TEXT, 0, 5)])
-        embed = IdSpaceEmbedding(space, 2)
+        embed = IdSpaceEmbedding(
+            space,
+            2,
+            special_embeddings=torch.nn.ParameterDict(
+                {
+                    "pad": torch.nn.Parameter(torch.tensor([10.0, 0.0])),
+                    "eos": torch.nn.Parameter(torch.tensor([30.0, 0.0])),
+                }
+            ),
+        )
         with torch.no_grad():
-            embed.special_embeddings["pad"].copy_(torch.tensor([10.0, 0.0]))
-            embed.special_embeddings["eos"].copy_(torch.tensor([30.0, 0.0]))
             embed.modality_embeddings[Modality.TEXT].weight.copy_(
                 torch.tensor(
                     [
@@ -294,7 +301,7 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
         self.assertEqual(embed.modality_embeddings[Modality.AUDIO].num_embeddings, 3)
         self.assertEqual(embed.modality_embeddings[Modality.AUDIO].embedding_dim, 3)
 
-    def test_missing_special_embedding_can_fall_back_to_modality_block(self):
+    def test_missing_special_embedding_falls_back_to_modality_block(self):
         space = IdSpace(
             {"bos": 0, "extra": 3},
             [ModalityBlock(Modality.TEXT, 0, 2), ModalityBlock(Modality.AUDIO, 3, 1)],
@@ -310,7 +317,6 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
             space,
             special_embeddings=special_embeddings,
             modality_embeddings={Modality.TEXT: text},
-            init_missing_special_embeddings=False,
         )
 
         self.assertEqual(set(embed.special_embeddings), {"extra"})
@@ -321,8 +327,24 @@ class IdSpaceEmbeddingTest(unittest.TestCase):
             )
         )
         self.assertTrue(torch.equal(embed.weight[0], text.weight[0]))
-        with self.assertRaisesRegex(ValueError, "explicit special embeddings"):
-            embed.head_view(special_tokens=["bos"])
+
+        head = embed.head_view(special_tokens=["bos"], modalities=[Modality.TEXT])
+        x = torch.tensor([[1.0, 0.0]])
+        self.assertEqual(head.global_ids, (0, 1))
+        self.assertTrue(torch.allclose(head(x), F.linear(x, text.weight[:2])))
+
+    def test_special_outside_modality_gets_default_parameter(self):
+        space = IdSpace(
+            {"pad": 0, "bos": 10},
+            [ModalityBlock(Modality.TEXT, 1, 2)],
+        )
+
+        with self.assertWarnsRegex(UserWarning, "special embeddings"):
+            embed = IdSpaceEmbedding(space, 2)
+
+        self.assertEqual(set(embed.special_embeddings), {"pad", "bos"})
+        self.assertEqual(tuple(embed.special_embeddings["pad"].shape), (2,))
+        self.assertEqual(tuple(embed.special_embeddings["bos"].shape), (2,))
 
     def test_init_requires_dim_without_explicit_weights(self):
         space = IdSpace({"pad": 0}, [ModalityBlock(Modality.TEXT, 1, 2)])

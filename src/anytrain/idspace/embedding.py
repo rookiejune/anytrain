@@ -10,9 +10,10 @@ from torch import nn
 
 from ._ids import id_sequence, validate_id_tensor, validate_non_negative_int, validate_positive_int
 from .protocol import EmbeddingProtocol
-from .space import IdSpace, Modality
+from .space import IdSpace, Modality, ModalityBlock
 
-_HeadSpecial = tuple[int, nn.Parameter]
+# (global_id, param) or (global_id, local_id, modality embedding)
+_HeadSpecial = tuple[int, nn.Parameter] | tuple[int, int, EmbeddingProtocol]
 _HeadBlock = tuple[int, int, int, EmbeddingProtocol]
 
 
@@ -24,7 +25,6 @@ class IdSpaceEmbedding(nn.Module):
         *,
         special_embeddings: nn.ParameterDict | None = None,
         modality_embeddings: Mapping[Modality, EmbeddingProtocol] | None = None,
-        init_missing_special_embeddings: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -46,7 +46,6 @@ class IdSpaceEmbedding(nn.Module):
             space,
             dim,
             special_embeddings,
-            init_missing=init_missing_special_embeddings,
             device=device,
             dtype=dtype,
         )
@@ -60,7 +59,6 @@ class IdSpaceEmbedding(nn.Module):
         self._dim = dim
         self._weight_cache_depth = 0
         self._weight_cache: dict[int, torch.Tensor] = {}
-
     @property
     def dim(self) -> int:
         return self._dim
@@ -138,13 +136,7 @@ class IdSpaceEmbedding(nn.Module):
         modalities: Sequence[Modality] | None = None,
     ) -> _IdSpaceHead:
         special_names = _normalize_head_special_tokens(self.space, special_tokens)
-        missing = [name for name in special_names if name not in self.special_embeddings]
-        if missing:
-            raise ValueError("head special tokens must have explicit special embeddings.")
-        specials = tuple(
-            (self.space.special_token_id(name), self.special_embeddings[name])
-            for name in special_names
-        )
+        specials = tuple(self._head_special(name) for name in special_names)
 
         blocks: list[_HeadBlock] = []
         for modality in _normalize_head_modalities(self.space, modalities):
@@ -161,6 +153,15 @@ class IdSpaceEmbedding(nn.Module):
             self._embedding_weight,
         )
 
+    def _head_special(self, name: str) -> _HeadSpecial:
+        global_id = self.space.special_token_id(name)
+        if name in self.special_embeddings:
+            return global_id, self.special_embeddings[name]
+        modality_block = _modality_block_for_special(self.space, global_id)
+        if modality_block is None:
+            raise ValueError(f"special token {name!r} has no embedding.")
+        local_id = global_id - modality_block.start
+        return global_id, local_id, self._modality_embedding(modality_block.modality)
     def _modality_embedding(self, modality: Modality) -> EmbeddingProtocol:
         embed = self.modality_embeddings[modality.value]
         return embed
@@ -234,11 +235,9 @@ class _IdSpaceHead(nn.Module):
         if x.size(-1) != self.dim:
             raise ValueError("x last dimension must match embedding dim.")
         logits = x.new_empty((*x.shape[:-1], self.vocab_size))
-        for head_id, (_, weight) in enumerate(self._specials):
-            logits[..., head_id] = F.linear(
-                x,
-                weight.unsqueeze(0),
-            ).squeeze(-1)
+        for head_id, special in enumerate(self._specials):
+            weight = self._special_weight(special)
+            logits[..., head_id] = F.linear(x, weight.unsqueeze(0)).squeeze(-1)
         head_start = len(self._specials)
         for _, local_start, size, embed in self._blocks:
             head_end = head_start + size
@@ -248,6 +247,13 @@ class _IdSpaceHead(nn.Module):
             )
             head_start = head_end
         return logits
+
+    def _special_weight(self, special: _HeadSpecial) -> torch.Tensor:
+        if len(special) == 2:
+            _, weight = special
+            return weight
+        _, local_id, embed = special
+        return self._embedding_weight(embed)[local_id]
 
     def _to_head_id(self, token_id: int) -> int:
         validate_non_negative_int(token_id, name="global_id")
@@ -266,8 +272,8 @@ class _IdSpaceHead(nn.Module):
         validate_id_tensor(ids, name="ids")
         head_ids = torch.empty_like(ids)
         covered = torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
-        for head_id, (global_id, _) in enumerate(self._specials):
-            mask = ids == global_id
+        for head_id, special in enumerate(self._specials):
+            mask = ids == special[0]
             if not bool(mask.any()):
                 continue
             head_ids[mask] = head_id
@@ -290,11 +296,11 @@ class _IdSpaceHead(nn.Module):
         validate_id_tensor(ids, name="ids")
         global_ids = torch.empty_like(ids)
         covered = torch.zeros(ids.shape, dtype=torch.bool, device=ids.device)
-        for head_id, (global_id, _) in enumerate(self._specials):
+        for head_id, special in enumerate(self._specials):
             mask = ids == head_id
             if not bool(mask.any()):
                 continue
-            global_ids[mask] = global_id
+            global_ids[mask] = special[0]
             covered |= mask
         head_start = len(self._specials)
         for global_start, _, size, _ in self._blocks:
@@ -310,7 +316,6 @@ class _IdSpaceHead(nn.Module):
             bad_id = int(ids[~covered].reshape(-1)[0].detach().cpu())
             raise ValueError(f"ids contains head id outside head: {bad_id}.")
         return global_ids
-
 
 def _resolve_device_dtype(
     special_embeddings: nn.ParameterDict | None,
@@ -393,7 +398,6 @@ def _init_special_embeddings(
     dim: int,
     special_embeddings: nn.ParameterDict | None,
     *,
-    init_missing: bool,
     device: torch.device | str | None,
     dtype: torch.dtype | None,
 ) -> nn.ParameterDict:
@@ -412,33 +416,29 @@ def _init_special_embeddings(
             raise ValueError(f"special_embeddings[{name!r}] must be a 1D parameter.")
         if param.size(0) != dim:
             raise ValueError(f"special_embeddings[{name!r}] dimension must match dim.")
-    if not init_missing:
-        _validate_missing_special_embeddings_are_covered(space, special_embeddings)
-        return special_embeddings
-    missing_names = [name for name in space.special_token_ids if name not in special_embeddings]
+
+    # Unregistered specials inside a modality block reuse that modality row.
+    # Only specials outside every modality get a default Parameter.
+    missing_names = [
+        name
+        for name, token_id in space.special_token_ids.items()
+        if name not in special_embeddings
+        and _modality_block_for_special(space, token_id) is None
+    ]
     if missing_names:
         _warn_default_initialization("special embeddings", missing_names)
-    for name in space.special_token_ids:
-        if name in special_embeddings:
-            continue
+    for name in missing_names:
         param = nn.Parameter(torch.empty(dim, device=device, dtype=dtype))
         nn.init.normal_(param)
         special_embeddings[name] = param
     return special_embeddings
 
 
-def _validate_missing_special_embeddings_are_covered(
-    space: IdSpace,
-    special_embeddings: nn.ParameterDict,
-) -> None:
-    for name, token_id in space.special_token_ids.items():
-        if name in special_embeddings:
-            continue
-        if not any(block.contains(token_id) for block in space.modality_blocks):
-            raise ValueError(
-                "special tokens without explicit embeddings must be inside a modality block."
-            )
-
+def _modality_block_for_special(space: IdSpace, token_id: int) -> ModalityBlock | None:
+    for modality_block in space.modality_blocks:
+        if modality_block.contains(token_id):
+            return modality_block
+    return None
 
 def _init_modality_embeddings(
     space: IdSpace,
@@ -552,7 +552,7 @@ def _global_ids(
     specials: Sequence[_HeadSpecial],
     blocks: Sequence[_HeadBlock],
 ) -> tuple[int, ...]:
-    global_ids = [global_id for global_id, _ in specials]
+    global_ids = [special[0] for special in specials]
     for global_start, _, size, _ in blocks:
         global_ids.extend(range(global_start, global_start + size))
     return tuple(global_ids)

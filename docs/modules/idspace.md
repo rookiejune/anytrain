@@ -58,9 +58,16 @@ logits = h @ embed.weight.T
 ```
 
 如果传入了显式 `special_embeddings` 或 `modality_embeddings`，`dim` 可以传 `None`，
-此时会从第一组显式权重推断；完全默认初始化时必须显式传入 `dim`。显式权重可以只覆盖
-一部分 special token 或 modality，缺失部分会按同一个 `dim` 默认初始化；未知 special 名字或
-未知 modality 会报错。
+此时会从第一组显式权重推断；完全默认初始化时必须显式传入 `dim`。
+
+special token 的向量解析顺序：
+
+1. 显式 `special_embeddings[name]` 优先，用来注册独立向量或覆盖 modality 行。
+2. 未注册但 id 落在某个 modality block 内时，直接复用该 modality 对应 local 行。
+3. 未注册且不在任何 modality 内时，才默认随机初始化一个 `nn.Parameter`。
+
+显式 `modality_embeddings` 可以只覆盖一部分 modality，缺失 modality 会按同一个 `dim`
+默认初始化；未知 special 名字或未知 modality 会报错。
 
 `IdSpaceEmbedding` 对外尽量贴近 `nn.Embedding`：`forward()` 接收 global ids，
 `num_embeddings` 等于 `space.vocab_size`，`embedding_dim` 等于内部向量维度，
@@ -87,9 +94,10 @@ global_ids = head.to_global_ids(head_ids)
 ```
 
 head view 不额外注册参数；它只保存选择出的 special token 和 modality span，并在 forward
-时读取对应 embedding-like module 的当前 `weight`，因此它是 tied view。下游如果需要让输入侧
-audio embedding 先经过投影，应把投影逻辑放进被选中的 embedding-like module 的 `weight`
-里；如果 hidden 空间不同，再在 head 前显式接 output adapter。
+时读取对应 embedding-like module 的当前 `weight`，因此它是 tied view。special 的解析规则与
+input embedding 相同：显式 Parameter 优先，否则从所在 modality 的 `weight` 取行。下游如果
+需要让输入侧 audio embedding 先经过投影，应把投影逻辑放进被选中的 embedding-like module 的
+`weight` 里；如果 hidden 空间不同，再在 head 前显式接 output adapter。
 
 ## 更新策略
 

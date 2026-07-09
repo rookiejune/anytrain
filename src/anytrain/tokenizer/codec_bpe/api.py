@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import torch
 
@@ -20,15 +20,7 @@ from .eval import _eval, _normalize_top_k
 from .frame import _FrameCodec
 from .interop import _require_tokenizer, _require_tokenizers_bpe
 from .stats import CodecBPEEvalStats, Merge
-from .types import (
-    CodecBPEState,
-    Frame,
-    FrameCorpus,
-    FrameCorpusFactory,
-    FrameInput,
-    RepeatInterleaveOutput,
-    _TokenizersBPEKwargs,
-)
+from .types import CodecBPEState, Frame, FrameInput
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
@@ -134,7 +126,7 @@ class CodecBPE:
     @classmethod
     def train(
         cls,
-        corpus: FrameCorpus | FrameCorpusFactory,
+        corpus: Iterable[Sequence[FrameInput]] | Callable[[], Iterable[Sequence[FrameInput]]],
         *,
         codebook_sizes: Sequence[int],
         vocab_size: int = 30_000,
@@ -317,7 +309,7 @@ class CodecBPE:
         mask: torch.Tensor | None = None,
         *,
         dim: int = -2,
-    ) -> RepeatInterleaveOutput:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         expanded = self._require_core().repeat_interleave(x, token_ids, mask, dim=dim)
         if len(expanded) == 2:
             expanded_x, base_ids = expanded
@@ -461,8 +453,8 @@ class CodecBPE:
         self,
         vocab: dict[str, int],
         merges: list[tuple[str, str]],
-    ) -> _TokenizersBPEKwargs:
-        kwargs: _TokenizersBPEKwargs = {
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
             "vocab": vocab,
             "merges": merges,
             "byte_fallback": self.byte_fallback,

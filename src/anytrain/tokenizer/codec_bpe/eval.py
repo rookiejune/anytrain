@@ -6,13 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from .corpus import _progress
 from .frame import _FrameCodec
-from .stats import (
-    CodecBPEEvalStats,
-    CompressionStats,
-    TokenCount,
-    TokenFrequencyStats,
-    TokenLengthStats,
-)
+from .stats import CodecBPEEvalStats
 from .types import FrameInput
 
 LENGTH_QUANTILES = (0.5, 0.9, 0.95, 0.99)
@@ -68,71 +62,26 @@ def _eval_stats(
 
     compression_ratio = encoded_tokens / original_frames
     compression_factor = original_frames / encoded_tokens if encoded_tokens else float("inf")
-    compression = CompressionStats(
-        num_sequences=num_sequences,
-        original_frames=original_frames,
-        encoded_tokens=encoded_tokens,
-        mean_original_length=original_frames / num_sequences,
-        mean_encoded_length=encoded_tokens / num_sequences,
-        compression_ratio=compression_ratio,
-        compression_factor=compression_factor,
-        compression_gain=1.0 - compression_ratio,
-    )
-    return CodecBPEEvalStats(
-        compression=compression,
-        token_frequency=_token_frequency_stats(
-            token_counts,
-            token_lengths,
-            encoded_tokens,
-            vocab_size,
-            top_k=top_k,
-        ),
-        token_length=_token_length_stats(token_counts, token_lengths),
-    )
-
-
-def _token_frequency_stats(
-    token_counts: Counter[int],
-    token_lengths: Mapping[int, int],
-    total_tokens: int,
-    vocab_size: int,
-    *,
-    top_k: int,
-) -> TokenFrequencyStats:
     count_histogram = Counter(token_counts.values())
     entropy = -sum(
-        (count / total_tokens) * math.log(count / total_tokens) for count in token_counts.values()
+        (count / encoded_tokens) * math.log(count / encoded_tokens)
+        for count in token_counts.values()
     )
     top_counts = tuple(
-        TokenCount(
-            token_id=token_id,
-            count=count,
-            frequency=count / total_tokens,
-            length=token_lengths[token_id],
+        (
+            token_id,
+            count,
+            count / encoded_tokens,
+            token_lengths[token_id],
         )
         for token_id, count in sorted(
             token_counts.items(),
             key=lambda item: (-item[1], item[0]),
         )[:top_k]
     )
-    return TokenFrequencyStats(
-        total_tokens=total_tokens,
-        token_count_histogram=dict(sorted(count_histogram.items())),
-        top_token_counts=top_counts,
-        num_used_tokens=len(token_counts),
-        vocab_coverage=len(token_counts) / vocab_size,
-        entropy=entropy,
-    )
-
-
-def _token_length_stats(
-    token_counts: Counter[int],
-    token_lengths: Mapping[int, int],
-) -> TokenLengthStats:
     vocab_counts = Counter(token_lengths.values())
     used_counts: Counter[int] = Counter()
     used_length_total = 0
-    total_used_tokens = sum(token_counts.values())
     for token_id, count in token_counts.items():
         if token_id not in token_lengths:
             raise KeyError(f"encoded unknown token_id: {token_id}")
@@ -142,12 +91,25 @@ def _token_length_stats(
 
     used_length_counts = _dense_length_counts(used_counts)
     vocab_length_counts = _dense_length_counts(vocab_counts)
-    return TokenLengthStats(
+    return CodecBPEEvalStats(
+        num_sequences=num_sequences,
+        original_frames=original_frames,
+        encoded_tokens=encoded_tokens,
+        mean_original_length=original_frames / num_sequences,
+        mean_encoded_length=encoded_tokens / num_sequences,
+        compression_ratio=compression_ratio,
+        compression_factor=compression_factor,
+        compression_gain=1.0 - compression_ratio,
+        token_count_histogram=dict(sorted(count_histogram.items())),
+        top_token_counts=top_counts,
+        num_used_tokens=len(token_counts),
+        vocab_coverage=len(token_counts) / vocab_size,
+        entropy=entropy,
         used_token_length_counts=used_length_counts,
         used_token_length_frequencies=_length_frequencies(used_length_counts),
         vocab_token_length_counts=vocab_length_counts,
         vocab_token_length_frequencies=_length_frequencies(vocab_length_counts),
-        mean_used_token_length=used_length_total / total_used_tokens,
+        mean_used_token_length=used_length_total / encoded_tokens,
         mean_vocab_token_length=sum(length * count for length, count in vocab_counts.items())
         / sum(vocab_counts.values()),
         max_used_token_length=max(used_counts),

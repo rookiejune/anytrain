@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import torch
 
@@ -10,7 +10,6 @@ from .corpus import _corpus_factory, _private_use_char, _scan_base_corpus, _text
 from .frame import _normalize_base_id
 from .interop import _core_state_from_tokenizer, _train_tokenizers_bpe
 from .stats import Merge
-from .types import BaseCorpus, BaseCorpusFactory, RepeatInterleaveOutput
 
 
 class _CoreBPE:
@@ -50,7 +49,7 @@ class _CoreBPE:
     @classmethod
     def train(
         cls,
-        corpus: BaseCorpus | BaseCorpusFactory,
+        corpus: Iterable[Sequence[int]] | Callable[[], Iterable[Sequence[int]]],
         *,
         vocab_size: int = 30_000,
         min_frequency: int = 0,
@@ -107,7 +106,7 @@ class _CoreBPE:
         mask: torch.Tensor | None = None,
         *,
         dim: int = -2,
-    ) -> RepeatInterleaveOutput:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if x.dim() == 0:
             raise ValueError("x must have at least one dimension")
         self._validate_token_ids(token_ids)

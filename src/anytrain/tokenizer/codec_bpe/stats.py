@@ -12,7 +12,7 @@ class Merge:
 
 
 @dataclass(frozen=True)
-class CompressionStats:
+class CodecBPEEvalStats:
     num_sequences: int
     original_frames: int
     encoded_tokens: int
@@ -21,28 +21,11 @@ class CompressionStats:
     compression_ratio: float
     compression_factor: float
     compression_gain: float
-
-
-@dataclass(frozen=True)
-class TokenCount:
-    token_id: int
-    count: int
-    frequency: float
-    length: int
-
-
-@dataclass(frozen=True)
-class TokenFrequencyStats:
-    total_tokens: int
     token_count_histogram: dict[int, int]
-    top_token_counts: tuple[TokenCount, ...]
+    top_token_counts: tuple[tuple[int, int, float, int], ...]
     num_used_tokens: int
     vocab_coverage: float
     entropy: float
-
-
-@dataclass(frozen=True)
-class TokenLengthStats:
     used_token_length_counts: tuple[int, ...]
     used_token_length_frequencies: tuple[float, ...]
     vocab_token_length_counts: tuple[int, ...]
@@ -53,12 +36,3 @@ class TokenLengthStats:
     max_vocab_token_length: int
     used_token_length_quantiles: dict[str, float]
     vocab_token_length_quantiles: dict[str, float]
-
-
-@dataclass(frozen=True)
-class CodecBPEEvalStats:
-    compression: CompressionStats
-    token_frequency: TokenFrequencyStats
-    token_length: TokenLengthStats
-
-

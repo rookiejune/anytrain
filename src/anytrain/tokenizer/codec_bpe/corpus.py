@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import TypeVar
 
 from .frame import _FrameCodec, _normalize_base_id
-from .types import BaseCorpusFactory, CorpusT, FrameInput
+from .types import FrameInput
 
 PRIVATE_USE_RANGES = (
     (0xE000, 0xF8FF),
@@ -12,6 +12,7 @@ PRIVATE_USE_RANGES = (
     (0x100000, 0x10FFFD),
 )
 
+_CorpusT = TypeVar("_CorpusT", bound=Iterable[object])
 _ProgressT = TypeVar("_ProgressT")
 
 
@@ -44,8 +45,8 @@ def _progress(
 
 
 def _corpus_factory(
-    corpus: CorpusT | Callable[[], CorpusT],
-) -> Callable[[], CorpusT]:
+    corpus: _CorpusT | Callable[[], _CorpusT],
+) -> Callable[[], _CorpusT]:
     if callable(corpus):
         return corpus
     if isinstance(corpus, Iterator):
@@ -54,7 +55,7 @@ def _corpus_factory(
 
 
 def _scan_base_corpus(
-    corpus_factory: BaseCorpusFactory,
+    corpus_factory: Callable[[], Iterable[Sequence[int]]],
     *,
     show_progress: bool,
 ) -> tuple[set[int], int]:
@@ -75,7 +76,7 @@ def _scan_base_corpus(
 
 
 def _text_corpus(
-    corpus_factory: BaseCorpusFactory,
+    corpus_factory: Callable[[], Iterable[Sequence[int]]],
     base_tokens: Mapping[int, str],
 ) -> Iterable[str]:
     for seq in corpus_factory():

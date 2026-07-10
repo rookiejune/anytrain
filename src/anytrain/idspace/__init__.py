@@ -1,11 +1,7 @@
-from .embedding import IdSpaceEmbedding
-from .protocol import EmbeddingProtocol
-from .space import IdSpace, Modality, ModalityBlock
+from .embedding import Embedding
+from .layout import Layout
 
 __all__ = [
-    "IdSpace",
-    "IdSpaceEmbedding",
-    "Modality",
-    "ModalityBlock",
-    "EmbeddingProtocol",
+    "Embedding",
+    "Layout",
 ]

@@ -37,7 +37,6 @@
 ## Tokenizer
 
 - `CodecBPE.repeat_interleave` 后续按真实需要再增加 batch packed 输出形态：返回 concat 后的 `expanded_x`、`expanded_unit_ids` 和 `offsets`。
-- 根据下游实际调用方式决定是否让 `Tokenizer.encode()` 直接返回 base units，或只保留显式 post-process helper。
 
 ## Framework
 

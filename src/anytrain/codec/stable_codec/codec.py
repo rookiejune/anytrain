@@ -23,6 +23,7 @@ DEFAULT_VERSION: SupportedVersion = "speech-16k"
 DEFAULT_PRETRAINED_MODEL = f"stabilityai/stable-codec-{DEFAULT_VERSION}"
 SAMPLE_RATE = 16_000
 NUM_CHANNELS = 1
+DEFAULT_SEMANTIC_VOCAB_SIZE = 46_656
 
 
 class StableCodec(nn.Module):
@@ -42,6 +43,7 @@ class StableCodec(nn.Module):
         self.device = device
         self.posthoc_bottleneck = posthoc_bottleneck
         self.sample_rate = int(getattr(model, "sample_rate", SAMPLE_RATE))
+        self.semantic_vocab_size = _semantic_vocab_size(model)
 
     @classmethod
     def from_pretrained(
@@ -191,3 +193,16 @@ def _load_stable_codec_model() -> Any:
             "`stable-codec` in a compatible environment before using this wrapper."
         ) from exc
     return UpstreamStableCodec
+
+
+def _semantic_vocab_size(model: nn.Module) -> int:
+    for name in ("semantic_vocab_size", "codebook_size", "cardinality"):
+        value = getattr(model, name, None)
+        if value is not None:
+            return int(value)
+    bottleneck = getattr(model, "bottleneck", None)
+    if bottleneck is not None:
+        value = getattr(bottleneck, "codebook_size", None)
+        if value is not None:
+            return int(value)
+    return DEFAULT_SEMANTIC_VOCAB_SIZE

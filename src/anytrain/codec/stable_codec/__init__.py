@@ -1,5 +1,6 @@
 from .codec import (
     DEFAULT_PRETRAINED_MODEL,
+    DEFAULT_SEMANTIC_VOCAB_SIZE,
     DEFAULT_VERSION,
     NUM_CHANNELS,
     SAMPLE_RATE,
@@ -11,6 +12,7 @@ from .codec import (
 
 __all__ = [
     "DEFAULT_PRETRAINED_MODEL",
+    "DEFAULT_SEMANTIC_VOCAB_SIZE",
     "DEFAULT_VERSION",
     "NUM_CHANNELS",
     "PosthocBottleneck",

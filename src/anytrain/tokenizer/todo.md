@@ -10,7 +10,3 @@
 2. `repeat_interleave_padded(x, token_ids, dim=1, pad_id=0)`：
    - 返回 `padded_x`、`padded_unit_ids`、`mask`。
    - 每个 batch item pad 到本 batch 最大展开长度。
-
-## Tokenizer Integration
-
-- 根据下游实际调用方式决定是否让 `Tokenizer.encode()` 直接返回 base units，或只保留显式 post-process helper。

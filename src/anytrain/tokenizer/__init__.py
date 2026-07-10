@@ -1,19 +1,6 @@
-from .codec_bpe import (
-    CodecBPE,
-    CodecBPEEvalStats,
-    CompressionStats,
-    Merge,
-    TokenCount,
-    TokenFrequencyStats,
-    TokenLengthStats,
-)
+from .codec_bpe import CodecBPE, EvalStats
 
 __all__ = [
     "CodecBPE",
-    "CodecBPEEvalStats",
-    "CompressionStats",
-    "Merge",
-    "TokenCount",
-    "TokenFrequencyStats",
-    "TokenLengthStats",
+    "EvalStats",
 ]

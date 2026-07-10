@@ -4,11 +4,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import torch
+from torch import nn
+
 from anytrain.codec.stable_codec import (
     DEFAULT_PRETRAINED_MODEL,
+    DEFAULT_SEMANTIC_VOCAB_SIZE,
     StableCodec,
 )
-from torch import nn
 
 
 class StableCodecTest(unittest.TestCase):
@@ -24,6 +26,7 @@ class StableCodecTest(unittest.TestCase):
         self.assertEqual(FakeStableCodecBackend.kwargs["device"], torch.device("cpu"))
         self.assertEqual(codec.device, torch.device("cpu"))
         self.assertEqual(codec.sample_rate, 16000)
+        self.assertEqual(codec.semantic_vocab_size, DEFAULT_SEMANTIC_VOCAB_SIZE)
 
     def test_from_pretrained_sets_posthoc_bottleneck(self):
         with patch(
@@ -112,6 +115,14 @@ class StableCodecTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "shape"):
             codec.encode(torch.zeros((2, 16)))
+
+    def test_semantic_vocab_size_reads_backend_codebook_size(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        model.codebook_size = 123
+
+        codec = StableCodec(model=model, device=torch.device("cpu"))
+
+        self.assertEqual(codec.semantic_vocab_size, 123)
 
 
 class FakeStableCodecBackend(nn.Module):

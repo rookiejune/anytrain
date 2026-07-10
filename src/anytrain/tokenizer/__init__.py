@@ -1,7 +1,6 @@
-from .codec_bpe import CodecBPE, CodecBPEEvalStats, Merge
+from .codec_bpe import CodecBPE, EvalStats
 
 __all__ = [
     "CodecBPE",
-    "CodecBPEEvalStats",
-    "Merge",
+    "EvalStats",
 ]

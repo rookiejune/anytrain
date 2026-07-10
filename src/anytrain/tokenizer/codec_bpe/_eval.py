@@ -3,38 +3,64 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
-from .corpus import _progress
-from .frame import _FrameCodec
-from .stats import CodecBPEEvalStats
-from .types import FrameInput
+from ._core import progress
+from ._frame import FrameCodec, frame_tuple
 
 LENGTH_QUANTILES = (0.5, 0.9, 0.95, 0.99)
 
 
-def _eval(
-    corpus: Iterable[Sequence[FrameInput]],
-    codec: _FrameCodec,
-    encode: Callable[[Sequence[FrameInput]], Sequence[int]],
+@dataclass(frozen=True)
+class EvalStats:
+    num_sequences: int
+    original_frames: int
+    encoded_tokens: int
+    mean_original_length: float
+    mean_encoded_length: float
+    compression_ratio: float
+    compression_factor: float
+    compression_gain: float
+    token_count_histogram: dict[int, int]
+    top_token_counts: tuple[tuple[int, int, float, int], ...]
+    num_used_tokens: int
+    vocab_coverage: float
+    entropy: float
+    used_token_length_counts: tuple[int, ...]
+    used_token_length_frequencies: tuple[float, ...]
+    vocab_token_length_counts: tuple[int, ...]
+    vocab_token_length_frequencies: tuple[float, ...]
+    mean_used_token_length: float
+    mean_vocab_token_length: float
+    max_used_token_length: int
+    max_vocab_token_length: int
+    used_token_length_quantiles: dict[str, float]
+    vocab_token_length_quantiles: dict[str, float]
+
+
+def evaluate(
+    corpus: Iterable[Sequence[Sequence[int]]],
+    codec: FrameCodec,
+    encode: Callable[[Sequence[Sequence[int]]], Sequence[int]],
     *,
     token_lengths: Mapping[int, int],
     vocab_size: int,
     show_progress: bool,
     top_k: int,
-) -> CodecBPEEvalStats:
+) -> EvalStats:
     num_sequences = 0
     original_frames = 0
     encoded_tokens = 0
     token_counts: Counter[int] = Counter()
-    for seq in _progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
-        frames = tuple(codec.normalize(frame) for frame in seq)
+    for seq in progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
+        frames = tuple(frame_tuple(frame, codec.codebook_sizes) for frame in seq)
         encoded = tuple(encode(frames))
         num_sequences += 1
         original_frames += len(frames)
         encoded_tokens += len(encoded)
         token_counts.update(encoded)
 
-    return _eval_stats(
+    return eval_stats(
         num_sequences=num_sequences,
         original_frames=original_frames,
         encoded_tokens=encoded_tokens,
@@ -45,7 +71,7 @@ def _eval(
     )
 
 
-def _eval_stats(
+def eval_stats(
     *,
     num_sequences: int,
     original_frames: int,
@@ -54,7 +80,7 @@ def _eval_stats(
     token_lengths: Mapping[int, int],
     vocab_size: int,
     top_k: int,
-) -> CodecBPEEvalStats:
+) -> EvalStats:
     if num_sequences == 0:
         raise ValueError("corpus must not be empty")
     if original_frames == 0:
@@ -89,9 +115,9 @@ def _eval_stats(
         used_counts[length] += count
         used_length_total += length * count
 
-    used_length_counts = _dense_length_counts(used_counts)
-    vocab_length_counts = _dense_length_counts(vocab_counts)
-    return CodecBPEEvalStats(
+    used_length_counts = dense_length_counts(used_counts)
+    vocab_length_counts = dense_length_counts(vocab_counts)
+    return EvalStats(
         num_sequences=num_sequences,
         original_frames=original_frames,
         encoded_tokens=encoded_tokens,
@@ -106,30 +132,30 @@ def _eval_stats(
         vocab_coverage=len(token_counts) / vocab_size,
         entropy=entropy,
         used_token_length_counts=used_length_counts,
-        used_token_length_frequencies=_length_frequencies(used_length_counts),
+        used_token_length_frequencies=length_frequencies(used_length_counts),
         vocab_token_length_counts=vocab_length_counts,
-        vocab_token_length_frequencies=_length_frequencies(vocab_length_counts),
+        vocab_token_length_frequencies=length_frequencies(vocab_length_counts),
         mean_used_token_length=used_length_total / encoded_tokens,
         mean_vocab_token_length=sum(length * count for length, count in vocab_counts.items())
         / sum(vocab_counts.values()),
         max_used_token_length=max(used_counts),
         max_vocab_token_length=max(vocab_counts),
-        used_token_length_quantiles=_length_quantiles(used_counts),
-        vocab_token_length_quantiles=_length_quantiles(vocab_counts),
+        used_token_length_quantiles=length_quantiles(used_counts),
+        vocab_token_length_quantiles=length_quantiles(vocab_counts),
     )
 
 
-def _dense_length_counts(length_counts: Mapping[int, int]) -> tuple[int, ...]:
+def dense_length_counts(length_counts: Mapping[int, int]) -> tuple[int, ...]:
     max_length = max(length_counts)
     return tuple(length_counts.get(length, 0) for length in range(max_length + 1))
 
 
-def _length_frequencies(length_counts: Sequence[int]) -> tuple[float, ...]:
+def length_frequencies(length_counts: Sequence[int]) -> tuple[float, ...]:
     total = sum(length_counts)
     return tuple(count / total for count in length_counts)
 
 
-def _length_quantiles(length_counts: Mapping[int, int]) -> dict[str, float]:
+def length_quantiles(length_counts: Mapping[int, int]) -> dict[str, float]:
     total = sum(length_counts.values())
     quantiles: dict[str, float] = {}
     for quantile in LENGTH_QUANTILES:
@@ -143,9 +169,7 @@ def _length_quantiles(length_counts: Mapping[int, int]) -> dict[str, float]:
     return quantiles
 
 
-def _normalize_top_k(top_k: int) -> int:
-    if isinstance(top_k, bool) or not isinstance(top_k, int):
-        raise TypeError("top_k must be an integer")
+def top_k(top_k: int) -> int:
     if top_k < 0:
         raise ValueError("top_k must be non-negative")
     return top_k

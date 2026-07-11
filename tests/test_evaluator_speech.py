@@ -5,8 +5,9 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
-import anytrain.evaluator.speech as speech
 import torch
+
+import anytrain.evaluator.speech as speech
 from anytrain.env import (
     ANYTRAIN_HOME_ENV,
     TORCH_HOME_ENV,

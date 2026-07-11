@@ -5,9 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import torch
+from torch import nn
+
 from anytrain.codec.longcat.assets import LongCatAssets, LongCatConfigPaths
 from anytrain.codec.longcat.codec import LongCat
-from torch import nn
 
 
 class LongCatCodecTest(unittest.TestCase):

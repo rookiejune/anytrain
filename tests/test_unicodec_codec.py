@@ -4,9 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import torch
+from torch import nn
+
 from anytrain.codec.unicodec.assets import UniCodecAssets
 from anytrain.codec.unicodec.codec import UniCodec
-from torch import nn
 
 
 class UniCodecCodecTest(unittest.TestCase):

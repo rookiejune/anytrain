@@ -41,6 +41,15 @@ class RunningAbsoluteError(EvaluatorABC):
 
 
 class EvaluatorTest(unittest.TestCase):
+    def test_evaluator_call_uses_torch_module_forward_hooks(self):
+        evaluator = ErrorEvaluator()
+        calls = []
+        evaluator.register_forward_hook(lambda module, args, output: calls.append(output))
+
+        metrics = evaluator(torch.tensor([1.0]), torch.tensor([0.0]))
+
+        self.assertEqual(calls, [metrics])
+
     def test_evaluator_group_forward_combines_metric_dicts_without_storing(self):
         prediction = torch.tensor([1.0, 3.0], requires_grad=True)
         target = torch.tensor([0.0, 1.0])
@@ -131,6 +140,10 @@ class EvaluatorTest(unittest.TestCase):
     def test_evaluator_group_rejects_separator_in_metric_names(self):
         with self.assertRaisesRegex(ValueError, "separator"):
             EvaluatorGroup({"metric/a": ErrorEvaluator()})
+
+    def test_evaluator_group_rejects_empty_metric_names(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            EvaluatorGroup({"": ErrorEvaluator()})
 
     def test_evaluator_group_rejects_non_string_metric_names(self):
         with self.assertRaisesRegex(TypeError, "string"):

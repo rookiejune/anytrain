@@ -17,7 +17,7 @@ class EvaluatorABC(nn.Module, ABC):
         super().__init__()
         self.metric_values: dict[str, list[MetricValue]] = {}
 
-    def __call__(self, *args: Any, **kwargs: Any) -> MetricDict:
+    def forward(self, *args: Any, **kwargs: Any) -> MetricDict:
         return self._validate_metric_dict(self.evaluate(*args, **kwargs), detach=False)
 
     @abstractmethod

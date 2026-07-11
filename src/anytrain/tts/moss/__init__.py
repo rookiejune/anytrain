@@ -1,6 +1,6 @@
 from .tts import (
-    DEFAULT_MODEL,
     DEFAULT_CODEC_MODEL,
+    DEFAULT_MODEL,
     DEFAULT_SAMPLE_RATE,
     MossLoadKwargs,
     MossRuntimeKwargs,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import torch
 
-from .compose import create_scheduler_from_config
 from ._shape import normalize_curve_shape
+from .compose import create_scheduler_from_config
 from .types import (
     CurveShape,
     Phase,

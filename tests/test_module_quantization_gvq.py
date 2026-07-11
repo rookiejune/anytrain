@@ -2,6 +2,7 @@ import unittest
 from dataclasses import fields
 
 import torch
+
 from anytrain.module.quantization import (
     GroupedVectorQuantizer,
     GVQConfig,

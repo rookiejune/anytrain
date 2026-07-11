@@ -2,8 +2,9 @@ import sys
 import unittest
 
 import torch
-from anytrain.framework.gan import GAN, Loss, Preset, Reduction
 from torch import nn
+
+from anytrain.framework.gan import GAN, Loss, Preset, Reduction
 
 
 class IdentityDiscriminator(nn.Module):

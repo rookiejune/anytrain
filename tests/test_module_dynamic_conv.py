@@ -1,6 +1,8 @@
 import unittest
 
 import torch
+from torch import nn
+
 from anytrain.module.dynamic_conv import (
     ADTRouter1d,
     ADTRouter2d,
@@ -15,7 +17,6 @@ from anytrain.module.dynamic_conv.shape import (
     infer_padding_2d,
     validate_dynamic_conv1d_args,
 )
-from torch import nn
 
 
 class SimpleRouter(nn.Module):

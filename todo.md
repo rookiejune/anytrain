@@ -47,11 +47,11 @@
 
 ## LongCat Audio Codec
 
-- 用真实短音频跑一次 encode/decode smoke，确认 LongCat 上游权重和 torchaudio 版本在本地 `torch2.12` 环境可用。
+- 用真实短音频跑一次 encode/decode smoke，确认 LongCat 上游权重和 torchaudio 版本在本地 `py312` 环境可用。
 
 ## UniCodec
 
-- 用真实 24 kHz 短音频跑一次 encode/decode smoke，确认 `rookiejune/UniCodec` fork、`Yidiii/UniCodec_ckpt` 权重和本地 `torch2.12` 环境可用。
+- 用真实 24 kHz 短音频跑一次 encode/decode smoke，确认 `rookiejune/UniCodec` fork、`Yidiii/UniCodec_ckpt` 权重和本地 `py312` 环境可用。
 
 ## Stable Codec
 

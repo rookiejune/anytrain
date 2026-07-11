@@ -130,8 +130,8 @@ PYTHONPATH=src python examples/tiny_regression.py
 常用检查：
 
 ```bash
-/Users/zhuyin/miniconda3/envs/torch2.12/bin/python -m pytest
-/Users/zhuyin/miniconda3/envs/torch2.12/bin/python -m ruff check .
+/Users/zhuyin/miniconda3/envs/py312/bin/python -m pytest
+/Users/zhuyin/miniconda3/envs/py312/bin/python -m ruff check .
 ```
 
 Lightning 边界见 `docs/lightning.md`，组件分层见 `docs/components.md`，总体架构见

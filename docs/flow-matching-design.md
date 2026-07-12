@@ -71,13 +71,13 @@ src/anytrain/framework/flow_matching/
 - `time.py`：训练和采样的时间网格组件。
 - `objective.py`：连续 velocity matching、离散 generalized KL 等训练目标。
 - `sampler.py`：对 Facebook solver 的薄封装，统一返回 final/intermediates。
-- `continuous.py` / `discrete.py`：组合好的 preset，服务最小闭环。
+- `continuous.py` / `discrete.py`：连续和离散 runtime，统一持有训练路径与推理配置。
 
 公开导入第一版只从 `anytrain.framework.flow_matching` 导出稳定对象；`anytrain.framework.__init__` 不默认导入该子模块。
 
 ## 组合模型
 
-第一版把 flow matching 拆成五类组件。
+公开接口分成两层：runtime 持有 `path/source/time_sampler/sampler/call_model`，objective 只负责把 runtime 的训练样本转换成 loss。底层组件仍可单独替换。
 
 ### Source
 
@@ -96,6 +96,8 @@ class Source(Protocol):
 - `MaskTokenSource(mask_id: int)`
 
 连续 source 返回和 `x_1` 同 shape/device/dtype 的 tensor。离散 source 返回 `torch.long` token tensor；mask source 的 `mask_id` 必须显式传入，不静默假设等于 `vocab_size`。
+连续 runtime 也要求显式传入的 `x_0` 与 `x_1` device/dtype 一致，并在进入 path
+前把采样时间转换到 `x_1.dtype`，避免插值结果被默认 float32 静默提升。
 
 ### Time Sampler
 
@@ -108,9 +110,10 @@ class TimeSampler(Protocol):
 
 默认实现：
 
-- 连续 preset 使用 `LogitNormalTimeSampler(mean=0.0, std=1.0, t_min=0.0, t_max=1.0)`，和采样的 `[0, 1]` 端点保持一致。
-- 离散 preset 使用 `LogitNormalTimeSampler(mean=0.0, std=1.0, t_min=0.0, t_max=1.0 - 1e-3)`，和离散 Euler sampler 的 `[0, 1 - eps]` 端点保持一致。
-- `LogitNormalTimeSampler` 经过 sigmoid 后不会实际采到端点；`t_min` / `t_max` 描述的是训练和采样约定的时间区间。不要默认把 `t_min` 设成非零值，否则推理时起点会变成未知的 `x_eps`。
+- 连续 runtime 默认使用 `UniformTimeSampler(t_min=0.0, t_max=1.0)`，对应标准 flow matching 对时间积分的均匀 Monte Carlo 估计。
+- 离散 runtime 默认使用 `UniformTimeSampler(t_min=0.0, t_max=1.0 - 1e-3)`，和离散 Euler sampler 的 `[0, 1 - eps]` 端点保持一致，并避开 generalized KL 在 `t=1` 的奇点。
+- `LogitNormalTimeSampler` 保留为显式实验选项。它会改变 objective 的时间权重，不作为未配套 importance weighting 或实验依据时的通用默认值。
+- `t_min` / `t_max` 描述训练和采样约定的时间区间。不要默认把 `t_min` 设成非零值，否则推理时起点会变成未知的 `x_eps`。
 
 ### Objective
 
@@ -120,25 +123,25 @@ objective 负责把 `x_0`、`x_1`、`t` 和模型预测变成 scalar loss：
 loss = objective(model, x_1, x_0=None, **extras)
 ```
 
-连续 preset：
+连续 runtime：
 
 - path：`CondOTProbPath`
 - source：`GaussianSource`
-- time：`LogitNormalTimeSampler`
+- time：`UniformTimeSampler`
 - loss：`mse_loss(model(x_t, t, **extras), dx_t)`
 
-离散 preset：
+离散 runtime：
 
 - path：`MixtureDiscreteProbPath(PolynomialConvexScheduler(n=2.0))`
 - source：`UniformTokenSource` 或 `MaskTokenSource`
-- time：`LogitNormalTimeSampler(t_min=0.0, t_max=1.0 - 1e-3)`
+- time：`UniformTimeSampler(t_min=0.0, t_max=1.0 - 1e-3)`
 - loss：`MixturePathGeneralizedKL`
 - `x_0` / `x_1` 必须是 `torch.long` token tensor，不做静默 dtype 转换。
 - 模型输出 logits，objective 内部不自动做 sampling 或 argmax。
 
 `objective` 返回必须是 scalar Tensor。额外日志不在第一版塞进返回值；后续如果需要，可加 `FlowLossOutput(loss, details)`，但不能影响 `backward()` 主路径。
 
-`Objective` 是底层训练目标入口；`FlowMatcher` 是 preset 组合器入口。两者不要互相作为构造参数混用：需要完全自定义训练目标时，直接使用 objective；需要默认训练/采样组合时，使用 matcher。
+continuous 和 discrete objective 都只接收对应 runtime，避免再次传入 path、source、time sampler 或 model caller。
 
 ### Model Caller
 
@@ -159,11 +162,13 @@ def call_model(model: nn.Module, x_t: Tensor, t: Tensor, extras: Mapping[str, ob
 
 ### Solver
 
-solver 负责 sampling：
+runtime 通过 sampler 完成 sampling：
 
 ```python
-output = sampler.sample(model, x_0, **extras)
+output = runtime.sample(model, x_0, **extras)
 ```
+
+sampler 只保存 method、NFE、step 数等数值求解策略；path、vocab size 和 model caller 由 runtime 在调用时传入，不在多个对象中重复保存。
 
 建议统一返回：
 
@@ -190,30 +195,32 @@ prob = model(x_t, t, **extras).softmax(dim=-1)
 
 离散 sampler 的默认时间网格是 `[0, 1 - eps]`，和离散训练 objective 保持同一个有效时间区间。`vocab_size` 表示目标 token 空间大小；mask token 是否属于模型输入 embedding，由下游模型自己处理。
 
-## Continuous runtime / objective / sampler
+## Runtime / objective
 
-continuous flow 不提供 matcher preset。`path/source/time_sampler` 只由 runtime 持有；训练 objective 和 generation sampler 分别组合 runtime / sampler：
-
-```python
-runtime = ContinuousFlowRuntime()
-objective = ContinuousVelocityObjective(runtime=runtime)
-sampler = ODESampler()
-
-loss = objective(model, x_1, condition=condition)
-x_0 = runtime.source_like(x_1)
-samples = sampler.sample(model, x_0, condition=condition)
-```
-
-## Discrete 便利封装
+continuous 和 discrete 使用同一套调用方式：
 
 ```python
-matcher = DiscreteFlowMatcher(vocab_size=1024, source=MaskTokenSource(mask_id=1024))
-loss = matcher.loss(model, tokens, condition=condition)
-x_0 = matcher.source.sample_like(tokens)
-samples = matcher.sample(model, x_0, condition=condition)
+continuous = ContinuousFlowRuntime(
+    sampler=ODESampler(return_intermediates=False),
+)
+continuous_objective = ContinuousVelocityObjective(continuous)
+
+continuous_loss = continuous_objective(model, x_1, condition=condition)
+continuous_x_0 = continuous.source_like(x_1)
+continuous_sample = continuous.sample(model, continuous_x_0, condition=condition)
+
+discrete = DiscreteFlowRuntime(
+    vocab_size=1024,
+    source=MaskTokenSource(mask_id=1024),
+)
+discrete_objective = DiscreteGeneralizedKLObjective(discrete)
+
+discrete_loss = discrete_objective(model, tokens, condition=condition)
+discrete_x_0 = discrete.source_like(tokens)
+discrete_sample = discrete.sample(model, discrete_x_0, condition=condition)
 ```
 
-`DiscreteFlowMatcher` 只是组合器，不继承或替代下游 `LightningModule`。用户也可以绕过 preset，单独组合 source、objective 和 sampler。
+runtime 不继承或替代下游 `LightningModule`。下游需要 mask 或其它 reduction 时，可以直接使用 `runtime.training_sample()` 实现任务 objective。
 
 ## 依赖策略
 
@@ -237,7 +244,8 @@ flow = ["flow_matching"]
 from anytrain.framework.flow_matching import (
     ContinuousFlowRuntime,
     ContinuousVelocityObjective,
-    DiscreteFlowMatcher,
+    DiscreteFlowRuntime,
+    DiscreteGeneralizedKLObjective,
     FlowSampleOutput,
     GaussianSource,
     LogitNormalTimeSampler,
@@ -250,7 +258,7 @@ from anytrain.framework.flow_matching import (
 
 命名约定：
 
-- 组合器用 `FlowMatcher`，表示训练目标和采样器的组合。
+- 组合器用 `FlowRuntime`，表示一套训练路径和推理配置。
 - 训练目标用 `Objective`，避免和 `torch.nn.Module.loss` 或 `anytrain.loss` 混淆。
 - sampling helper 用 `Sampler`，不叫 `Solver`；`Solver` 特指 Facebook 原始 solver。
 - `nfe` 可以保留，因为 flow matching 论文和 solver API 都常用这个名字。
@@ -281,7 +289,7 @@ from anytrain.framework.flow_matching import (
 
 - 实现 `DiscreteGeneralizedKLObjective`。
 - 实现 `DiscreteEulerSampler`。
-- 实现 `DiscreteFlowMatcher` preset。
+- 实现 `DiscreteFlowRuntime`。
 - 增加 CPU toy token model 测试：uniform/mask source、loss finite、sample shape 正确。
 
 ### P4: 文档示例
@@ -295,7 +303,7 @@ from anytrain.framework.flow_matching import (
 - 不依赖 audio/text/codec 包。
 - `import anytrain` 和 `import anytrain.framework` 不触发 `flow_matching` import。
 - 连续和离散目标都能在 CPU 上用 toy model 跑通 forward/backward。
-- source/time/objective/sampler 能单独构造，也能通过 preset 组合。
+- continuous/discrete runtime 与 objective 使用同一套调用约定。
 - 缺 optional 依赖时错误信息包含安装方式。
 - 文档示例和测试使用同一套调用约定。
 
@@ -307,11 +315,11 @@ from anytrain.framework.flow_matching import (
 
 ### 过度封装
 
-第一版只封 source、time、objective、sampler 和 preset，不新增 registry、配置装配或 Lightning 基类。真实项目需要复杂配置时，由下游项目自行选择 Hydra/pydantic/普通 Python。
+第一版只封 source、time、runtime、objective 和 sampler，不新增 registry、配置装配或 Lightning 基类。真实项目需要复杂配置时，由下游项目自行选择 Hydra/pydantic/普通 Python。
 
 ### 离散 mask token 语义
 
-mask token 是输入状态的一部分，不一定属于目标 vocabulary。`MaskTokenSource` 显式接收 `mask_id`，`DiscreteFlowMatcher` 显式接收 `vocab_size`，避免把 `mask_id == vocab_size` 写成隐式规则。
+mask token 是输入状态的一部分，不一定属于目标 vocabulary。`MaskTokenSource` 显式接收 `mask_id`，`DiscreteFlowRuntime` 显式接收 `vocab_size`，避免把 `mask_id == vocab_size` 写成隐式规则。
 
 ### 额外日志需求
 

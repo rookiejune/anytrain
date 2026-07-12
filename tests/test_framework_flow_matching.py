@@ -55,19 +55,22 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertTrue((t >= 0.2).all())
         self.assertTrue((t <= 0.3).all())
 
-    def test_default_time_sampler_is_logit_normal(self):
+    def test_default_time_sampler_is_uniform(self):
         from anytrain.framework.flow_matching import (
             ContinuousFlowRuntime,
-            DiscreteFlowMatcher,
-            LogitNormalTimeSampler,
+            DiscreteFlowRuntime,
+            DiscreteGeneralizedKLObjective,
+            UniformTimeSampler,
         )
 
-        self.assertIsInstance(ContinuousFlowRuntime().time_sampler, LogitNormalTimeSampler)
-        self.assertIsInstance(DiscreteFlowMatcher(6).time_sampler, LogitNormalTimeSampler)
+        discrete = DiscreteFlowRuntime(6)
+        self.assertIsInstance(ContinuousFlowRuntime().time_sampler, UniformTimeSampler)
+        self.assertIsInstance(discrete.time_sampler, UniformTimeSampler)
+        self.assertIs(DiscreteGeneralizedKLObjective(discrete).runtime, discrete)
         self.assertEqual(ContinuousFlowRuntime().time_sampler.t_min, 0.0)
         self.assertEqual(ContinuousFlowRuntime().time_sampler.t_max, 1.0)
-        self.assertEqual(DiscreteFlowMatcher(6).time_sampler.t_min, 0.0)
-        self.assertLess(DiscreteFlowMatcher(6).time_sampler.t_max, 1.0)
+        self.assertEqual(discrete.time_sampler.t_min, 0.0)
+        self.assertLess(discrete.time_sampler.t_max, 1.0)
 
     def test_continuous_loss_backward_and_sample_shape(self):
         from anytrain.framework.flow_matching import (
@@ -87,9 +90,9 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 return self.proj(x_t) + scale
 
         model = ToyVelocity()
-        runtime = ContinuousFlowRuntime()
-        objective = ContinuousVelocityObjective(runtime=runtime)
         sampler = ODESampler()
+        runtime = ContinuousFlowRuntime(sampler=sampler)
+        objective = ContinuousVelocityObjective(runtime=runtime)
         x_1 = torch.randn(4, 3, 2)
 
         loss = objective(model, x_1, condition=torch.zeros(4, 1))
@@ -99,13 +102,21 @@ class FlowMatchingComponentTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(loss))
         self.assertIsNotNone(model.proj.weight.grad)
 
-        output = sampler.sample(model, torch.randn(4, 3, 2), condition=torch.zeros(4, 1))
+        self.assertIs(runtime.sampler, sampler)
+        output = runtime.sample(
+            model,
+            torch.randn(4, 3, 2),
+            condition=torch.zeros(4, 1),
+        )
         self.assertEqual(output.final.shape, x_1.shape)
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
 
     def test_continuous_loss_accepts_custom_masked_loss(self):
-        from anytrain.framework.flow_matching import ContinuousVelocityObjective
+        from anytrain.framework.flow_matching import (
+            ContinuousFlowRuntime,
+            ContinuousVelocityObjective,
+        )
 
         class ZeroVelocity(nn.Module):
             def forward(self, x_t, t, mask=None):
@@ -119,7 +130,10 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 weights.sum() * prediction.size(-1)
             )
 
-        objective = ContinuousVelocityObjective(loss_fn=masked_loss)
+        objective = ContinuousVelocityObjective(
+            ContinuousFlowRuntime(),
+            loss_fn=masked_loss,
+        )
         x_1 = torch.tensor(
             [
                 [[1.0, 2.0], [10.0, 20.0]],
@@ -134,8 +148,26 @@ class FlowMatchingComponentTest(unittest.TestCase):
         expected = torch.tensor([1.0, 2.0, 3.0, 4.0]).square().mean()
         self.assertTrue(torch.equal(loss, expected))
 
+    def test_continuous_training_sample_preserves_input_dtype(self):
+        from anytrain.framework.flow_matching import ContinuousFlowRuntime
+
+        runtime = ContinuousFlowRuntime()
+        x_1 = torch.randn(2, 3, dtype=torch.bfloat16)
+
+        sample = runtime.training_sample(x_1)
+
+        self.assertEqual(sample.x_t.dtype, x_1.dtype)
+        self.assertEqual(sample.velocity.dtype, x_1.dtype)
+        self.assertEqual(sample.t.dtype, x_1.dtype)
+
+        with self.assertRaisesRegex(TypeError, "same dtype"):
+            runtime.training_sample(x_1, x_0=torch.zeros_like(x_1, dtype=torch.float32))
+
     def test_continuous_custom_loss_must_return_scalar(self):
-        from anytrain.framework.flow_matching import ContinuousVelocityObjective
+        from anytrain.framework.flow_matching import (
+            ContinuousFlowRuntime,
+            ContinuousVelocityObjective,
+        )
 
         class ZeroVelocity(nn.Module):
             def forward(self, x_t, t):
@@ -146,13 +178,16 @@ class FlowMatchingComponentTest(unittest.TestCase):
             del extras
             return (prediction - target).square().mean(dim=-1)
 
-        objective = ContinuousVelocityObjective(loss_fn=vector_loss)
+        objective = ContinuousVelocityObjective(
+            ContinuousFlowRuntime(),
+            loss_fn=vector_loss,
+        )
 
         with self.assertRaisesRegex(ValueError, "scalar"):
             objective(ZeroVelocity(), torch.randn(2, 3, 4))
 
-    def test_ode_sampler_expands_scalar_time_to_batch(self):
-        from anytrain.framework.flow_matching import ODESampler
+    def test_continuous_runtime_uses_model_caller_and_expands_scalar_time(self):
+        from anytrain.framework.flow_matching import ContinuousFlowRuntime, ODESampler
 
         class RecordingModel(nn.Module):
             def __init__(self):
@@ -171,15 +206,27 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 del kwargs
                 return self.model(x=x_init, t=torch.tensor(0.5, device=x_init.device))
 
+        calls = []
+
+        def call_model(model, x_t, t, extras):
+            calls.append(extras)
+            return model(x_t, t)
+
         model = RecordingModel()
         sampler = ODESampler(solver_factory=FakeSolver, return_intermediates=False)
-        output = sampler.sample(model, torch.zeros(4, 3))
+        runtime = ContinuousFlowRuntime(sampler=sampler, call_model=call_model)
+        output = runtime.sample(model, torch.zeros(4, 3), condition=torch.ones(4, 1))
 
         self.assertEqual(model.t_shape, (4,))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("condition", calls[0])
         self.assertEqual(output.final.shape, (4, 3))
 
     def test_discrete_loss_backward_and_sample_shape(self):
-        from anytrain.framework.flow_matching import DiscreteFlowMatcher
+        from anytrain.framework.flow_matching import (
+            DiscreteFlowRuntime,
+            DiscreteGeneralizedKLObjective,
+        )
 
         class ToyTokenFlow(nn.Module):
             def __init__(self, vocab_size: int):
@@ -194,35 +241,41 @@ class FlowMatchingComponentTest(unittest.TestCase):
 
         vocab_size = 6
         model = ToyTokenFlow(vocab_size)
-        matcher = DiscreteFlowMatcher(vocab_size)
+        runtime = DiscreteFlowRuntime(vocab_size)
+        objective = DiscreteGeneralizedKLObjective(runtime)
         x_1 = torch.randint(0, vocab_size, (4, 5))
 
-        loss = matcher.loss(model, x_1, condition=torch.zeros(4, 1))
+        loss = objective(model, x_1, condition=torch.zeros(4, 1))
         loss.backward()
 
         self.assertEqual(loss.ndim, 0)
         self.assertTrue(torch.isfinite(loss))
         self.assertIsNotNone(model.head.weight.grad)
 
-        output = matcher.sample(model, torch.randint(0, vocab_size, (4, 5)))
+        output = runtime.sample(model, torch.randint(0, vocab_size, (4, 5)))
         self.assertEqual(output.final.shape, x_1.shape)
         self.assertIsNotNone(output.states)
         self.assertIsNotNone(output.time_grid)
 
     def test_discrete_inputs_must_be_long(self):
         from anytrain.framework.flow_matching import (
-            DiscreteEulerSampler,
-            DiscreteFlowMatcher,
+            DiscreteFlowRuntime,
+            DiscreteGeneralizedKLObjective,
         )
 
-        matcher = DiscreteFlowMatcher(6)
+        runtime = DiscreteFlowRuntime(6)
+        objective = DiscreteGeneralizedKLObjective(runtime)
 
         with self.assertRaisesRegex(TypeError, "x_1"):
-            matcher.loss(nn.Identity(), torch.randn(2, 3))
+            objective(nn.Identity(), torch.randn(2, 3))
         with self.assertRaisesRegex(TypeError, "x_0"):
-            matcher.loss(nn.Identity(), torch.zeros(2, 3, dtype=torch.long), x_0=torch.randn(2, 3))
+            objective(
+                nn.Identity(),
+                torch.zeros(2, 3, dtype=torch.long),
+                x_0=torch.randn(2, 3),
+            )
         with self.assertRaisesRegex(TypeError, "x_0"):
-            DiscreteEulerSampler(6).sample(nn.Identity(), torch.randn(2, 3))
+            runtime.sample(nn.Identity(), torch.randn(2, 3))
 
 
 if __name__ == "__main__":

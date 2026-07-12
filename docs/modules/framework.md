@@ -41,7 +41,12 @@ src/anytrain/framework/
 
 ```python
 from anytrain.framework.gan import GAN, Loss, Preset, Reduction
-from anytrain.framework.flow_matching import ContinuousFlowRuntime, ContinuousVelocityObjective
+from anytrain.framework.flow_matching import (
+    ContinuousFlowRuntime,
+    ContinuousVelocityObjective,
+    DiscreteFlowRuntime,
+    DiscreteGeneralizedKLObjective,
+)
 ```
 
 ## GAN

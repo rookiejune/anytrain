@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import torch
 from torch import Tensor, nn
 
-from ._deps import MixtureDiscreteProbPath
-from .objective import DiscreteGeneralizedKLObjective
+from ._deps import DiscretePathSample, MixtureDiscreteProbPath, PolynomialConvexScheduler
+from ._runtime import require_batch, require_pair
 from .sampler import DiscreteEulerSampler
 from .source import UniformTokenSource
-from .time import DEFAULT_TIME_EPS, LogitNormalTimeSampler
+from .time import DEFAULT_TIME_EPS, UniformTimeSampler
 from .types import FlowSampleOutput, ModelCaller, Source, TimeSampler, default_call_model
 
 
-class DiscreteFlowMatcher(nn.Module):
+class DiscreteFlowRuntime:
     def __init__(
         self,
         vocab_size: int,
@@ -21,38 +22,41 @@ class DiscreteFlowMatcher(nn.Module):
         sampler: DiscreteEulerSampler | None = None,
         call_model: ModelCaller = default_call_model,
     ):
-        super().__init__()
         if vocab_size <= 0:
             raise ValueError(f"vocab_size must be positive, got {vocab_size}.")
 
         self.vocab_size = vocab_size
+        self.path = (
+            MixtureDiscreteProbPath(PolynomialConvexScheduler(n=2.0)) if path is None else path
+        )
         self.source = UniformTokenSource(vocab_size) if source is None else source
         self.time_sampler = (
-            LogitNormalTimeSampler(t_max=1.0 - DEFAULT_TIME_EPS)
+            UniformTimeSampler(t_max=1.0 - DEFAULT_TIME_EPS)
             if time_sampler is None
             else time_sampler
         )
-        self.objective = DiscreteGeneralizedKLObjective(
-            vocab_size,
-            path=path,
-            source=self.source,
-            time_sampler=self.time_sampler,
-            call_model=call_model,
-        )
-        self.sampler = (
-            DiscreteEulerSampler(vocab_size, path=self.objective.path, call_model=call_model)
-            if sampler is None
-            else sampler
-        )
+        self.sampler = DiscreteEulerSampler() if sampler is None else sampler
+        self.call_model = call_model
 
-    def loss(
+    def source_like(self, x_1: Tensor) -> Tensor:
+        return self.source.sample_like(x_1)
+
+    def training_sample(
         self,
-        model: nn.Module,
         x_1: Tensor,
+        *,
         x_0: Tensor | None = None,
-        **model_extras: object,
-    ) -> Tensor:
-        return self.objective(model, x_1, x_0=x_0, **model_extras)
+    ) -> DiscretePathSample:
+        require_batch(x_1, "x_1")
+        if x_1.dtype != torch.long:
+            raise TypeError(f"x_1 must have dtype torch.long, got {x_1.dtype}.")
+        if x_0 is None:
+            x_0 = self.source_like(x_1)
+        elif x_0.dtype != torch.long:
+            raise TypeError(f"x_0 must have dtype torch.long, got {x_0.dtype}.")
+        require_pair(x_0, x_1)
+        t = self.time_sampler.sample(x_1.shape[0], x_1.device)
+        return self.path.sample(x_0=x_0, x_1=x_1, t=t)
 
     def sample(
         self,
@@ -60,7 +64,14 @@ class DiscreteFlowMatcher(nn.Module):
         x_0: Tensor,
         **model_extras: object,
     ) -> FlowSampleOutput:
-        return self.sampler.sample(model, x_0, **model_extras)
+        return self.sampler.sample(
+            model,
+            x_0,
+            vocab_size=self.vocab_size,
+            path=self.path,
+            call_model=self.call_model,
+            **model_extras,
+        )
 
 
-__all__ = ["DiscreteFlowMatcher"]
+__all__ = ["DiscreteFlowRuntime"]

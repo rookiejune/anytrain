@@ -1,7 +1,7 @@
 """Composable wrappers around Facebook flow_matching."""
 
 from .continuous import ContinuousFlowRuntime
-from .discrete import DiscreteFlowMatcher
+from .discrete import DiscreteFlowRuntime
 from .objective import (
     ContinuousVelocityObjective,
     DiscreteGeneralizedKLObjective,
@@ -27,7 +27,7 @@ __all__ = [
     "ContinuousVelocityObjective",
     "DEFAULT_TIME_EPS",
     "DiscreteEulerSampler",
-    "DiscreteFlowMatcher",
+    "DiscreteFlowRuntime",
     "DiscreteGeneralizedKLObjective",
     "FlowSampleOutput",
     "FlowLossFn",

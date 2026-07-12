@@ -9,7 +9,6 @@ from ._deps import (
     MixtureDiscreteEulerSolver,
     MixtureDiscreteProbPath,
     ODESolver,
-    PolynomialConvexScheduler,
 )
 from .time import DEFAULT_TIME_EPS
 from .types import FlowSampleOutput, ModelCaller, default_call_model
@@ -62,7 +61,6 @@ class ODESampler:
         self,
         *,
         solver_factory: Callable[[nn.Module], ODESolver] = ODESolver,
-        call_model: ModelCaller = default_call_model,
         method: str = "midpoint",
         nfe: int = 20,
         num_steps: int = 10,
@@ -74,7 +72,6 @@ class ODESampler:
             raise ValueError(f"num_steps must be at least 2, got {num_steps}.")
 
         self.solver_factory = solver_factory
-        self.call_model = call_model
         self.method = method
         self.nfe = nfe
         self.num_steps = num_steps
@@ -87,9 +84,10 @@ class ODESampler:
         x_0: Tensor,
         *,
         time_grid: Tensor | None = None,
+        call_model: ModelCaller = default_call_model,
         **model_extras: object,
     ) -> FlowSampleOutput:
-        adapter = _ModelAdapter(model, self.call_model, dict(model_extras))
+        adapter = _ModelAdapter(model, call_model, dict(model_extras))
         solver = self.solver_factory(adapter)
         if time_grid is None:
             time_grid = torch.linspace(0, 1, self.num_steps, device=x_0.device)
@@ -114,19 +112,14 @@ class ODESampler:
 class DiscreteEulerSampler:
     def __init__(
         self,
-        vocab_size: int,
         *,
-        path: MixtureDiscreteProbPath | None = None,
         solver_factory: Callable[..., MixtureDiscreteEulerSolver] = MixtureDiscreteEulerSolver,
-        call_model: ModelCaller = default_call_model,
         nfe: int = 64,
         num_steps: int = 10,
         eps: float = DEFAULT_TIME_EPS,
         return_intermediates: bool = True,
         verbose: bool = False,
     ):
-        if vocab_size <= 0:
-            raise ValueError(f"vocab_size must be positive, got {vocab_size}.")
         if nfe <= 0:
             raise ValueError(f"nfe must be positive, got {nfe}.")
         if num_steps < 2:
@@ -134,12 +127,7 @@ class DiscreteEulerSampler:
         if not 0 <= eps < 1:
             raise ValueError(f"eps must be in [0, 1), got {eps}.")
 
-        self.vocab_size = vocab_size
-        self.path = (
-            MixtureDiscreteProbPath(PolynomialConvexScheduler(n=2.0)) if path is None else path
-        )
         self.solver_factory = solver_factory
-        self.call_model = call_model
         self.nfe = nfe
         self.num_steps = num_steps
         self.eps = eps
@@ -151,6 +139,10 @@ class DiscreteEulerSampler:
         self,
         model: nn.Module,
         x_0: Tensor,
+        *,
+        vocab_size: int,
+        path: MixtureDiscreteProbPath,
+        call_model: ModelCaller = default_call_model,
         **model_extras: object,
     ) -> FlowSampleOutput:
         if x_0.dtype != torch.long:
@@ -170,13 +162,13 @@ class DiscreteEulerSampler:
 
             merged = dict(extras)
             merged.update(solver_extras)
-            logits = self.call_model(model, x, _expand_time(t, x), merged)
+            logits = call_model(model, x, _expand_time(t, x), merged)
             return logits.softmax(dim=-1)
 
         solver = self.solver_factory(
             prob_fn,
-            path=self.path,
-            vocabulary_size=self.vocab_size,
+            path=path,
+            vocabulary_size=vocab_size,
         )
         time_grid = torch.linspace(0, 1 - self.eps, self.num_steps, device=x_0.device)
         states = solver.sample(

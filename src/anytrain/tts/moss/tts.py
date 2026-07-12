@@ -13,10 +13,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
-from typing import Any, Protocol, TypedDict, Unpack, cast, overload
+from typing import Any, Protocol, TypedDict, cast, overload
 
 import torch
 from torch import Tensor, nn
+from typing_extensions import Unpack
 
 from anytrain._compat import strict_zip
 from anytrain.tts import (
@@ -24,10 +25,10 @@ from anytrain.tts import (
     TTSOptions,
     TTSOutput,
     validate_text,
-    waveform_duration,
 )
 
 from ._deps import load_transformers_auto_model_class, load_transformers_auto_processor_class
+from ._output import processor_output, processor_outputs
 
 DEFAULT_MODEL = "OpenMOSS-Team/MOSS-TTS-v1.5"
 DEFAULT_CODEC_MODEL = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
@@ -260,12 +261,13 @@ class MossTTS:
             options,
             [None if reference_audio_path is None else _audio_reference(reference_audio_path)],
         )
-        return _normalize_processor_output(
+        return processor_output(
             decoded,
             sample_rate=_processor_sample_rate(
                 self.processor,
                 options.sample_rate or self.sample_rate,
             ),
+            backend=DEFAULT_MODEL,
         )
 
     def _synthesize_batch(
@@ -280,13 +282,14 @@ class MossTTS:
             options,
             _audio_references(reference_audio_paths, expected_count=len(texts)),
         )
-        return _normalize_processor_outputs(
+        return processor_outputs(
             decoded,
             expected_count=len(texts),
             sample_rate=_processor_sample_rate(
                 self.processor,
                 options.sample_rate or self.sample_rate,
             ),
+            backend=DEFAULT_MODEL,
         )
 
     def _generate_for_texts(
@@ -403,7 +406,7 @@ def _processor_message_kwargs(
 
 
 def _audio_reference(value: AudioReference) -> str:
-    if not isinstance(value, str | PathLike):
+    if not isinstance(value, (str, PathLike)):
         raise TypeError("reference audio path must be a string or path-like object.")
     return str(value)
 
@@ -415,7 +418,7 @@ def _audio_references(
 ) -> list[str | None]:
     if values is None:
         return [None] * expected_count
-    if isinstance(values, str | bytes | PathLike):
+    if isinstance(values, (str, bytes, PathLike)):
         raise TypeError("reference_audio_paths must be a sequence of paths.")
     if len(values) != expected_count:
         raise ValueError(
@@ -483,129 +486,6 @@ def _processor_batch_inputs(batch: object, device: torch.device) -> dict[str, Te
     if "input_ids" not in inputs:
         raise KeyError("processor output must include `input_ids`.")
     return inputs
-
-
-def _normalize_processor_output(value: object, *, sample_rate: int) -> TTSOutput:
-    if isinstance(value, TTSOutput):
-        return value
-    message = _first_processor_message(value)
-    return _normalize_processor_message(message, sample_rate=sample_rate)
-
-
-def _normalize_processor_outputs(
-    value: object,
-    *,
-    expected_count: int,
-    sample_rate: int,
-) -> list[TTSOutput]:
-    messages = _processor_messages(value, expected_count=expected_count)
-    return [_normalize_processor_message(message, sample_rate=sample_rate) for message in messages]
-
-
-def _processor_messages(value: object, *, expected_count: int) -> list[object]:
-    if isinstance(value, TTSOutput):
-        if expected_count == 1:
-            return [value]
-        raise ValueError("processor decode returned one output for a text batch.")
-    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
-        if expected_count == 1:
-            return [value]
-        raise TypeError("processor decode output for a text batch must be a sequence.")
-    if len(value) != expected_count:
-        raise ValueError(
-            "processor decode output length must match text batch length: "
-            f"got {len(value)}, expected {expected_count}."
-        )
-    return list(value)
-
-
-def _normalize_processor_message(message: object, *, sample_rate: int) -> TTSOutput:
-    if isinstance(message, TTSOutput):
-        return message
-    audio = _first_processor_audio(message)
-    return _normalize_output(
-        {
-            "waveform": audio,
-            "sample_rate": sample_rate,
-            "meta": {"backend": DEFAULT_MODEL},
-        },
-        sample_rate=sample_rate,
-    )
-
-
-def _first_processor_message(value: object) -> object:
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
-        if len(value) == 0:
-            raise ValueError("processor decode returned no messages.")
-        return value[0]
-    return value
-
-
-def _first_processor_audio(message: object) -> Tensor:
-    audio_codes_list = getattr(message, "audio_codes_list", None)
-    if audio_codes_list is not None:
-        if len(audio_codes_list) == 0:
-            raise ValueError("processor message returned no audio.")
-        value = audio_codes_list[0]
-        if isinstance(value, Tensor):
-            return value
-    if isinstance(message, Mapping):
-        for key in ("audio", "waveform"):
-            value = message.get(key)
-            if isinstance(value, Tensor):
-                return value
-        audio_codes_list = message.get("audio_codes_list")
-        if isinstance(audio_codes_list, Sequence) and len(audio_codes_list) > 0:
-            value = audio_codes_list[0]
-            if isinstance(value, Tensor):
-                return value
-    raise TypeError("processor decode output must include audio.")
-
-
-def _normalize_output(value: object, *, sample_rate: int) -> TTSOutput:
-    if isinstance(value, TTSOutput):
-        return value
-    if isinstance(value, Tensor):
-        waveform = _normalize_waveform(value)
-        return TTSOutput(
-            waveform=waveform,
-            sample_rate=sample_rate,
-            duration=waveform_duration(waveform, sample_rate),
-        )
-    if isinstance(value, Mapping):
-        waveform = _normalize_waveform(_waveform_value(value))
-        output_sample_rate = int(value.get("sample_rate", sample_rate))
-        duration = float(value.get("duration", waveform_duration(waveform, output_sample_rate)))
-        meta = value.get("meta", {})
-        if not isinstance(meta, Mapping):
-            raise TypeError("output meta must be a mapping when set.")
-        return TTSOutput(
-            waveform=waveform,
-            sample_rate=output_sample_rate,
-            duration=duration,
-            meta=meta,
-        )
-    raise TypeError("processor decode output must be TTSOutput, a Tensor, or a mapping.")
-
-
-def _normalize_waveform(waveform: Tensor) -> Tensor:
-    if not isinstance(waveform, Tensor):
-        raise TypeError("waveform must be a torch.Tensor.")
-    wave = waveform.detach()
-    wave = wave.float() if not torch.is_floating_point(wave) else wave.to(dtype=torch.float32)
-    if wave.ndim == 1:
-        wave = wave.unsqueeze(0)
-    if wave.ndim != 2:
-        raise ValueError("waveform must have shape [time] or [channels, time].")
-    return wave.contiguous()
-
-
-def _waveform_value(value: Mapping[object, object]) -> Tensor:
-    for key in ("waveform", "audio"):
-        item = value.get(key)
-        if isinstance(item, Tensor):
-            return item
-    raise KeyError("processor decode mapping must include `waveform` or `audio`.")
 
 
 def _processor_sample_rate(processor: _Processor, fallback: int) -> int:
@@ -691,7 +571,7 @@ def _positive_int(value: object, name: str) -> int:
 
 
 def _positive_float(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a number.")
     resolved = float(value)
     if resolved <= 0:
@@ -711,7 +591,7 @@ def _hashable_mapping(value: Mapping[str, object]) -> dict[str, object]:
 
 
 def _hashable_value(value: object) -> object:
-    if value is None or isinstance(value, bool | int | float | str):
+    if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Path):
         return str(value)
@@ -720,7 +600,7 @@ def _hashable_value(value: object) -> object:
             str(key): _hashable_value(item)
             for key, item in sorted(value.items(), key=lambda entry: str(entry[0]))
         }
-    if isinstance(value, tuple | list):
+    if isinstance(value, (tuple, list)):
         return [_hashable_value(item) for item in value]
     return str(value)
 

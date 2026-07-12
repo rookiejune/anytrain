@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from enum import auto
-from typing import TypeGuard
+
+from typing_extensions import TypeGuard
 
 from anytrain._compat import StrEnum
 

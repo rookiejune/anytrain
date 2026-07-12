@@ -3,6 +3,7 @@ import warnings
 from dataclasses import fields
 
 import torch
+
 from anytrain.module.quantization import (
     DEFAULT_FSQ_LEVELS,
     FiniteScalarQuantizer,

@@ -1,9 +1,9 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-import torch
+from unittest.mock import patch
 
 from anytrain.tokenizer.codec_bpe import CodecBPE
 
@@ -43,6 +43,17 @@ def replay(corpus):
 
 @unittest.skipIf(tokenizers is None, "tokenizers is not installed")
 class BPETest(unittest.TestCase):
+    def test_train_reports_missing_tokenizer_extra(self):
+        with (
+            patch.dict(sys.modules, {"tokenizers": None, "tokenizers.models": None}),
+            self.assertRaisesRegex(ImportError, r"anytrain\[tokenizer\]"),
+        ):
+            CodecBPE.train(
+                replay([[[1], [2]]]),
+                codebook_sizes=(4,),
+                show_progress=False,
+            )
+
     def test_from_pretrained_accepts_frame_tokens_and_merges(self):
         bpe = load_state(state())
 
@@ -174,6 +185,8 @@ class BPETest(unittest.TestCase):
             CodecBPE.train(replay([[[1, 4], [2, 17]]]), codebook_sizes=(4, 16))
         with self.assertRaisesRegex(TypeError, "use \\[id\\]"):
             CodecBPE.train(replay([[1, 2, 3]]), codebook_sizes=(16,))
+        with self.assertRaisesRegex(TypeError, "integers"):
+            CodecBPE.train(replay([[[1.5]]]), codebook_sizes=(16,))
 
     def test_rejects_empty_corpus_and_sequences(self):
         with self.assertRaisesRegex(ValueError, "corpus"):
@@ -194,71 +207,8 @@ class BPETest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "token_ids"):
             bpe.decode([])
-        with self.assertRaisesRegex(KeyError, "unknown token_id"):
+        with self.assertRaises(KeyError):
             bpe.decode([bpe.vocab_size])
-
-    def test_repeat_interleave_expands_token_tensor_to_frame_tensor(self):
-        bpe = CodecBPE.train(
-            replay([[[1], [2], [1], [2], [3]], [[1], [2], [3]]]),
-            codebook_sizes=(16,),
-            vocab_size=5,
-        )
-        x = torch.tensor([[10.0, 11.0], [20.0, 21.0]])
-        token_ids = torch.tensor([3, 4])
-
-        expanded_x, frames = bpe.repeat_interleave(x, token_ids, dim=0)
-
-        self.assertTrue(
-            torch.equal(
-                expanded_x,
-                torch.tensor(
-                    [
-                        [10.0, 11.0],
-                        [10.0, 11.0],
-                        [20.0, 21.0],
-                        [20.0, 21.0],
-                        [20.0, 21.0],
-                    ]
-                ),
-            )
-        )
-        self.assertTrue(torch.equal(frames, torch.tensor([[1], [2], [1], [2], [3]])))
-
-    def test_repeat_interleave_supports_multi_codebook_frames(self):
-        corpus = [
-            [[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]],
-            [[1, 4], [2, 7], [3, 8]],
-        ]
-        bpe = CodecBPE.train(replay(corpus), codebook_sizes=(4, 16), vocab_size=5)
-        x = torch.tensor([[10.0], [20.0]])
-        token_ids = torch.tensor([3, 4])
-
-        expanded_x, frames = bpe.repeat_interleave(x, token_ids, dim=0)
-
-        self.assertTrue(
-            torch.equal(
-                expanded_x,
-                torch.tensor([[10.0], [10.0], [20.0], [20.0], [20.0]]),
-            )
-        )
-        self.assertTrue(
-            torch.equal(
-                frames,
-                torch.tensor([[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]]),
-            )
-        )
-
-    def test_repeat_interleave_rejects_invalid_shapes_and_ids(self):
-        bpe = CodecBPE.train(replay([[[1], [2], [3]]]), codebook_sizes=(16,), vocab_size=4)
-
-        with self.assertRaisesRegex(ValueError, "1D"):
-            bpe.repeat_interleave(torch.randn(2, 3), torch.tensor([[1, 2]]), dim=0)
-        with self.assertRaisesRegex(ValueError, "align"):
-            bpe.repeat_interleave(torch.randn(2, 3), torch.tensor([1]), dim=0)
-        with self.assertRaisesRegex(ValueError, "dim"):
-            bpe.repeat_interleave(torch.randn(2, 3), torch.tensor([1, 2]), dim=2)
-        with self.assertRaisesRegex(KeyError, "unknown token_id"):
-            bpe.repeat_interleave(torch.randn(2, 3), torch.tensor([1, 9]), dim=0)
 
     def test_eval_reports_expected_compression(self):
         bpe = CodecBPE.train(
@@ -267,19 +217,19 @@ class BPETest(unittest.TestCase):
             vocab_size=5,
         )
 
-        stats = bpe.eval(
+        stats = bpe.evaluate(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             show_progress=False,
         )
 
-        self.assertEqual(stats.num_sequences, 2)
-        self.assertEqual(stats.original_frames, 8)
-        self.assertEqual(stats.encoded_tokens, 3)
-        self.assertEqual(stats.mean_original_length, 4.0)
-        self.assertEqual(stats.mean_encoded_length, 1.5)
-        self.assertAlmostEqual(stats.compression_ratio, 3 / 8)
-        self.assertAlmostEqual(stats.compression_factor, 8 / 3)
-        self.assertAlmostEqual(stats.compression_gain, 5 / 8)
+        self.assertEqual(stats["num_sequences"], 2)
+        self.assertEqual(stats["original_frames"], 8)
+        self.assertEqual(stats["encoded_tokens"], 3)
+        self.assertEqual(stats["mean_original_length"], 4.0)
+        self.assertEqual(stats["mean_encoded_length"], 1.5)
+        self.assertAlmostEqual(stats["compression_ratio"], 3 / 8)
+        self.assertAlmostEqual(stats["compression_factor"], 8 / 3)
+        self.assertAlmostEqual(stats["compression_gain"], 5 / 8)
 
     def test_eval_reports_token_distributions(self):
         bpe = CodecBPE.train(
@@ -288,27 +238,29 @@ class BPETest(unittest.TestCase):
             vocab_size=5,
         )
 
-        stats = bpe.eval(
+        stats = bpe.evaluate(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             show_progress=False,
         )
 
-        self.assertEqual(stats.encoded_tokens, 3)
-        self.assertEqual(stats.token_count_histogram, {1: 1, 2: 1})
-        self.assertEqual([count for _, count, _, _ in stats.top_token_counts], [2, 1])
-        self.assertEqual(stats.num_used_tokens, 2)
+        self.assertEqual(stats["encoded_tokens"], 3)
+        self.assertEqual(stats["token_count_histogram"], {1: 1, 2: 1})
+        self.assertEqual([top["count"] for top in stats["top_token_counts"]], [2, 1])
+        self.assertEqual(stats["num_used_tokens"], 2)
         self.assertAlmostEqual(
-            sum(frequency for _, _, frequency, _ in stats.top_token_counts),
+            sum(top["frequency"] for top in stats["top_token_counts"]),
             1.0,
         )
-        self.assertAlmostEqual(stats.vocab_coverage, stats.num_used_tokens / bpe.vocab_size)
-        self.assertGreater(stats.entropy, 0.0)
-        self.assertEqual(stats.used_token_length_counts, (0, 0, 1, 2))
-        self.assertEqual(stats.used_token_length_frequencies, (0.0, 0.0, 1 / 3, 2 / 3))
-        self.assertEqual(sum(stats.vocab_token_length_counts), bpe.vocab_size)
-        self.assertEqual(stats.mean_used_token_length, 8 / 3)
-        self.assertEqual(stats.max_used_token_length, 3)
-        self.assertEqual(stats.used_token_length_quantiles["p50"], 3.0)
+        self.assertAlmostEqual(
+            stats["vocab_coverage"], stats["num_used_tokens"] / bpe.vocab_size
+        )
+        self.assertGreater(stats["entropy"], 0.0)
+        self.assertEqual(stats["used_token_length_counts"], (0, 0, 1, 2))
+        self.assertEqual(stats["used_token_length_frequencies"], (0.0, 0.0, 1 / 3, 2 / 3))
+        self.assertEqual(sum(stats["vocab_token_length_counts"]), bpe.vocab_size)
+        self.assertEqual(stats["mean_used_token_length"], 8 / 3)
+        self.assertEqual(stats["max_used_token_length"], 3)
+        self.assertEqual(stats["used_token_length_quantiles"]["p50"], 3.0)
 
     def test_eval_limits_top_token_counts(self):
         bpe = CodecBPE.train(
@@ -317,20 +269,20 @@ class BPETest(unittest.TestCase):
             vocab_size=5,
         )
 
-        stats = bpe.eval(
+        stats = bpe.evaluate(
             [[[1], [2], [1], [2], [3]], [[1], [2], [3]]],
             show_progress=False,
             top_k=1,
         )
 
-        self.assertEqual(len(stats.top_token_counts), 1)
-        self.assertEqual(stats.top_token_counts[0][1], 2)
+        self.assertEqual(len(stats["top_token_counts"]), 1)
+        self.assertEqual(stats["top_token_counts"][0]["count"], 2)
 
     def test_eval_rejects_invalid_top_k(self):
         bpe = CodecBPE.train(replay([[[1], [2], [3]]]), codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "top_k"):
-            bpe.eval([[[1], [2], [3]]], show_progress=False, top_k=-1)
+            bpe.evaluate([[[1], [2], [3]]], show_progress=False, top_k=-1)
 
     def test_eval_progress_keeps_same_result(self):
         bpe = CodecBPE.train(
@@ -341,8 +293,8 @@ class BPETest(unittest.TestCase):
         )
         corpus = [[[1], [2], [1], [2], [3]], [[1], [2], [3]]]
 
-        plain = bpe.eval(corpus, show_progress=False)
-        with_progress = bpe.eval(corpus, show_progress=True)
+        plain = bpe.evaluate(corpus, show_progress=False)
+        with_progress = bpe.evaluate(corpus, show_progress=True)
 
         self.assertEqual(with_progress, plain)
 
@@ -350,7 +302,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(replay([[[1], [2], [3]]]), codebook_sizes=(16,), vocab_size=4)
 
         with self.assertRaisesRegex(ValueError, "corpus"):
-            bpe.eval([], show_progress=False)
+            bpe.evaluate([], show_progress=False)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Union
 
 import torch
 from torch import nn
 
-MetricValue = float | torch.Tensor
+MetricValue = Union[float, torch.Tensor]
 MetricDict = dict[str, MetricValue]
 
 
@@ -17,7 +17,7 @@ class EvaluatorABC(nn.Module, ABC):
         super().__init__()
         self.metric_values: dict[str, list[MetricValue]] = {}
 
-    def __call__(self, *args: Any, **kwargs: Any) -> MetricDict:
+    def forward(self, *args: Any, **kwargs: Any) -> MetricDict:
         return self._validate_metric_dict(self.evaluate(*args, **kwargs), detach=False)
 
     @abstractmethod

@@ -4,6 +4,7 @@ from .llm import create_lightning_optimizers as create_llm_lightning_optimizers
 from .llm import create_optimizer as create_llm_optimizer
 from .muon import (
     create_muon_adamw_optimizer,
+    muon_available,
     split_muon_params,
 )
 from .rules import (
@@ -25,6 +26,7 @@ __all__ = [
     "create_llm_optimizer",
     "create_muon_adamw_optimizer",
     "create_scheduler",
+    "muon_available",
     "split_adamw_decay_params",
     "split_muon_params",
 ]

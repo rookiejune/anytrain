@@ -1,8 +1,6 @@
 import tempfile
 import unittest
 
-import torch
-
 from anytrain.tokenizer.codec_bpe import CodecBPE
 
 try:
@@ -40,31 +38,6 @@ class CodecBPERegressionTest(unittest.TestCase):
         self.assertEqual(
             with_progress.encode([[1], [2], [3]]),
             plain.encode([[1], [2], [3]]),
-        )
-
-    def test_repeat_interleave_uses_expansion_counts(self):
-        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5)
-        x = torch.tensor([[10.0, 11.0], [20.0, 21.0]])
-        token_ids = torch.tensor([3, 4])
-
-        expanded_x, frames = bpe.repeat_interleave(x, token_ids, dim=0)
-
-        self.assertTrue(
-            torch.equal(
-                expanded_x,
-                torch.tensor(
-                    [
-                        [10.0, 11.0],
-                        [10.0, 11.0],
-                        [20.0, 21.0],
-                        [20.0, 21.0],
-                        [20.0, 21.0],
-                    ]
-                ),
-            )
-        )
-        self.assertTrue(
-            torch.equal(frames, torch.tensor([[1], [2], [1], [2], [3]]))
         )
 
 

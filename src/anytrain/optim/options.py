@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from enum import auto
-from typing import Final, Required, TypedDict
+from typing import Final, TypedDict, Union
+
+from typing_extensions import Required
 
 from anytrain._compat import StrEnum
 
@@ -38,7 +40,7 @@ class MuonAdamWOptions(TypedDict):
     adamw: AdamWOptions
 
 
-OptimizerOptions = AdamWOptions | MuonAdamWOptions
+OptimizerOptions = Union[AdamWOptions, MuonAdamWOptions]
 
 
 __all__ = [

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor, nn
 
+from . import _checks
 from .embedding import EmbeddingVectorQuantizer, VQConfig
 from .output import QuantizationLoss, QuantizeOutput
 
@@ -104,7 +105,7 @@ class ResidualVectorQuantizer(nn.Module):
         *,
         num_active_codebooks: int | None = None,
     ) -> QuantizeOutput:
-        self._validate_input_latents(latents)
+        _checks.input_latents(latents, self.input_dim)
         active_count = self._resolve_active_codebooks(num_active_codebooks)
         leading_shape = latents.shape[:-1]
         flat_latents = latents.reshape(-1, self.input_dim)
@@ -282,7 +283,7 @@ class ResidualVectorQuantizer(nn.Module):
         *,
         num_active_codebooks: int | None = None,
     ) -> Tensor:
-        self._validate_input_latents(latents)
+        _checks.input_latents(latents, self.input_dim)
         active_count = self._resolve_active_codebooks(num_active_codebooks)
         leading_shape = latents.shape[:-1]
         residual = latents.reshape(-1, self.input_dim)
@@ -300,14 +301,23 @@ class ResidualVectorQuantizer(nn.Module):
         )
 
     def codebook_vectors_to_indices(self, codebook_vectors: Tensor) -> Tensor:
-        self._validate_codebook_vectors(codebook_vectors)
+        _checks.active_codebook_vectors(
+            codebook_vectors,
+            codebook_dim=self.codebook_dim,
+            num_codebooks=self.num_codebooks,
+        )
         indices = []
         for index, quantizer in enumerate(self.quantizers[: codebook_vectors.shape[-2]]):
             indices.append(quantizer.codebook_vectors_to_indices(codebook_vectors[..., index, :]))
         return torch.stack(indices, dim=-1)
 
     def indices_to_codebook_vectors(self, indices: Tensor) -> Tensor:
-        self._validate_indices(indices, allow_inactive=True)
+        _checks.active_indices(
+            indices,
+            codebook_size=self.codebook_size,
+            num_codebooks=self.num_codebooks,
+            allow_inactive=True,
+        )
         vectors = []
         for index, quantizer in enumerate(self.quantizers[: indices.shape[-1]]):
             indices_i = indices[..., index]
@@ -324,7 +334,11 @@ class ResidualVectorQuantizer(nn.Module):
         return torch.stack(vectors, dim=-2)
 
     def project_codebook_vectors(self, codebook_vectors: Tensor) -> Tensor:
-        self._validate_codebook_vectors(codebook_vectors)
+        _checks.active_codebook_vectors(
+            codebook_vectors,
+            codebook_dim=self.codebook_dim,
+            num_codebooks=self.num_codebooks,
+        )
         projected = []
         for index, quantizer in enumerate(self.quantizers[: codebook_vectors.shape[-2]]):
             projected.append(quantizer.project_codebook_vectors(codebook_vectors[..., index, :]))
@@ -366,51 +380,3 @@ class ResidualVectorQuantizer(nn.Module):
                 f"got {num_active_codebooks}, num_codebooks={self.num_codebooks}."
             )
         return num_active_codebooks
-
-    def _validate_input_latents(self, latents: Tensor) -> None:
-        if latents.ndim == 0:
-            raise ValueError("latents must have at least one dimension.")
-        if latents.shape[-1] != self.input_dim:
-            raise ValueError(
-                f"expected latents last dimension to be input_dim={self.input_dim}, "
-                f"got {latents.shape[-1]}."
-            )
-        if latents.numel() == 0:
-            raise ValueError("latents must contain at least one vector.")
-
-    def _validate_codebook_vectors(self, codebook_vectors: Tensor) -> None:
-        if codebook_vectors.ndim < 2:
-            raise ValueError(
-                f"codebook_vectors must have shape (..., n, {self.codebook_dim})."
-            )
-        if codebook_vectors.shape[-1] != self.codebook_dim:
-            raise ValueError(
-                f"codebook_vectors must end with codebook_dim={self.codebook_dim}, "
-                f"got {tuple(codebook_vectors.shape)}."
-            )
-        active_count = codebook_vectors.shape[-2]
-        if active_count <= 0 or active_count > self.num_codebooks:
-            raise ValueError(
-                f"codebook_vectors active dimension must be in [1, {self.num_codebooks}], "
-                f"got {active_count}."
-            )
-
-    def _validate_indices(self, indices: Tensor, *, allow_inactive: bool = False) -> None:
-        if indices.ndim == 0:
-            raise ValueError("indices must have at least one dimension.")
-        if torch.is_floating_point(indices) or torch.is_complex(indices):
-            raise TypeError("indices must be an integer tensor.")
-        active_count = indices.shape[-1]
-        if active_count <= 0 or active_count > self.num_codebooks:
-            raise ValueError(
-                f"indices active dimension must be in [1, {self.num_codebooks}], "
-                f"got {active_count}."
-            )
-        min_allowed = -1 if allow_inactive else 0
-        min_index = int(indices.min().item())
-        max_index = int(indices.max().item())
-        if min_index < min_allowed or max_index >= self.codebook_size:
-            raise ValueError(
-                f"indices must be in [{min_allowed}, codebook_size - 1]: "
-                f"got min={min_index}, max={max_index}, codebook_size={self.codebook_size}."
-            )

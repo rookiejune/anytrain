@@ -1,6 +1,7 @@
 import unittest
 
 import torch
+
 from anytrain.module.quantization import (
     AGRVQConfig,
     AutoGroupResidualVectorQuantizer,

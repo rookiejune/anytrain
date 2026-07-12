@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import auto
+from typing import Union
 
 from anytrain._compat import StrEnum
 
-from ._shape import CurveShape, normalize_curve_shape
+from ._shape import CurveShape, curve_shape
 
 
 class SchedulerOption(StrEnum):
@@ -24,7 +25,7 @@ class Phase:
     end_lr_ratio: float = 1.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "shape", normalize_curve_shape(self.shape))
+        object.__setattr__(self, "shape", curve_shape(self.shape))
         if not isinstance(self.duration_steps, int) or isinstance(self.duration_steps, bool):
             raise TypeError("duration_steps must be an integer.")
         if self.duration_steps == 0 or self.duration_steps < -1:
@@ -34,7 +35,7 @@ class Phase:
         _validate_ratio(self.end_lr_ratio, name="end_lr_ratio")
 
 
-PhaseLike = Phase | tuple[CurveShape | str, int]
+PhaseLike = Union[Phase, tuple[Union[CurveShape, str], int]]
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class Schedule:
 
 
 def _validate_ratio(value: float, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a float.")
     if not 0 <= value <= 1:
         raise ValueError(f"{name} must be between 0 and 1.")

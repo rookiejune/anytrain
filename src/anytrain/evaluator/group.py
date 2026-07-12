@@ -85,6 +85,8 @@ class EvaluatorGroup(nn.Module):
     def _validate_name(self, name: str, label: str) -> str:
         if not isinstance(name, str):
             raise TypeError(f"{label} must be a string.")
+        if not name:
+            raise ValueError(f"{label} must not be empty.")
         if self.metric_key_separator in name:
             raise ValueError(f"{label} must not contain separator {self.metric_key_separator!r}.")
         return name

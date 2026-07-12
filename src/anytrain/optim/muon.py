@@ -19,6 +19,10 @@ from .rules import (
 )
 
 
+def muon_available() -> bool:
+    return getattr(torch.optim, "Muon", None) is not None
+
+
 def create_muon_adamw_optimizer(
     module: nn.Module,
     *,
@@ -102,7 +106,11 @@ def _create_muon_optimizer(
 ) -> torch.optim.Optimizer:
     muon_cls = getattr(torch.optim, "Muon", None)
     if muon_cls is None:
-        raise RuntimeError("torch.optim.Muon is not available in this PyTorch version.")
+        raise RuntimeError(
+            "torch.optim.Muon is not available in this PyTorch version. "
+            "Python 3.9 supports anytrain through PyTorch 2.8, but Muon requires "
+            "a newer Python and PyTorch environment."
+        )
 
     optimizer_options = dict(options)
     lr = optimizer_options.pop("lr")
@@ -126,5 +134,6 @@ def _create_muon_optimizer(
 __all__ = [
     "ExcludedModules",
     "create_muon_adamw_optimizer",
+    "muon_available",
     "split_muon_params",
 ]

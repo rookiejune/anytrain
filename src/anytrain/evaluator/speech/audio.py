@@ -8,7 +8,7 @@ from torch import Tensor
 
 
 def load_wave_batch(audio: Any, sample_rate: int) -> tuple[Tensor, int]:
-    if isinstance(audio, str | Path):
+    if isinstance(audio, (str, Path)):
         return _load_audio_file(Path(audio))
 
     sample_rate = validate_sample_rate(sample_rate)

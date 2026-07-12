@@ -170,7 +170,7 @@ def _parse_lr_scale_rule(rule: LRScaleRule, *, index: int) -> tuple[str, float]:
         raise TypeError(f"lr_scale_rules[{index}].name must be a non-empty string.")
 
     lr_scale = rule["lr_scale"]
-    if isinstance(lr_scale, bool) or not isinstance(lr_scale, int | float):
+    if isinstance(lr_scale, bool) or not isinstance(lr_scale, (int, float)):
         raise TypeError(f"lr_scale_rules[{index}].lr_scale must be a float.")
     if lr_scale <= 0:
         raise ValueError(f"lr_scale_rules[{index}].lr_scale must be positive.")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import operator
 from collections.abc import Sequence
 
 from anytrain._compat import strict_zip
@@ -46,10 +47,10 @@ def codebook_sizes_tuple(codebook_sizes: Sequence[int]) -> tuple[int, ...]:
 
 
 def frame_tuple(frame: Sequence[int], codebook_sizes: Sequence[int]) -> Frame:
-    if isinstance(frame, int | str):
+    if isinstance(frame, (int, str)):
         raise TypeError("frames must be integer sequences; use [id] for single-codebook frames")
 
-    values = tuple(frame)
+    values = tuple(frame_id(value) for value in frame)
     if len(values) != len(codebook_sizes):
         raise ValueError("frames must match the configured number of codebooks")
 
@@ -57,3 +58,12 @@ def frame_tuple(frame: Sequence[int], codebook_sizes: Sequence[int]) -> Frame:
         if value < 0 or value >= size:
             raise ValueError(f"frame code id at codebook {index} must be in [0, {size})")
     return values
+
+
+def frame_id(value: int) -> int:
+    if isinstance(value, bool):
+        raise TypeError("frame code ids must be integers")
+    try:
+        return operator.index(value)
+    except TypeError as error:
+        raise TypeError("frame code ids must be integers") from error

@@ -7,8 +7,8 @@ import torch
 from torch import nn
 
 from anytrain.codec.stable_codec import (
+    DEFAULT_CODEBOOK_SIZE,
     DEFAULT_PRETRAINED_MODEL,
-    DEFAULT_SEMANTIC_VOCAB_SIZE,
     StableCodec,
 )
 
@@ -26,7 +26,7 @@ class StableCodecTest(unittest.TestCase):
         self.assertEqual(FakeStableCodecBackend.kwargs["device"], torch.device("cpu"))
         self.assertEqual(codec.device, torch.device("cpu"))
         self.assertEqual(codec.sample_rate, 16000)
-        self.assertEqual(codec.semantic_vocab_size, DEFAULT_SEMANTIC_VOCAB_SIZE)
+        self.assertEqual(codec.codebook_sizes, (DEFAULT_CODEBOOK_SIZE,))
 
     def test_from_pretrained_sets_posthoc_bottleneck(self):
         with patch(
@@ -39,6 +39,7 @@ class StableCodecTest(unittest.TestCase):
             )
 
         self.assertTrue(codec.posthoc_bottleneck)
+        self.assertEqual(codec.codebook_sizes, (15625, 15625))
         self.assertEqual(codec.model.posthoc_stages, "2x15625_700bps")
 
     def test_from_config_loads_local_paths(self):
@@ -63,10 +64,10 @@ class StableCodecTest(unittest.TestCase):
 
     def test_encode_returns_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), normalize=False)
         audio = torch.zeros((2, 1, 16))
 
-        tokens = codec.encode(audio, normalize=False)
+        tokens = codec.encode(audio, 16000)
 
         self.assertEqual(tuple(tokens.shape), (2, 5, 1))
         self.assertFalse(model.normalize)
@@ -77,27 +78,40 @@ class StableCodecTest(unittest.TestCase):
         codec = StableCodec(model=model, device=torch.device("cpu"))
         audio = torch.zeros((2, 1, 16))
 
-        latents, tokens = codec.encode_latents(audio)
+        latents, tokens = codec.encode_latents(audio, 16000)
 
         self.assertEqual(tuple(latents.shape), (2, 4, 5))
         self.assertEqual(tuple(tokens.shape), (2, 5, 1))
+
+    def test_encode_resamples_from_input_sample_rate(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"))
+        audio = torch.zeros((2, 1, 8))
+
+        with patch(
+            "anytrain.codec.stable_codec.codec.resample",
+            return_value=audio,
+        ) as resample:
+            codec.encode(audio, 8000)
+
+        resample.assert_called_once_with(audio, 8000, 16000)
 
     def test_decode_uses_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
         codec = StableCodec(model=model, device=torch.device("cpu"))
         tokens = torch.ones((2, 5, 1), dtype=torch.long)
 
-        audio = codec.decode(tokens, posthoc_bottleneck=True)
+        audio = codec.decode(tokens)
 
         self.assertEqual(tuple(audio.shape), (2, 1, 16))
-        self.assertTrue(model.posthoc)
+        self.assertFalse(model.posthoc)
 
     def test_reconstruct_roundtrips_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
         codec = StableCodec(model=model, device=torch.device("cpu"))
         audio = torch.zeros((2, 1, 16))
 
-        reconstructed = codec.reconstruct(audio)
+        reconstructed = codec.reconstruct(audio, 16000)
 
         self.assertEqual(tuple(reconstructed.shape), (2, 1, 16))
         self.assertTrue(model.decode_called)
@@ -107,22 +121,22 @@ class StableCodecTest(unittest.TestCase):
         codec = StableCodec(model=model, device=torch.device("cpu"))
 
         with self.assertRaisesRegex(ValueError, "mono"):
-            codec.encode(torch.zeros((2, 2, 16)))
+            codec.encode(torch.zeros((2, 2, 16)), 16000)
 
     def test_encode_rejects_missing_channel_axis(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
         codec = StableCodec(model=model, device=torch.device("cpu"))
 
         with self.assertRaisesRegex(ValueError, "shape"):
-            codec.encode(torch.zeros((2, 16)))
+            codec.encode(torch.zeros((2, 16)), 16000)
 
-    def test_semantic_vocab_size_reads_backend_codebook_size(self):
+    def test_codebook_sizes_reads_backend_codebook_size(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
         model.codebook_size = 123
 
         codec = StableCodec(model=model, device=torch.device("cpu"))
 
-        self.assertEqual(codec.semantic_vocab_size, 123)
+        self.assertEqual(codec.codebook_sizes, (123,))
 
 
 class FakeStableCodecBackend(nn.Module):

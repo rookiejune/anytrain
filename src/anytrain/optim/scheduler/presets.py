@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import torch
 
+from ._shape import curve_shape
 from .compose import create_scheduler_from_config
-from ._shape import normalize_curve_shape
 from .types import (
     CurveShape,
     Phase,
@@ -54,7 +54,7 @@ def make_named_scheduler_config(
     _validate_non_negative_int(warmup_steps, name="warmup_steps")
     _validate_ratio(min_lr_ratio, name="min_lr_ratio")
 
-    option = _normalize_scheduler_option(schedule)
+    option = _scheduler_option(schedule)
     if option is SchedulerOption.CONSTANT:
         _reject_constant_scheduler_steps(
             warmup_steps=warmup_steps,
@@ -101,22 +101,22 @@ def _coerce_phase(phase: PhaseLike) -> Phase:
             "scheduler phase must be a Phase or a (shape, duration_steps) tuple."
     )
     shape, duration_steps = phase
-    curve_shape = normalize_curve_shape(shape)
-    if curve_shape is CurveShape.LINEAR:
+    shape = curve_shape(shape)
+    if shape is CurveShape.LINEAR:
         return Phase(
-            shape=curve_shape,
+            shape=shape,
             duration_steps=duration_steps,
             start_lr_ratio=0.0,
             end_lr_ratio=1.0,
         )
-    if curve_shape is CurveShape.COSINE:
+    if shape is CurveShape.COSINE:
         return Phase(
-            shape=curve_shape,
+            shape=shape,
             duration_steps=duration_steps,
             end_lr_ratio=0.1,
         )
     return Phase(
-        shape=curve_shape,
+        shape=shape,
         duration_steps=duration_steps,
         end_lr_ratio=1.0,
     )
@@ -200,7 +200,7 @@ def _reject_constant_scheduler_steps(
         raise ValueError("decay_steps is only valid for wsd schedules.")
 
 
-def _normalize_scheduler_option(schedule: str) -> SchedulerOption:
+def _scheduler_option(schedule: str) -> SchedulerOption:
     if not isinstance(schedule, str):
         raise TypeError("schedule must be a string.")
     try:
@@ -210,7 +210,7 @@ def _normalize_scheduler_option(schedule: str) -> SchedulerOption:
 
 
 def _validate_ratio(value: float, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a float.")
     if not 0 <= value <= 1:
         raise ValueError(f"{name} must be between 0 and 1.")

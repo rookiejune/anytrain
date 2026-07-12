@@ -47,28 +47,31 @@ export ANYTRAIN_HOME=/mnt/pami202/zhuyin/.anytrain
 ```python
 from anytrain.codec.unicodec import UniCodec
 
-codec = UniCodec.from_pretrained(device="cuda")
+codec = UniCodec.from_pretrained(
+    device="cuda",
+    domain="0",
+    bandwidth_id=0,
+)
 
 codes = codec.encode(
     audio,
-    domain="0",
-    bandwidth_id=0,
+    sample_rate=24000,
 )
-audio_out = codec.decode(codes, bandwidth_id=0)
+audio_out = codec.decode(codes)
 
 features, codes = codec.encode_features(
     audio,
-    domain="0",
-    bandwidth_id=0,
+    sample_rate=24000,
 )
-audio_from_features = codec.decode_features(features, bandwidth_id=0)
+audio_from_features = codec.decode_features(features)
 ```
 
-`audio` 需要是 `[batch, time]` 的 24 kHz 单声道 waveform。`domain` 直接沿用
+`audio` 使用统一的 `[batch, 1, time]` 单声道 waveform；输入不为 24 kHz 时 wrapper 会
+重采样。`codes` 是 `[batch, frame, 1]`，`codebook_sizes == (16384,)`。
+
+`domain` 在构造 codec 时固定，直接沿用
 UniCodec 上游约定：`"0"` 表示 speech，`"1"` 表示 music，`"2"` 表示 general
-audio。它选择的是单一 codebook 内的 domain-adaptive partition，不是
-semantic/acoustic 分支。可以传单个 domain，也可以传长度等于 batch size 的
-domain sequence。
+audio。它选择的是单一 codebook 内的 domain-adaptive partition，不是独立码本。
 
 `bandwidth_id` 沿用上游参数名，但默认 config 里的 `bandwidths` 都是 `6.6`：
 
@@ -77,15 +80,15 @@ bandwidths: [6.6, 6.6, 6.6, 6.6]
 adanorm_num_embeddings: 4
 ```
 
-因此第一版只把它视为上游 decoder/backbone 的条件 id，默认固定传 `0`。不要把它理解为
+因此第一版只把它视为构造时固定的 decoder/backbone 条件 id，默认使用 `0`。不要把它理解为
 已经验证可用的可变码率接口；后续如果确认 checkpoint 中 `0/1/2/3` 有明确语义，再把
 它提升成更清楚的枚举。
 
-UniCodec 不拆分 semantic / acoustic code。`encode()` 返回单一路径的离散
-codes；`decode()` 接收同一组 codes 并重建 waveform。
+UniCodec 的主路径遵循统一 codec 接口，不拆分或命名 codebook 语义。
 
 上游实现内部还有连续 quantized features 边界。需要直接操作这个边界时使用
-`encode_features()` / `decode_features()`；普通 codec roundtrip 应优先使用
+`encode_features()` / `decode_features()`；连续 features 统一为 `[batch, frame, dim]`。
+普通 codec roundtrip 应优先使用
 `encode()` / `decode()`。
 
 `local_files_only=True` 可以在离线环境中只使用已有缓存。

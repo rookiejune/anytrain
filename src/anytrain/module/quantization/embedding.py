@@ -6,6 +6,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from . import _checks
 from .lookup import nearest_codebook_indices
 from .output import QuantizationLoss, QuantizeOutput
 from .projection import make_projection
@@ -103,7 +104,7 @@ class EmbeddingVectorQuantizer(nn.Module):
         return self.quantize(latents)
 
     def quantize(self, latents: Tensor) -> QuantizeOutput:
-        self._validate_input_latents(latents)
+        _checks.input_latents(latents, self.input_dim)
         projected_latents = self.project_in(latents)
         codebook_vectors, indices = self._nearest_codebook_vectors(projected_latents)
 
@@ -128,21 +129,21 @@ class EmbeddingVectorQuantizer(nn.Module):
         )
 
     def latents_to_codebook_vectors(self, latents: Tensor) -> Tensor:
-        self._validate_input_latents(latents)
+        _checks.input_latents(latents, self.input_dim)
         codebook_vectors, _ = self._nearest_codebook_vectors(self.project_in(latents))
         return codebook_vectors
 
     def codebook_vectors_to_indices(self, codebook_vectors: Tensor) -> Tensor:
-        self._validate_codebook_vectors(codebook_vectors)
+        _checks.codebook_vectors(codebook_vectors, self.codebook_dim)
         _, indices = self._nearest_codebook_vectors(codebook_vectors)
         return indices
 
     def indices_to_codebook_vectors(self, indices: Tensor) -> Tensor:
-        self._validate_indices(indices)
+        _checks.indices(indices, self.codebook_size)
         return self.codebook(indices)
 
     def project_codebook_vectors(self, codebook_vectors: Tensor) -> Tensor:
-        self._validate_codebook_vectors(codebook_vectors)
+        _checks.codebook_vectors(codebook_vectors, self.codebook_dim)
         return self.project_out(codebook_vectors)
 
     @classmethod
@@ -175,7 +176,11 @@ class EmbeddingVectorQuantizer(nn.Module):
         )
 
     def _nearest_codebook_vectors(self, projected_latents: Tensor) -> tuple[Tensor, Tensor]:
-        self._validate_codebook_vectors(projected_latents, name="projected_latents")
+        _checks.codebook_vectors(
+            projected_latents,
+            self.codebook_dim,
+            name="projected_latents",
+        )
         leading_shape = projected_latents.shape[:-1]
         indices = nearest_codebook_indices(
             projected_latents,
@@ -205,43 +210,3 @@ class EmbeddingVectorQuantizer(nn.Module):
         self.codebook.weight.copy_(
             self._ema_sums / smoothed_counts.clamp_min(self.config.eps)[:, None]
         )
-
-    def _validate_input_latents(self, latents: Tensor) -> None:
-        if latents.ndim == 0:
-            raise ValueError("latents must have at least one dimension.")
-        if latents.shape[-1] != self.input_dim:
-            raise ValueError(
-                f"expected latents last dimension to be input_dim={self.input_dim}, "
-                f"got {latents.shape[-1]}."
-            )
-        if latents.numel() == 0:
-            raise ValueError("latents must contain at least one vector.")
-
-    def _validate_codebook_vectors(
-        self,
-        codebook_vectors: Tensor,
-        *,
-        name: str = "codebook_vectors",
-    ) -> None:
-        if codebook_vectors.ndim == 0:
-            raise ValueError(f"{name} must have at least one dimension.")
-        if codebook_vectors.shape[-1] != self.codebook_dim:
-            raise ValueError(
-                f"{name} must end with codebook_dim={self.codebook_dim}, "
-                f"got {tuple(codebook_vectors.shape)}."
-            )
-        if codebook_vectors.numel() == 0:
-            raise ValueError(f"{name} must contain at least one vector.")
-
-    def _validate_indices(self, indices: Tensor) -> None:
-        if torch.is_floating_point(indices) or torch.is_complex(indices):
-            raise TypeError("indices must be an integer tensor.")
-        if indices.numel() == 0:
-            raise ValueError("indices must contain at least one value.")
-        min_index = int(indices.min().item())
-        max_index = int(indices.max().item())
-        if min_index < 0 or max_index >= self.codebook_size:
-            raise ValueError(
-                "indices must be in [0, codebook_size - 1]: "
-                f"got min={min_index}, max={max_index}, codebook_size={self.codebook_size}."
-            )

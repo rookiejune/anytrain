@@ -15,12 +15,24 @@ python -m pip install -U flash-attn --no-build-isolation
 ```
 
 当前官方 `stable-codec==0.1.2` 的 `setup.py` 硬性依赖 `torch==2.4` 和
-`torchaudio==2.4`，而 `anytrain` 当前核心依赖是 `torch>=2.12`。因此第一版不把
+`torchaudio==2.4`，而 `anytrain` 当前核心依赖是 `torch>=2.8`。因此第一版不把
 `stable-codec` 放进 `anytrain` extra 自动安装，避免 pip resolver 得到互相冲突的
 环境。需要使用 Stable Codec 时，先在兼容环境里安装上游包；如果确认新版本放宽了
 torch pin，再把依赖加入 `pyproject.toml`。
 
 Stable Codec 官方 README 还说明当前模型依赖 FlashAttention，不建议 CPU 推理。
+
+在 `121` 上已验证 `stable-codec==0.1.2` 可以在独立 `py39` 环境安装并导入：
+`python==3.9.25`、`torch==2.4.0+cu121`、`torchaudio==2.4.0+cu121`。安装时
+`pypesq==1.2.4` 需要旧构建链，先安装 `numpy==1.23.5`、`Cython`、
+`pip==24.0`、`setuptools==59.8.0`，再执行：
+
+```bash
+CFLAGS="-fcommon" python -m pip install --no-build-isolation pypesq==1.2.4
+CFLAGS="-fcommon" python -m pip install stable-codec==0.1.2
+```
+
+复旦环境的完整记录见 `docs/codec-envs.md`。
 
 ## 使用
 
@@ -32,18 +44,27 @@ codec = StableCodec.from_pretrained(
     device="cuda",
 )
 
-tokens = codec.encode(audio)
-audio_out = codec.decode(tokens)
+codes = codec.encode(audio, sample_rate=16000)
+audio_out = codec.decode(codes)
 
-latents, tokens = codec.encode_latents(audio)
+latents, codes = codec.encode_latents(audio, sample_rate=16000)
 ```
 
 `audio` 需要是 `[batch, 1, time]` 的 16 kHz 单声道 waveform。Stable Codec 没有
 UniCodec 的 `domain` 参数；默认模型是 `stabilityai/stable-codec-speech-16k`。
 
-主路径按离散 token roundtrip 设计：`encode()` 返回 tokens，`decode()` 接收 tokens
+主路径按统一 codec 契约设计：`encode()` 返回 `[batch, frame, codebook]` codes，
+`decode()` 接收同样形状的 codes
 并重建 waveform。上游实现同时返回 pre-bottleneck continuous latents；需要直接操作这个
 边界时使用 `encode_latents()`。
+
+`121` 上确认的上游 `0.1.2` 签名与 wrapper 对齐：
+
+- `StableCodec(pretrained_model=..., device=...)`
+- `StableCodec(model_config_path=..., ckpt_path=..., device=...)`
+- `encode(audio, posthoc_bottleneck=False, normalize=True, **kwargs)`
+- `decode(tokens, posthoc_bottleneck=False, **kwargs)`
+- `set_posthoc_bottleneck(stages)`
 
 ## Posthoc Bottleneck
 
@@ -60,8 +81,8 @@ codec = StableCodec.from_pretrained(
 
 ```python
 codec.set_posthoc_bottleneck("2x15625_700bps")
-tokens = codec.encode(audio)
-audio_out = codec.decode(tokens)
+codes = codec.encode(audio, sample_rate=16000)
+audio_out = codec.decode(codes)
 ```
 
 支持的上游 preset：

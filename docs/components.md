@@ -86,7 +86,8 @@ optim 不提供魔法 LightningModule 基类。下游在自己的 `configure_opt
 
 ## Module
 
-`module` 是 optional general 组件，提供 task-agnostic 的 `torch.nn.Module` 积木。
+`module` 是 core 组件，提供 task-agnostic 的 `torch.nn.Module` 积木。ADT、dynamic conv 和
+quantization 只依赖 core；Qwen3 builder 单独要求 `module` extra。
 
 适合放入：
 
@@ -153,5 +154,7 @@ framework 是 optional/experimental 组件。这里的 framework 指研究训练
 - `import anytrain.loss.spectral` 和 `import anytrain.loss.temporal` 当前只依赖 core torch。
 - `import anytrain.optim` 可以假设 torch 已安装。
 - `import anytrain.chat` 不应要求 chat extra；真实 provider 请求路径可以要求 `chat` extra。
-- `import anytrain.plotter` 可以要求 plot extra。
+- `import anytrain.plotter` 不加载绘图库；调用具体 matplotlib-backed plotter 时要求 `plot` extra。
+- `import anytrain.tokenizer` 不加载 `tokenizers`；构造或训练 `CodecBPE` 时要求 `tokenizer` extra。
+- `import anytrain.codec` 和 `import anytrain.tts` 不加载具体 backend；加载模型时要求对应 extra。
 - optional 缺依赖时抛出明确错误，例如提示安装对应 extra。

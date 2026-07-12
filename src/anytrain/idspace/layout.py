@@ -14,7 +14,7 @@ class Layout:
     def __init__(self, **blocks: Block) -> None:
         if not blocks:
             raise ValueError("Layout must contain at least one id block.")
-        self.blocks = MappingProxyType(_normalize_blocks(blocks))
+        self.blocks = MappingProxyType(_blocks(blocks))
         self._block_names = tuple(self.blocks)
         self._vocab_size = max((end for _, end in self.blocks.values()), default=0)
 
@@ -68,10 +68,10 @@ class Layout:
         return local
 
 
-def _normalize_blocks(blocks: Mapping[str, Block]) -> dict[str, Block]:
-    normalized: dict[str, Block] = {}
+def _blocks(blocks: Mapping[str, Block]) -> dict[str, Block]:
+    parsed: dict[str, Block] = {}
     for name, block in blocks.items():
-        _validate_name(name, name="block name")
+        _name(name, name="block name")
         if not isinstance(block, tuple) or len(block) != 2:
             raise TypeError(f"blocks[{name!r}] must be a (start, end) tuple.")
         start, end = block
@@ -79,17 +79,17 @@ def _normalize_blocks(blocks: Mapping[str, Block]) -> dict[str, Block]:
             raise ValueError(f"blocks[{name!r}] start must be non-negative.")
         if end <= start:
             raise ValueError(f"blocks[{name!r}] end must be greater than start.")
-        if any(_blocks_overlap((start, end), existing) for existing in normalized.values()):
+        if any(_blocks_overlap((start, end), existing) for existing in parsed.values()):
             raise ValueError("id blocks must not overlap.")
-        normalized[name] = (start, end)
-    return normalized
+        parsed[name] = (start, end)
+    return parsed
 
 
 def _blocks_overlap(left: Block, right: Block) -> bool:
     return left[0] < right[1] and right[0] < left[1]
 
 
-def _validate_name(value: str, *, name: str) -> None:
+def _name(value: str, *, name: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string.")
     if "." in value:

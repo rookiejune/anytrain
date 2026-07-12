@@ -12,6 +12,18 @@ from torch import Tensor, nn
 from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 
 DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
+SEMANTIC_CODEBOOK_SIZE = 8192
+ACOUSTIC_CODEBOOK_SIZE = 90
+DECODER_SAMPLE_RATES: dict[LongCatDecoderName, int] = {
+    "16k_4codebooks": 16_000,
+    "24k_2codebooks": 24_000,
+    "24k_4codebooks": 24_000,
+}
+DECODER_CODEBOOKS: dict[LongCatDecoderName, int] = {
+    "16k_4codebooks": 4,
+    "24k_2codebooks": 2,
+    "24k_4codebooks": 4,
+}
 
 
 class LongCat(nn.Module):
@@ -21,6 +33,7 @@ class LongCat(nn.Module):
         decoders: dict[str, nn.Module],
         device: torch.device,
         assets: LongCatAssets,
+        decoder: LongCatDecoderName = DEFAULT_DECODER,
     ) -> None:
         super().__init__()
 
@@ -28,6 +41,14 @@ class LongCat(nn.Module):
         self.decoders = nn.ModuleDict(decoders)
         self.device = device
         self.assets = assets
+        self.decoder = decoder
+        model = self._decoder()
+        num_codebooks = int(getattr(model, "n_codebooks", DECODER_CODEBOOKS[decoder] - 1)) + 1
+        acoustic_size = int(getattr(model, "acoustic_codebook_size", ACOUSTIC_CODEBOOK_SIZE))
+        self.sample_rate = DECODER_SAMPLE_RATES[decoder]
+        self.codebook_sizes = (SEMANTIC_CODEBOOK_SIZE,) + (acoustic_size,) * (
+            num_codebooks - 1
+        )
 
     @property
     def semantic_codebook(self) -> Tensor:
@@ -43,13 +64,13 @@ class LongCat(nn.Module):
         cls,
         *,
         cache_dir: str | os.PathLike[str] | None = None,
-        decoders: Sequence[LongCatDecoderName] = (DEFAULT_DECODER,),
+        decoder: LongCatDecoderName = DEFAULT_DECODER,
         device: str | torch.device | None = None,
         local_files_only: bool = False,
         force_download: bool = False,
     ) -> LongCat:
         load_encoder, load_decoder = _load_longcat_loaders()
-        decoder_names = _validate_decoders(decoders)
+        decoder_names = _validate_decoders((decoder,))
         assets = ensure_longcat_assets(
             cache_dir=cache_dir,
             decoders=decoder_names,
@@ -70,6 +91,7 @@ class LongCat(nn.Module):
             decoders=loaded_decoders,
             device=resolved_device,
             assets=assets,
+            decoder=decoder,
         )
 
     @torch.no_grad()
@@ -77,25 +99,24 @@ class LongCat(nn.Module):
         self,
         audio: Tensor,
         sample_rate: int,
-        *,
-        n_acoustic_codebooks: int | None = None,
-    ) -> tuple[Tensor, Tensor]:
+    ) -> Tensor:
         codes = self.encoder(
             audio.to(self.device),
             sample_rate,
-            n_acoustic_codebooks=n_acoustic_codebooks,
+            n_acoustic_codebooks=len(self.codebook_sizes) - 1,
         )
-        return codes[0], codes[1]
+        semantic, acoustic = codes[0], codes[1]
+        if semantic.shape != (acoustic.shape[0], acoustic.shape[2]):
+            raise ValueError("LongCat codebooks must align on batch and time.")
+        return torch.cat((semantic.unsqueeze(-1), acoustic.transpose(1, 2)), dim=-1)
 
     @torch.no_grad()
     def decode(
         self,
-        semantic_codes: Tensor,
-        acoustic_codes: Tensor,
-        *,
-        decoder: LongCatDecoderName = DEFAULT_DECODER,
+        codes: Tensor,
     ) -> Tensor:
-        model = self._decoder(decoder)
+        semantic_codes, acoustic_codes = self._split_codes(codes)
+        model = self._decoder()
         return model(
             semantic_codes.to(self.device),
             acoustic_codes.to(self.device),
@@ -105,10 +126,8 @@ class LongCat(nn.Module):
     def acoustic_codes_to_features(
         self,
         acoustic_codes: Tensor,
-        *,
-        decoder: LongCatDecoderName = DEFAULT_DECODER,
     ) -> Tensor:
-        model = self._decoder(decoder)
+        model = self._decoder()
         convert = getattr(model, "acoustic_codes_to_latents", None)
         if not callable(convert):
             raise TypeError("LongCat decoder must provide acoustic_codes_to_latents().")
@@ -126,8 +145,6 @@ class LongCat(nn.Module):
         self,
         semantic_codes: Tensor,
         acoustic_features: Tensor,
-        *,
-        decoder: LongCatDecoderName = DEFAULT_DECODER,
     ) -> Tensor:
         if semantic_codes.dim() != 2:
             raise ValueError("semantic_codes must have shape [batch, time].")
@@ -144,7 +161,7 @@ class LongCat(nn.Module):
         if not torch.is_floating_point(acoustic_features) or torch.is_complex(acoustic_features):
             raise TypeError("acoustic_features must be floating point tensors.")
 
-        model = self._decoder(decoder)
+        model = self._decoder()
         return model(
             semantic_codes.to(self.device),
             acoustic_features.to(self.device).transpose(1, 2),
@@ -155,25 +172,28 @@ class LongCat(nn.Module):
         self,
         audio: Tensor,
         sample_rate: int,
-        *,
-        decoder: LongCatDecoderName = DEFAULT_DECODER,
-        n_acoustic_codebooks: int | None = None,
     ) -> Tensor:
-        semantic_codes, acoustic_codes = self.encode(
-            audio,
-            sample_rate,
-            n_acoustic_codebooks=n_acoustic_codebooks,
-        )
-        return self.decode(semantic_codes, acoustic_codes, decoder=decoder)
+        return self.decode(self.encode(audio, sample_rate))
 
-    def _decoder(self, name: LongCatDecoderName) -> Any:
+    def _decoder(self) -> Any:
         try:
-            return self.decoders[name]
+            return self.decoders[self.decoder]
         except KeyError as exc:
             available = ", ".join(sorted(self.decoders))
             raise ValueError(
-                f"Decoder {name!r} is not loaded. Available decoders: {available}."
+                f"Decoder {self.decoder!r} is not loaded. Available decoders: {available}."
             ) from exc
+
+    def _split_codes(self, codes: Tensor) -> tuple[Tensor, Tensor]:
+        if codes.dim() != 3:
+            raise ValueError("codes must have shape [batch, time, codebook].")
+        if codes.shape[-1] != len(self.codebook_sizes):
+            raise ValueError(
+                f"codes must contain {len(self.codebook_sizes)} aligned codebooks."
+            )
+        if codes.dtype == torch.bool or torch.is_floating_point(codes) or torch.is_complex(codes):
+            raise TypeError("codes must contain integer ids.")
+        return codes[..., 0], codes[..., 1:].transpose(1, 2).contiguous()
 
 
 def _validate_decoders(decoders: Sequence[LongCatDecoderName]) -> tuple[LongCatDecoderName, ...]:

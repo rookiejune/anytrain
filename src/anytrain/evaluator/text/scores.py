@@ -111,7 +111,7 @@ def _validate_positive_integer(value: int, *, name: str) -> None:
 
 
 def _validate_positive_float(value: float, *, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, float | int):
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
         raise TypeError(f"{name} must be a float.")
     if value <= 0:
         raise ValueError(f"{name} must be positive.")

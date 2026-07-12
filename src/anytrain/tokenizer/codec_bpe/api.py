@@ -5,13 +5,12 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TypedDict
 
-import torch
-
 from anytrain._compat import Self
 
 from ._core import CoreBPE, base_text, private_use_tokens
-from ._eval import EvalStats, evaluate
-from ._eval import top_k as eval_top_k
+from ._deps import bpe_class
+from ._eval import EvalStats
+from ._eval import evaluate as run_eval
 from ._frame import Frame, FrameCodec
 
 
@@ -33,8 +32,7 @@ class CodecBPE:
         }
         vocab = {text: token_id for token_id, text in token_texts.items()}
         merges = [(token_texts[left], token_texts[right]) for left, right, _ in core.merges]
-        from tokenizers.models import BPE
-
+        BPE = bpe_class()
         self._model = BPE(vocab=vocab, merges=merges)
 
     @classmethod
@@ -89,51 +87,28 @@ class CodecBPE:
         if not frames:
             raise ValueError("frames must not be empty")
 
-        codec = self._codec
-        base_ids = tuple(codec.encode(frame) for frame in frames)
-        base_tokens = self._base_tokens
-        for base_id in base_ids:
-            if base_id not in base_tokens:
-                raise KeyError(f"unknown frame: {codec.decode(base_id)}")
-
-        text = base_text(base_ids, base_tokens)
+        base_ids = tuple(self._codec.encode(frame) for frame in frames)
+        text = base_text(base_ids, self._base_tokens)
         return [token.id for token in self._model.tokenize(text)]
 
     def decode(self, token_ids: Sequence[int]) -> list[Frame]:
-        base_ids, _ = self._core.decode_with_counts(token_ids)
+        base_ids = self._core.decode(token_ids)
         return [self._codec.decode(base_id) for base_id in base_ids]
 
-    def repeat_interleave(
-        self,
-        x: torch.Tensor,
-        token_ids: torch.Tensor,
-        *,
-        dim: int = -2,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        expanded_x, base_ids = self._core.repeat_interleave(x, token_ids, dim=dim)
-        if self._codec.num_codebooks == 1:
-            return expanded_x, base_ids.unsqueeze(-1)
-
-        flat_ids = [int(value) for value in base_ids.detach().cpu().tolist()]
-        frames = [self._codec.decode(base_id) for base_id in flat_ids]
-        frame_tensor = torch.tensor(frames, dtype=base_ids.dtype, device=base_ids.device)
-        return expanded_x, frame_tensor
-
-    def eval(
+    def evaluate(
         self,
         corpus: Iterable[Sequence[Sequence[int]]],
         *,
         show_progress: bool = True,
         top_k: int = 100,
     ) -> EvalStats:
-        return evaluate(
+        return run_eval(
             corpus,
-            self._codec,
             self.encode,
             token_lengths=self._core.token_lengths(),
             vocab_size=self.vocab_size,
             show_progress=show_progress,
-            top_k=eval_top_k(top_k),
+            top_k=top_k,
         )
 
     def save_pretrained(self, path: str | Path) -> Path:

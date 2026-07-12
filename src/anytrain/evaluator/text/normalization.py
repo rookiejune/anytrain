@@ -4,8 +4,9 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Union
 
-TextInput = str | Sequence[str]
+TextInput = Union[str, Sequence[str]]
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ def coerce_text_batch(
 ) -> tuple[str, ...]:
     if isinstance(text, str):
         return (text,)
-    if isinstance(text, bytes | bytearray) or not isinstance(text, Sequence):
+    if isinstance(text, (bytes, bytearray)) or not isinstance(text, Sequence):
         raise TypeError(f"{name} must be a string or a sequence of strings.")
 
     values = tuple(text)

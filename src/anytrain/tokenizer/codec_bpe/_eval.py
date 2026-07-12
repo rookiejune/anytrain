@@ -3,16 +3,21 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from typing import TypedDict
 
 from ._core import progress
-from ._frame import FrameCodec, frame_tuple
 
 LENGTH_QUANTILES = (0.5, 0.9, 0.95, 0.99)
 
 
-@dataclass(frozen=True)
-class EvalStats:
+class TopToken(TypedDict):
+    token_id: int
+    count: int
+    frequency: float
+    length: int
+
+
+class EvalStats(TypedDict):
     num_sequences: int
     original_frames: int
     encoded_tokens: int
@@ -22,7 +27,7 @@ class EvalStats:
     compression_factor: float
     compression_gain: float
     token_count_histogram: dict[int, int]
-    top_token_counts: tuple[tuple[int, int, float, int], ...]
+    top_token_counts: tuple[TopToken, ...]
     num_used_tokens: int
     vocab_coverage: float
     entropy: float
@@ -40,7 +45,6 @@ class EvalStats:
 
 def evaluate(
     corpus: Iterable[Sequence[Sequence[int]]],
-    codec: FrameCodec,
     encode: Callable[[Sequence[Sequence[int]]], Sequence[int]],
     *,
     token_lengths: Mapping[int, int],
@@ -48,15 +52,17 @@ def evaluate(
     show_progress: bool,
     top_k: int,
 ) -> EvalStats:
+    if top_k < 0:
+        raise ValueError("top_k must be non-negative")
+
     num_sequences = 0
     original_frames = 0
     encoded_tokens = 0
     token_counts: Counter[int] = Counter()
     for seq in progress(corpus, enabled=show_progress, desc="CodecBPE eval"):
-        frames = tuple(frame_tuple(frame, codec.codebook_sizes) for frame in seq)
-        encoded = tuple(encode(frames))
+        encoded = tuple(encode(seq))
         num_sequences += 1
-        original_frames += len(frames)
+        original_frames += len(seq)
         encoded_tokens += len(encoded)
         token_counts.update(encoded)
 
@@ -87,18 +93,18 @@ def eval_stats(
         raise ValueError("corpus must contain at least one frame")
 
     compression_ratio = encoded_tokens / original_frames
-    compression_factor = original_frames / encoded_tokens if encoded_tokens else float("inf")
+    compression_factor = original_frames / encoded_tokens
     count_histogram = Counter(token_counts.values())
     entropy = -sum(
         (count / encoded_tokens) * math.log(count / encoded_tokens)
         for count in token_counts.values()
     )
     top_counts = tuple(
-        (
-            token_id,
-            count,
-            count / encoded_tokens,
-            token_lengths[token_id],
+        TopToken(
+            token_id=token_id,
+            count=count,
+            frequency=count / encoded_tokens,
+            length=token_lengths[token_id],
         )
         for token_id, count in sorted(
             token_counts.items(),
@@ -167,9 +173,3 @@ def length_quantiles(length_counts: Mapping[int, int]) -> dict[str, float]:
                 quantiles[f"p{round(quantile * 100):02d}"] = float(length)
                 break
     return quantiles
-
-
-def top_k(top_k: int) -> int:
-    if top_k < 0:
-        raise ValueError("top_k must be non-negative")
-    return top_k

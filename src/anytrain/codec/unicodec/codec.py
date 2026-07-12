@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
 from typing import Any, Union
 
 import torch
 from torch import Tensor, nn
 from typing_extensions import TypeAlias
 
+from .._audio import resample
 from .assets import UniCodecAssets, ensure_unicodec_assets
 
 Domain: TypeAlias = Union[str, int]
+SAMPLE_RATE = 24_000
+NUM_CHANNELS = 1
+DEFAULT_CODEBOOK_SIZE = 16_384
 
 
 class UniCodec(nn.Module):
@@ -19,12 +22,19 @@ class UniCodec(nn.Module):
         model: nn.Module,
         device: torch.device,
         assets: UniCodecAssets,
+        *,
+        domain: Domain = "0",
+        bandwidth_id: int = 0,
     ) -> None:
         super().__init__()
 
         self.model = model
         self.device = device
         self.assets = assets
+        self.domain = _domain(domain)
+        self.bandwidth_id = bandwidth_id
+        self.sample_rate = SAMPLE_RATE
+        self.codebook_sizes = _codebook_sizes(model)
 
     @classmethod
     def from_pretrained(
@@ -35,6 +45,8 @@ class UniCodec(nn.Module):
         config_name: str | None = None,
         checkpoint_filename: str | None = None,
         device: str | torch.device | None = None,
+        domain: Domain = "0",
+        bandwidth_id: int = 0,
         local_files_only: bool = False,
         force_download: bool = False,
     ) -> UniCodec:
@@ -60,100 +72,105 @@ class UniCodec(nn.Module):
         model = model.to(resolved_device)
         model.eval()
 
-        return cls(model=model, device=resolved_device, assets=assets)
+        return cls(
+            model=model,
+            device=resolved_device,
+            assets=assets,
+            domain=domain,
+            bandwidth_id=bandwidth_id,
+        )
 
     @torch.no_grad()
     def encode(
         self,
         audio: Tensor,
-        domain: Domain | Sequence[Domain],
-        *,
-        bandwidth_id: int | Tensor = 0,
+        sample_rate: int,
     ) -> Tensor:
-        _, codes = self.encode_features(audio, domain, bandwidth_id=bandwidth_id)
+        _, codes = self.encode_features(audio, sample_rate)
         return codes
 
     @torch.no_grad()
     def encode_features(
         self,
         audio: Tensor,
-        domain: Domain | Sequence[Domain],
-        *,
-        bandwidth_id: int | Tensor = 0,
+        sample_rate: int,
     ) -> tuple[Tensor, Tensor]:
-        if audio.dim() != 2:
-            raise ValueError("UniCodec encode expects audio shape [batch, time].")
+        if audio.dim() != 3 or audio.size(1) != NUM_CHANNELS:
+            raise ValueError("UniCodec encode expects mono audio shape [batch, 1, time].")
 
-        domains = _resolve_domains(domain, audio.size(0))
-        cond = _resolve_bandwidth_id(bandwidth_id, self.device)
+        audio = resample(audio, sample_rate, self.sample_rate).squeeze(1)
+        domains = (self.domain,) * audio.size(0)
+        cond = _bandwidth_id(self.bandwidth_id, self.device)
         features, codes = self.model.encode_infer(
             audio.to(self.device),
             domains,
             bandwidth_id=cond,
         )
-        return features, codes
+        codes = codes.permute(1, 2, 0).contiguous()
+        self._validate_codes(codes)
+        return features.transpose(1, 2), codes
 
     @torch.no_grad()
     def decode(
         self,
         codes: Tensor,
-        *,
-        bandwidth_id: int | Tensor = 0,
     ) -> Tensor:
-        return self.decode_features(
-            self.codes_to_features(codes),
-            bandwidth_id=bandwidth_id,
-        )
+        return self.decode_features(self.codes_to_features(codes))
 
     @torch.no_grad()
     def decode_features(
         self,
         features: Tensor,
-        *,
-        bandwidth_id: int | Tensor = 0,
     ) -> Tensor:
-        cond = _resolve_bandwidth_id(bandwidth_id, self.device)
-        return self.model.decode(features.to(self.device), bandwidth_id=cond)
+        cond = _bandwidth_id(self.bandwidth_id, self.device)
+        audio = self.model.decode(
+            features.transpose(1, 2).to(self.device),
+            bandwidth_id=cond,
+        )
+        return audio.unsqueeze(1)
 
     @torch.no_grad()
     def codes_to_features(self, codes: Tensor) -> Tensor:
-        return self.model.codes_to_features(codes.to(self.device))
+        self._validate_codes(codes)
+        backend_codes = codes.permute(2, 0, 1).contiguous().to(self.device)
+        return self.model.codes_to_features(backend_codes).transpose(1, 2)
 
     @torch.no_grad()
     def reconstruct(
         self,
         audio: Tensor,
-        domain: Domain | Sequence[Domain],
-        *,
-        bandwidth_id: int | Tensor = 0,
+        sample_rate: int,
     ) -> Tensor:
-        codes = self.encode(audio, domain, bandwidth_id=bandwidth_id)
-        return self.decode(codes, bandwidth_id=bandwidth_id)
+        return self.decode(self.encode(audio, sample_rate))
 
+    def _validate_codes(self, codes: Tensor) -> None:
+        if codes.dim() != 3:
+            raise ValueError("codes must have shape [batch, time, codebook].")
+        if codes.shape[-1] != len(self.codebook_sizes):
+            raise ValueError(
+                f"codes must contain {len(self.codebook_sizes)} aligned codebooks."
+            )
+        if codes.dtype == torch.bool or torch.is_floating_point(codes) or torch.is_complex(codes):
+            raise TypeError("codes must contain integer ids.")
 
-def _resolve_domains(domain: Domain | Sequence[Domain], batch_size: int) -> tuple[str, ...]:
-    if isinstance(domain, (str, int)):
-        domains = (domain,) * batch_size
-    else:
-        domains = tuple(domain)
-        if len(domains) != batch_size:
-            raise ValueError("UniCodec domain sequence must match audio batch size.")
-
-    resolved = tuple(_resolve_domain(item) for item in domains)
-    return resolved
-
-
-def _resolve_domain(domain: Domain) -> str:
+def _domain(domain: Domain) -> str:
     value = str(domain)
     if value not in {"0", "1", "2"}:
         raise ValueError("UniCodec domain must be one of '0', '1', or '2'.")
     return value
 
 
-def _resolve_bandwidth_id(bandwidth_id: int | Tensor, device: torch.device) -> Tensor:
-    if isinstance(bandwidth_id, Tensor):
-        return bandwidth_id.to(device)
+def _bandwidth_id(bandwidth_id: int, device: torch.device) -> Tensor:
     return torch.tensor([bandwidth_id], device=device)
+
+
+def _codebook_sizes(model: nn.Module) -> tuple[int, ...]:
+    feature_extractor = getattr(model, "feature_extractor", None)
+    encodec = getattr(feature_extractor, "encodec", None)
+    quantizer = getattr(encodec, "quantizer", None)
+    num_codebooks = int(getattr(quantizer, "n_q", 1))
+    codebook_size = int(getattr(quantizer, "bins", DEFAULT_CODEBOOK_SIZE))
+    return (codebook_size,) * num_codebooks
 
 
 def _resolve_device(device: str | torch.device | None) -> torch.device:

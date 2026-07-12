@@ -150,7 +150,7 @@ class UTMOSEvaluator(EvaluatorABC):
         if self._is_number(score):
             return [float(score)]
 
-        if isinstance(score, bytes | bytearray | str) or not isinstance(score, Sequence):
+        if isinstance(score, (bytes, bytearray, str)) or not isinstance(score, Sequence):
             raise TypeError("UTMOS backend score must be a float or a sequence of floats.")
 
         scores = list(score)
@@ -163,4 +163,4 @@ class UTMOSEvaluator(EvaluatorABC):
         return [float(value) for value in scores]
 
     def _is_number(self, value: object) -> bool:
-        return not isinstance(value, bool) and isinstance(value, float | int)
+        return not isinstance(value, bool) and isinstance(value, (float, int))

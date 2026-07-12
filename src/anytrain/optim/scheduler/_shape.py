@@ -13,7 +13,7 @@ class CurveShape(StrEnum):
     COSINE = auto()
 
 
-def normalize_curve_shape(shape: CurveShape | str) -> CurveShape:
+def curve_shape(shape: CurveShape | str) -> CurveShape:
     if isinstance(shape, CurveShape):
         return shape
     if not isinstance(shape, str):
@@ -24,4 +24,4 @@ def normalize_curve_shape(shape: CurveShape | str) -> CurveShape:
         raise ValueError("curve shape must be constant, linear, or cosine.") from error
 
 
-__all__ = ["CurveShape", "normalize_curve_shape"]
+__all__ = ["CurveShape", "curve_shape"]

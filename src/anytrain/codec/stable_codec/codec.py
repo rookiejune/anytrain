@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from math import prod
 from typing import Any, Literal, Union
 
 import torch
 from torch import Tensor, nn
 from typing_extensions import TypeAlias
+
+from .._audio import resample
 
 SupportedVersion = Literal["speech-16k", "speech-16k-base"]
 PosthocBottleneckPreset = Literal[
@@ -23,7 +26,12 @@ DEFAULT_VERSION: SupportedVersion = "speech-16k"
 DEFAULT_PRETRAINED_MODEL = f"stabilityai/stable-codec-{DEFAULT_VERSION}"
 SAMPLE_RATE = 16_000
 NUM_CHANNELS = 1
-DEFAULT_SEMANTIC_VOCAB_SIZE = 46_656
+DEFAULT_CODEBOOK_SIZE = 46_656
+POSTHOC_CODEBOOK_SIZES: dict[PosthocBottleneckPreset, tuple[int, ...]] = {
+    "1x46656_400bps": (46_656,),
+    "2x15625_700bps": (15_625, 15_625),
+    "4x729_1000bps": (729, 729, 729, 729),
+}
 
 
 class StableCodec(nn.Module):
@@ -35,15 +43,17 @@ class StableCodec(nn.Module):
         model: nn.Module,
         device: torch.device,
         *,
-        posthoc_bottleneck: bool = False,
+        posthoc_bottleneck: PosthocBottleneck | None = None,
+        normalize: bool = True,
     ) -> None:
         super().__init__()
 
         self.model = model
         self.device = device
-        self.posthoc_bottleneck = posthoc_bottleneck
+        self.posthoc_bottleneck = posthoc_bottleneck is not None
+        self.normalize = normalize
         self.sample_rate = int(getattr(model, "sample_rate", SAMPLE_RATE))
-        self.semantic_vocab_size = _semantic_vocab_size(model)
+        self.codebook_sizes = _codebook_sizes(model, posthoc_bottleneck)
 
     @classmethod
     def from_pretrained(
@@ -53,6 +63,7 @@ class StableCodec(nn.Module):
         pretrained_model: str | None = None,
         device: str | torch.device | None = None,
         posthoc_bottleneck: PosthocBottleneck | None = None,
+        normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
         resolved_device = _resolve_device(device)
@@ -66,7 +77,8 @@ class StableCodec(nn.Module):
         return cls(
             model=model,
             device=resolved_device,
-            posthoc_bottleneck=posthoc_bottleneck is not None,
+            posthoc_bottleneck=posthoc_bottleneck,
+            normalize=normalize,
         )
 
     @classmethod
@@ -77,6 +89,7 @@ class StableCodec(nn.Module):
         ckpt_path: str | os.PathLike[str] | None = None,
         device: str | torch.device | None = None,
         posthoc_bottleneck: PosthocBottleneck | None = None,
+        normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
         resolved_device = _resolve_device(device)
@@ -91,23 +104,19 @@ class StableCodec(nn.Module):
         return cls(
             model=model,
             device=resolved_device,
-            posthoc_bottleneck=posthoc_bottleneck is not None,
+            posthoc_bottleneck=posthoc_bottleneck,
+            normalize=normalize,
         )
 
     @torch.no_grad()
     def encode(
         self,
         audio: Tensor,
-        *,
-        normalize: bool = True,
-        posthoc_bottleneck: bool | None = None,
-        **kwargs: Any,
+        sample_rate: int,
     ) -> Tensor:
         _, tokens = self.encode_latents(
             audio,
-            normalize=normalize,
-            posthoc_bottleneck=posthoc_bottleneck,
-            **kwargs,
+            sample_rate,
         )
         return tokens
 
@@ -115,67 +124,55 @@ class StableCodec(nn.Module):
     def encode_latents(
         self,
         audio: Tensor,
-        *,
-        normalize: bool = True,
-        posthoc_bottleneck: bool | None = None,
-        **kwargs: Any,
+        sample_rate: int,
     ) -> tuple[Tensor, Tensor]:
         if audio.dim() != 3:
             raise ValueError("StableCodec encode expects audio shape [batch, channels, time].")
         if audio.size(1) != NUM_CHANNELS:
             raise ValueError("StableCodec speech-16k expects mono audio with shape [batch, 1, time].")
 
+        audio = resample(audio, sample_rate, self.sample_rate)
         latents, tokens = self.model.encode(
             audio.to(self.device),
-            posthoc_bottleneck=self._resolve_posthoc(posthoc_bottleneck),
-            normalize=normalize,
-            **kwargs,
+            posthoc_bottleneck=self.posthoc_bottleneck,
+            normalize=self.normalize,
         )
+        self._validate_codes(tokens)
         return latents, tokens
 
     @torch.no_grad()
     def decode(
         self,
         tokens: Tensor,
-        *,
-        posthoc_bottleneck: bool | None = None,
-        **kwargs: Any,
     ) -> Tensor:
+        self._validate_codes(tokens)
         return self.model.decode(
             tokens.to(self.device),
-            posthoc_bottleneck=self._resolve_posthoc(posthoc_bottleneck),
-            **kwargs,
+            posthoc_bottleneck=self.posthoc_bottleneck,
         )
 
     @torch.no_grad()
     def reconstruct(
         self,
         audio: Tensor,
-        *,
-        normalize: bool = True,
-        posthoc_bottleneck: bool | None = None,
-        **kwargs: Any,
+        sample_rate: int,
     ) -> Tensor:
-        tokens = self.encode(
-            audio,
-            normalize=normalize,
-            posthoc_bottleneck=posthoc_bottleneck,
-            **kwargs,
-        )
-        return self.decode(
-            tokens,
-            posthoc_bottleneck=posthoc_bottleneck,
-            **kwargs,
-        )
+        return self.decode(self.encode(audio, sample_rate))
 
     def set_posthoc_bottleneck(self, stages: PosthocBottleneck) -> None:
         self.model.set_posthoc_bottleneck(stages)
         self.posthoc_bottleneck = True
+        self.codebook_sizes = _posthoc_codebook_sizes(stages)
 
-    def _resolve_posthoc(self, value: bool | None) -> bool:
-        if value is not None:
-            return value
-        return self.posthoc_bottleneck
+    def _validate_codes(self, codes: Tensor) -> None:
+        if codes.dim() != 3:
+            raise ValueError("codes must have shape [batch, time, codebook].")
+        if codes.shape[-1] != len(self.codebook_sizes):
+            raise ValueError(
+                f"codes must contain {len(self.codebook_sizes)} aligned codebooks."
+            )
+        if codes.dtype == torch.bool or torch.is_floating_point(codes) or torch.is_complex(codes):
+            raise TypeError("codes must contain integer ids.")
 
 
 def _resolve_device(device: str | torch.device | None) -> torch.device:
@@ -195,14 +192,26 @@ def _load_stable_codec_model() -> Any:
     return UpstreamStableCodec
 
 
-def _semantic_vocab_size(model: nn.Module) -> int:
+def _codebook_sizes(
+    model: nn.Module,
+    posthoc_bottleneck: PosthocBottleneck | None,
+) -> tuple[int, ...]:
+    if posthoc_bottleneck is not None:
+        return _posthoc_codebook_sizes(posthoc_bottleneck)
+
     for name in ("semantic_vocab_size", "codebook_size", "cardinality"):
         value = getattr(model, name, None)
         if value is not None:
-            return int(value)
+            return (int(value),)
     bottleneck = getattr(model, "bottleneck", None)
     if bottleneck is not None:
         value = getattr(bottleneck, "codebook_size", None)
         if value is not None:
-            return int(value)
-    return DEFAULT_SEMANTIC_VOCAB_SIZE
+            return (int(value),)
+    return (DEFAULT_CODEBOOK_SIZE,)
+
+
+def _posthoc_codebook_sizes(stages: PosthocBottleneck) -> tuple[int, ...]:
+    if isinstance(stages, str):
+        return POSTHOC_CODEBOOK_SIZES[stages]
+    return tuple(prod(levels) for levels, _ in stages)

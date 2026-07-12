@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Union
 
 import torch
 from torch import nn
 
-MetricValue = float | torch.Tensor
+MetricValue = Union[float, torch.Tensor]
 MetricDict = dict[str, MetricValue]
 
 

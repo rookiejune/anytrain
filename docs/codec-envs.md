@@ -1,0 +1,124 @@
+# Codec Environments
+
+`anytrain.codec` 的边界是 optional thin wrapper：core 包不安装具体 codec
+上游依赖，wrapper 只在用户显式调用时导入上游包。codec 依赖如果能和主训练环境共存，
+可以放进 extra；如果上游 pin 旧版 torch、Python 或 pip，就使用独立环境先离线生成
+codes/cache，再由主训练环境读取产物。
+
+## Fudan smoke 2026-07-11
+
+测试目录：
+
+- `122:/mnt/pami202/zhuyin/dynamic/debug/anytrain-codec-smoke`
+- `121:/mnt/pami202/zhuyin/dynamic/debug/anytrain-codec-smoke`
+
+结果：
+
+- DAC：`122` 的 `py312` 环境已有 `dac==1.0.0`，`torch==2.7.0+cu128`。
+  随机初始化的小 DAC 模型在 CPU 上完成 encode/decode，说明 DAC 代码路径可与当前
+  py312/torch2.7+ 环境共存。官方预训练权重在 GitHub release，`121` 上直接下载
+  `descriptinc/descript-audio-codec` release 30s 超时；真实权重 smoke 需要预置缓存
+  或可用下载镜像。
+- UniCodec：本地 `UniCodec` 源码在 `py312` 下能被加入 `PYTHONPATH`，但导入
+  `Unicodec` 时缺 `fairseq`。`fairseq` 在 `py312` + pip 26 下解析/构建失败；
+  在 isolated `py39` 中降到 pip 24.0 后，metadata 问题消失，但 resolver 会继续拉取
+  大体积 torch wheel。UniCodec 不应进入 core；如果需要真实 smoke，先在 codec 专用
+  环境里固定 torch，再安装 `fairseq` 等旧依赖。
+- Stable Codec：`stable-codec==0.1.2` 在 `py312` dry-run 中要求
+  `torch==2.4`、`torchaudio==2.4`、`stable-audio-tools==0.0.17`，并在
+  `pandas==2.0.2` 处开始源码构建后失败。`121` 上 isolated `py39` 环境已完成真实安装：
+  `python==3.9.25`、`stable-codec==0.1.2`、`torch==2.4.0+cu121`、
+  `torchaudio==2.4.0+cu121`、`torchvision==0.19.0+cu121`，CUDA 可见
+  `NVIDIA A100-PCIE-40GB`。安装前需要先处理 `pypesq==1.2.4` 的旧构建链：
+  `numpy==1.23.5`、`Cython`、`pip==24.0`、`setuptools==59.8.0`，再用
+  `CFLAGS="-fcommon" pip install --no-build-isolation pypesq==1.2.4`。Stable Codec
+  应使用独立 py39/torch2.4 环境，不放进 `anytrain` extra 自动安装。安装匹配
+  torch 2.4/CUDA 12.1 的 `flash-attn==2.7.4.post1` 后，已在 `121` A100 上用统一接口
+  完成真实 1 秒静音 roundtrip：`codebook_sizes == (46656,)`，codes shape 是
+  `(1, 25, 1)`，decode 输出 `(1, 1, 16000)` 且数值有限。
+
+## Policy
+
+- `anytrain` core 继续保持宽 Python 约束和当前 torch 主线，不为旧 codec 整体降级。
+- DAC 已作为普通 optional codec wrapper 接入；wrapper 使用显式 `cache_dir` 或
+  `ANYTRAIN_HOME/dac`，不调用上游硬编码到 `Path.home()/.cache/descript/dac` 的下载入口。
+- UniCodec wrapper 保持 optional；不要让 pip 在主环境里自由解析 `fairseq` 和 torch。
+- Stable Codec wrapper 保持 optional；文档要求用户在独立兼容环境中安装上游包和
+  FlashAttention。
+
+## UniCodec smoke 2026-07-13
+
+`121` 已完成真实 speech encode/decode。输入沿用 LongCat 和 Stable Codec 对比使用的
+6 秒单声道音频：16 kHz 文件 SHA-256 为
+`4961d000272d1963372b7f98e79452368bca9a7b54dc0c0b08717004f12d4db0`，统一重采样并
+重新读取为 24 kHz、144000 samples 后传给 UniCodec。
+
+运行环境和结果：
+
+- Python 3.9，`torch==2.4.0+cu121`，`torchaudio==2.4.0+cu121`，
+  `fairseq==0.12.2`，GPU 为 A100 40 GB。
+- checkpoint 为 `Yidiii/UniCodec_ckpt/unicode.ckpt`，SHA-256 为
+  `36c387bf6385b46420c1428eefbc3dedef24dfc5e7197b9d08e2e26260820096`。
+- speech domain `0`、bandwidth id `0` 生成 codes `[1, 450, 1]`，码本大小 16384。
+- codes 反量化后的 features 与 encode 返回 features 的最大绝对误差为
+  `5.96e-08`，说明离散 codes roundtrip 与模型量化输出一致。
+- decode 输出为 24 kHz、144000 samples；对齐输入后的 MSE 为 `0.0009833`，SNR 为
+  `4.66 dB`。音频与完整 metadata 放在顶层
+  `debug/codec-reconstruct-compare-20260712/`，不进入项目仓库。
+
+真实 smoke 同时发现并修复了 `rookiejune/UniCodec` fork 的 SimVQ 反量化边界：
+`Unicodec.codes_to_features()` 现在通过 quantizer 的公开 `decode()`，`SimVQ1D.decode()`
+使用与 encode 相同的 projected codebook。
+
+## Stable Codec py39 recipe
+
+`121` 已验证环境位置：
+
+```bash
+base=/mnt/pami202/zhuyin/dynamic/debug/stable-codec-py39
+python=$base/env/bin/python
+```
+
+推荐复现步骤：
+
+```bash
+export TMPDIR=$base/tmp
+export PIP_CACHE_DIR=$base/pip-cache
+export CONDA_PKGS_DIRS=$base/conda-pkgs
+
+conda create -y -p "$base/env" python=3.9
+"$python" -m pip install pip==24.0 setuptools==59.8.0 wheel Cython numpy==1.23.5
+CFLAGS="-fcommon" "$python" -m pip install --no-build-isolation pypesq==1.2.4
+CFLAGS="-fcommon" "$python" -m pip install stable-codec==0.1.2
+```
+
+验证命令：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 "$python" - <<'PY'
+import inspect
+import torch
+from stable_codec import StableCodec
+
+print(torch.__version__, torch.version.cuda, torch.cuda.is_available())
+print(inspect.signature(StableCodec))
+print(inspect.signature(StableCodec.encode))
+print(inspect.signature(StableCodec.decode))
+print(inspect.signature(StableCodec.set_posthoc_bottleneck))
+PY
+```
+
+`stable-codec==0.1.2` 的上游 API：
+
+- `StableCodec(model_config_path=None, ckpt_path=None, pretrained_model=None, device=torch.device("cpu"))`
+- `encode(audio, posthoc_bottleneck=False, normalize=True, **kwargs)` 返回
+  `(continuous_latents, tokens)`，tokens 形状为 `(B, S, 1)`。
+- `decode(tokens, posthoc_bottleneck=False, **kwargs)` 接收 tokens，返回 `(B, C, L)` waveform。
+- `set_posthoc_bottleneck(stages)` 支持 preset 字符串或 stage 配置。
+
+因此 `anytrain.codec.stable_codec.StableCodec` 继续作为 optional thin wrapper：
+`from_pretrained()` / `from_config()` 只负责加载上游模型，`encode()` 返回统一的
+`[batch, frame, codebook]` codes，`encode_latents()` 暴露上游 latent/code 边界，
+`decode()` 接收 codes。现有 wrapper
+签名和上游 `0.1.2` 对齐，不需要为了 Stable Codec 修改 `anytrain` 主环境或
+`pyproject.toml`。

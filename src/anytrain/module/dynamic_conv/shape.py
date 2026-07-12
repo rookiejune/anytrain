@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import overload
+from typing import Union, overload
 
 from torch import Size
 
 from anytrain._compat import strict_zip
 
-SizeLike = int | Sequence[int] | Size
+SizeLike = Union[int, Sequence[int], Size]
 
 
 @overload

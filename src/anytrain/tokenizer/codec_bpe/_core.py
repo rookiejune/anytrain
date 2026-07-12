@@ -4,9 +4,9 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
-import torch
-
 from anytrain._compat import Self
+
+from ._deps import training_classes
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
@@ -25,7 +25,7 @@ class CoreBPE:
     def __init__(
         self,
         tokens: Mapping[int, Sequence[int]],
-        merges: Sequence[Merge | tuple[int, int, int]] = (),
+        merges: Sequence[Merge] = (),
     ) -> None:
         if not tokens:
             raise ValueError("tokens must not be empty")
@@ -43,6 +43,9 @@ class CoreBPE:
 
     @property
     def vocab_size(self) -> int:
+        # Assumes token ids are contiguous from 0, which holds for ids produced
+        # by tokenizers training. Callers that inject sparse ids must remap them
+        # before relying on this bound.
         return max(self.tokens) + 1
 
     @classmethod
@@ -71,58 +74,17 @@ class CoreBPE:
         tokens, merges = core_state_from_tokenizer(tokenizer, base_tokens)
         return cls(tokens, merges)
 
-    def base_ids(self, token_id: int) -> tuple[int, ...]:
-        if token_id in self.tokens:
-            return self.tokens[token_id]
-        raise KeyError(f"unknown token_id: {token_id}")
-
-    def decode_with_counts(self, token_ids: Sequence[int]) -> tuple[list[int], list[int]]:
+    def decode(self, token_ids: Sequence[int]) -> list[int]:
         if not token_ids:
             raise ValueError("token_ids must not be empty")
 
         base_ids: list[int] = []
-        counts: list[int] = []
         for token_id in token_ids:
-            ids = self.base_ids(token_id)
-            base_ids.extend(ids)
-            counts.append(len(ids))
-        return base_ids, counts
-
-    def repeat_interleave(
-        self,
-        x: torch.Tensor,
-        token_ids: torch.Tensor,
-        *,
-        dim: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if x.dim() == 0:
-            raise ValueError("x must have at least one dimension")
-        self.validate_token_ids(token_ids)
-        if token_ids.dim() != 1:
-            raise ValueError("token_ids must be a 1D tensor")
-
-        dim = self.dim(dim, x.dim())
-        if x.size(dim) != token_ids.numel():
-            raise ValueError("x and token_ids must align on the sequence dimension")
-
-        ids = [int(token_id) for token_id in token_ids.detach().cpu().tolist()]
-        base_ids, counts = self.decode_with_counts(ids)
-        repeats = torch.tensor(counts, dtype=torch.long, device=x.device)
-        expanded_x = torch.repeat_interleave(x, repeats, dim=dim)
-        expanded_ids = torch.tensor(base_ids, dtype=token_ids.dtype, device=token_ids.device)
-        return expanded_x, expanded_ids
+            base_ids.extend(self.tokens[token_id])
+        return base_ids
 
     def token_lengths(self) -> dict[int, int]:
         return {token_id: len(base_ids) for token_id, base_ids in self.tokens.items()}
-
-    @staticmethod
-    def validate_token_ids(token_ids: torch.Tensor) -> None:
-        if (
-            token_ids.dtype == torch.bool
-            or torch.is_floating_point(token_ids)
-            or torch.is_complex(token_ids)
-        ):
-            raise TypeError("token_ids must contain integer ids")
 
     @staticmethod
     def build_base_to_id(tokens: Mapping[int, tuple[int, ...]]) -> dict[int, int]:
@@ -131,14 +93,6 @@ class CoreBPE:
             if len(base_ids) == 1:
                 base_to_id[base_ids[0]] = token_id
         return base_to_id
-
-    @staticmethod
-    def dim(dim: int, ndim: int) -> int:
-        if dim < 0:
-            dim += ndim
-        if dim < 0 or dim >= ndim:
-            raise ValueError("dim is out of range for x")
-        return dim
 
 
 def private_use_char(index: int) -> str:
@@ -220,10 +174,7 @@ def train_tokenizers_bpe(
     max_token_length: int | None,
     length: int | None,
 ) -> Tokenizer:
-    from tokenizers import Tokenizer
-    from tokenizers.models import BPE
-    from tokenizers.trainers import BpeTrainer
-
+    Tokenizer, BPE, BpeTrainer = training_classes()
     tokenizer = Tokenizer(BPE())
     trainer = BpeTrainer(
         vocab_size=vocab_size,

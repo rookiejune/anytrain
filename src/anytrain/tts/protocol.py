@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Protocol, TypedDict, Unpack, overload
+from typing import Protocol, TypedDict, Union, overload
 
 import torch
 from torch import Tensor
+from typing_extensions import Unpack
 
-AudioReference = str | PathLike[str]
+AudioReference = Union[str, PathLike[str]]
 
 
 class TTSKwargs(TypedDict, total=False):

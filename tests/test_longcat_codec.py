@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import tempfile
 import unittest
@@ -58,7 +60,39 @@ class LongCatCodecTest(unittest.TestCase):
 
                 self.assertIsInstance(codec.encoder, nn.Identity)
                 self.assertIsInstance(codec.decoders["16k_4codebooks"], nn.Identity)
+                self.assertEqual(codec.sample_rate, 16000)
+                self.assertEqual(codec.codebook_sizes, (8192, 90, 90, 90))
                 self.assertNotIn("LONGCAT_AUDIO_CODEC_CKPT_DIR", os.environ)
+
+    def test_encode_returns_time_major_aligned_codebooks(self):
+        codec = LongCat(
+            encoder=FakeLongCatEncoder(),
+            decoders={"16k_4codebooks": FakeLongCatDecoder()},
+            device=torch.device("cpu"),
+            assets=_assets(),
+        )
+
+        codes = codec.encode(torch.zeros((2, 1, 12)), 16000)
+
+        self.assertEqual(tuple(codes.shape), (2, 2, 4))
+        self.assertTrue(torch.equal(codes[..., 0], torch.tensor([[7, 8], [7, 8]])))
+        self.assertTrue(torch.equal(codes[..., 1:], torch.ones((2, 2, 3), dtype=torch.long)))
+
+    def test_decode_splits_time_major_codebooks_for_backend(self):
+        decoder = FakeLongCatDecoder()
+        codec = LongCat(
+            encoder=FakeLongCatEncoder(),
+            decoders={"16k_4codebooks": decoder},
+            device=torch.device("cpu"),
+            assets=_assets(),
+        )
+        codes = torch.arange(16).reshape(2, 2, 4)
+
+        audio = codec.decode(codes)
+
+        self.assertEqual(tuple(audio.shape), (2, 1, 6))
+        self.assertTrue(torch.equal(decoder.semantic_codes, codes[..., 0]))
+        self.assertTrue(torch.equal(decoder.acoustic, codes[..., 1:].transpose(1, 2)))
 
     def test_acoustic_codes_to_features_exposes_decoder_latents_as_time_major(self):
         decoder = FakeLongCatDecoder()
@@ -111,6 +145,8 @@ class LongCatCodecTest(unittest.TestCase):
 class FakeLongCatDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.n_codebooks = 3
+        self.acoustic_codebook_size = 90
         self.codes: torch.Tensor | None = None
         self.features: torch.Tensor | None = None
         self.semantic_codes: torch.Tensor | None = None
@@ -125,6 +161,20 @@ class FakeLongCatDecoder(nn.Module):
         self.semantic_codes = semantic_codes
         self.acoustic = acoustic
         return torch.ones((semantic_codes.size(0), 1, acoustic.size(-1) * 3))
+
+
+class FakeLongCatEncoder(nn.Module):
+    def forward(
+        self,
+        audio: torch.Tensor,
+        sample_rate: int,
+        *,
+        n_acoustic_codebooks: int,
+    ):
+        batch = audio.size(0)
+        semantic = torch.tensor([[7, 8]]).expand(batch, -1)
+        acoustic = torch.ones((batch, n_acoustic_codebooks, 2), dtype=torch.long)
+        return semantic, acoustic
 
 
 def _assets() -> LongCatAssets:

@@ -248,22 +248,22 @@ class _OpenAIWhisperBackend:
     def _coerce_temperature_values(self, temperature: object) -> tuple[float, ...] | None:
         if isinstance(temperature, bool):
             return None
-        if isinstance(temperature, int | float):
+        if isinstance(temperature, (int, float)):
             return (float(temperature),)
-        if isinstance(temperature, bytes | bytearray | str) or not isinstance(
+        if isinstance(temperature, (bytes, bytearray, str)) or not isinstance(
             temperature, Sequence
         ):
             return None
 
         values: list[float] = []
         for value in temperature:
-            if isinstance(value, bool) or not isinstance(value, int | float):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
                 return None
             values.append(float(value))
         return tuple(values) if values else None
 
     def _coerce_decode_result_batch(self, result: object, expected_length: int) -> list[object]:
-        if isinstance(result, Sequence) and not isinstance(result, str | bytes | bytearray):
+        if isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
             values = list(result)
         else:
             values = [result]

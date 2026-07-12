@@ -26,7 +26,9 @@
 - `anytrain.optim`：optimizer、scheduler 和 LLM/Muon helper。
 - `anytrain.module`：task-agnostic `torch.nn.Module` 积木。
 
-Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
+Lightning、Torch 和 einops 是 core 依赖。`module` 顶层的 ADT、dynamic conv 和
+quantization 默认可用；只有 Qwen3 builder 需要 `module` extra。Muon 是否可用取决于当前
+PyTorch 是否提供 `torch.optim.Muon`，不影响其余 core API。
 
 ### Optional General
 
@@ -34,6 +36,7 @@ Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 
 - `plotter`：matplotlib/plotly/seaborn 等可视化。
 - `chat`：环境变量驱动的大模型调用入口，用于训练工程里的实验总结、日志解释和 LLM 辅助评估原型。
+- `tokenizer`：基于 Hugging Face `tokenizers` 的 codec frame BPE。
 - metrics evaluator：基于 torchmetrics 的通用分类/回归指标。
 - third-party logger backend：wandb、mlflow 等。
 
@@ -41,9 +44,10 @@ Lightning 是 core 依赖，测试不应把 Lightning 当成 optional。
 
 这些组件由 `anytrain` 提供，但用户显式安装对应 extra：
 
-- audio：spectral loss、codec/speech evaluator、audio plotter。
+- audio：spectral loss、codec wrapper、speech evaluator、audio plotter。
 - text：文本生成/分类 evaluator。
 - speech：WER/CER/ASR 相关 evaluator。
+- TTS：公共协议保留轻量，具体 backend adapter 通过对应 extra 安装。
 
 ### Optional Framework
 
@@ -106,6 +110,16 @@ class MyPLModule(pl.LightningModule):
 
 提供下游 LightningModule 可显式组合的 task-agnostic `torch.nn.Module` 积木，例如 Adaptive Dirichlet Tempering、1D Dynamic Conv 和量化模块。`einops` 是默认依赖，用于保持动态层 shape 变换可读；需要其它额外依赖的组件通过 `module` extra 暴露，不进入 package root import。
 
+### `idspace` / `tokenizer`
+
+`idspace` 是 core 的 local/global token id 映射和 embedding 路由。`tokenizer` 是 optional
+general 算法层；CodecBPE 需要 `tokenizer` extra，不进入 package root import。
+
+### `codec` / `tts`
+
+`codec` 提供 optional audio codec wrapper。`tts` 的协议和输出类型保持轻量，具体 backend
+adapter 按依赖 extra 隔离。两者都不接管数据集、训练 step 或模型组合。
+
 ### `plotter`
 
 提供训练期可视化组件，通常依赖 `plot` extra。plotter 返回图形对象，logging 由下游 LightningModule 负责。
@@ -118,10 +132,6 @@ class MyPLModule(pl.LightningModule):
 
 提供跨项目复用的训练范式，作为 optional/experimental 层，不进入 core。这里的 `framework` 是研究范式组件层，例如 flow matching、MAE 或 GAN helper；不是训练工程入口。
 
-### `utils`
-
-只放跨模块稳定复用的小工具。能放到具体模块里的 helper 不放进 `utils`。
-
 ## 包结构
 
 ```text
@@ -132,12 +142,17 @@ src/anytrain/
   loss/
   evaluator/
   optim/
-  chat/
-  plotter/
-  framework/
   module/
     dynamic_conv/
     quantization/
+  idspace/
+  chat/
+  plotter/
+  tokenizer/
+  codec/
+  tts/
+  framework/
+  example/
 ```
 
 `lightning`、`loss`、`evaluator`、`optim` 和 `module` 是核心体验；`chat`、`plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。

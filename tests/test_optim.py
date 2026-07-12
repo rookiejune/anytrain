@@ -15,6 +15,7 @@ from anytrain.optim import (
     create_llm_optimizer,
     create_muon_adamw_optimizer,
     create_scheduler,
+    muon_available,
     split_adamw_decay_params,
     split_muon_params,
 )
@@ -42,6 +43,8 @@ from anytrain.optim.scheduler import (
     create_scheduler_from_config,
     make_scheduler_config,
 )
+
+MUON_AVAILABLE = muon_available()
 
 
 def _param_ids(params: list[nn.Parameter]) -> set[int]:
@@ -430,6 +433,7 @@ class AdamWOptimizerTest(unittest.TestCase):
                 selected_params=[nn.Parameter(torch.randn(4, 4))],
             )
 
+@unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
 class MuonAdamWOptimizerTest(unittest.TestCase):
     def test_create_muon_adamw_optimizer_returns_composite_optimizer(self):
         model = TinyLLM()
@@ -605,12 +609,14 @@ class LLMOptimizerTest(unittest.TestCase):
 
         self.assertIsInstance(optimizer, torch.optim.AdamW)
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_create_llm_optimizer_uses_composite_for_muon_options(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer(model, preset="pretrain", optimizer="muon")
 
         self.assertIsInstance(optimizer, CompositeOptimizer)
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_create_llm_optimizer_passes_excluded_modules(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer(
@@ -636,6 +642,7 @@ class LLMOptimizerTest(unittest.TestCase):
 
         self.assertEqual(_group_lrs_by_param_id(optimizer)[id(model.lm_head.weight)], 2.0)
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_create_llm_muon_optimizer_passes_lr_scale_rules_to_child_optimizers(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer(
@@ -704,6 +711,7 @@ class LLMOptimizerTest(unittest.TestCase):
         self.assertEqual(set(configured), {"optimizer", "lr_scheduler"})
         self.assertIsInstance(configured["optimizer"], torch.optim.AdamW)
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_composite_optimizer_scheduler_state_round_trip(self):
         model = TinyLLM()
         optimizer = create_muon_adamw_optimizer(
@@ -947,6 +955,7 @@ class LLMOptimizerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "constant"):
             Schedule(phases=(Phase(shape="cosine", duration_steps=-1),))
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_llm_muon_defaults_share_lr_but_split_weight_decay(self):
         model = TinyLLM()
         optimizer = create_llm_optimizer(
@@ -974,6 +983,18 @@ class LLMOptimizerTest(unittest.TestCase):
 
 
 class OptimConfigTest(unittest.TestCase):
+    def test_muon_availability_matches_torch(self):
+        self.assertEqual(MUON_AVAILABLE, getattr(torch.optim, "Muon", None) is not None)
+
+    @unittest.skipIf(MUON_AVAILABLE, "requires a PyTorch version without Muon")
+    def test_muon_creation_reports_version_requirement(self):
+        with self.assertRaisesRegex(RuntimeError, "Python 3.9"):
+            create_muon_adamw_optimizer(
+                TinyLLM(),
+                muon=_muon_options(1e-4),
+                adamw=_adamw_options(1e-4),
+            )
+
     def test_top_level_optim_api_hides_config_classes(self):
         self.assertNotIn("AdamWConfig", optim_api.__all__)
         self.assertNotIn("AdamWOptions", optim_api.__all__)
@@ -1000,6 +1021,7 @@ class OptimConfigTest(unittest.TestCase):
                 LLMOptimizationConfig(optimizer_options={"lr": 1e-4, "betas": (0.9, 1.0)}),
             )
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_muon_options_default_to_match_rms_adamw(self):
         optimizer = create_muon_adamw_optimizer(
             TinyLLM(),
@@ -1012,6 +1034,7 @@ class OptimConfigTest(unittest.TestCase):
             MuonAdjustLRFn.MATCH_RMS_ADAMW,
         )
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_muon_options_accept_adjust_lr_fn_string(self):
         optimizer = create_muon_adamw_optimizer(
             TinyLLM(),
@@ -1021,6 +1044,7 @@ class OptimConfigTest(unittest.TestCase):
 
         self.assertEqual(optimizer.optimizers["muon"].param_groups[0]["adjust_lr_fn"], "original")
 
+    @unittest.skipUnless(MUON_AVAILABLE, "torch.optim.Muon is not available")
     def test_muon_options_delegate_invalid_adjust_lr_fn_to_torch(self):
         with self.assertRaisesRegex(ValueError, "Adjust learning rate"):
             create_muon_adamw_optimizer(

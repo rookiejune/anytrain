@@ -12,10 +12,11 @@
 - [`anytrain.module`](module.md)：task-agnostic `torch.nn.Module` 积木。
 - [`anytrain.idspace`](idspace.md)：统一 token id space 和 block embedding 路由。
 - [`anytrain.tokenizer`](tokenizer.md)：int BPE。
+- [`anytrain.codec`](../codec.md)：optional audio codec wrapper 和统一离散张量契约。
+- [`anytrain.tts`](../tts.md)：TTS 公共协议和 optional backend adapter。
 - [`anytrain.chat`](chat.md)：环境变量驱动的可选大模型调用入口。
 - [`anytrain.plotter`](plotter.md)：可视化组件边界和 optional plot 依赖约定。
 - [`anytrain.framework`](framework.md)：可选研究框架层。
-- [`anytrain.utils`](utils.md)：跨模块小工具边界。
 
 ## 关联文档
 
@@ -25,3 +26,5 @@
 - [`docs/flow-matching-design.md`](../flow-matching-design.md)：Facebook flow matching 的可组合再封装设计。
 - [`docs/gan-framework-design.md`](../gan-framework-design.md)：参考 `deepaudio` 的 GAN framework 迁移设计。
 - [`docs/quantization-migration.md`](../quantization-migration.md)：从 `deepaudio` 迁入量化组件的设计计划。
+- [`docs/codec-envs.md`](../codec-envs.md)：codec optional 依赖环境和 Fudan smoke 记录。
+- [`docs/codec.md`](../codec.md)：codec 统一离散张量接口与各 wrapper 的边界。

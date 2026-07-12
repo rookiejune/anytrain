@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,84 +39,91 @@ class UniCodecCodecTest(unittest.TestCase):
             self.assertEqual(FakeUniCodecFactory.model_path, str(assets["checkpoint"]))
             self.assertEqual(codec.device, torch.device("cpu"))
             self.assertEqual(codec.assets, assets)
+            self.assertEqual(codec.sample_rate, 24000)
+            self.assertEqual(codec.codebook_sizes, (16384,))
             self.assertTrue(codec.model.eval_called)
 
     def test_encode_returns_codes_and_passes_domain_contract(self):
         model = FakeUniCodecModel()
-        codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets())
-        audio = torch.zeros((2, 8))
+        codec = UniCodec(
+            model=model,
+            device=torch.device("cpu"),
+            assets=_assets(),
+            domain="0",
+            bandwidth_id=3,
+        )
+        audio = torch.zeros((2, 1, 8))
 
-        codes = codec.encode(audio, domain=(0, "2"), bandwidth_id=3)
+        codes = codec.encode(audio, 24000)
 
-        self.assertEqual(tuple(codes.shape), (1, 2, 4))
-        self.assertEqual(model.domains, ("0", "2"))
+        self.assertEqual(tuple(codes.shape), (2, 4, 1))
+        self.assertEqual(model.domains, ("0", "0"))
         self.assertTrue(torch.equal(model.bandwidth_id, torch.tensor([3])))
 
     def test_encode_features_exposes_upstream_feature_boundary(self):
         model = FakeUniCodecModel()
         codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets())
-        audio = torch.zeros((2, 8))
+        audio = torch.zeros((2, 1, 8))
 
-        features, codes = codec.encode_features(audio, domain=(0, "2"), bandwidth_id=3)
+        features, codes = codec.encode_features(audio, 24000)
 
-        self.assertEqual(tuple(features.shape), (2, 3, 4))
-        self.assertEqual(tuple(codes.shape), (1, 2, 4))
-        self.assertEqual(model.domains, ("0", "2"))
-        self.assertTrue(torch.equal(model.bandwidth_id, torch.tensor([3])))
+        self.assertEqual(tuple(features.shape), (2, 4, 3))
+        self.assertEqual(tuple(codes.shape), (2, 4, 1))
+        self.assertEqual(model.domains, ("0", "0"))
+        self.assertTrue(torch.equal(model.bandwidth_id, torch.tensor([0])))
 
     def test_reconstruct_decodes_encoded_codes(self):
         model = FakeUniCodecModel()
-        codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets())
+        codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets(), domain="1")
 
-        audio = codec.reconstruct(torch.zeros((1, 8)), domain="1")
+        audio = codec.reconstruct(torch.zeros((1, 1, 8)), 24000)
 
-        self.assertEqual(tuple(audio.shape), (1, 16))
+        self.assertEqual(tuple(audio.shape), (1, 1, 16))
         self.assertEqual(model.domains, ("1",))
         self.assertTrue(model.decode_called)
         self.assertTrue(model.codes_to_features_called)
 
     def test_decode_converts_codes_before_decode(self):
         model = FakeUniCodecModel()
-        codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets())
-        codes = torch.ones((1, 2, 4), dtype=torch.long)
+        codec = UniCodec(
+            model=model,
+            device=torch.device("cpu"),
+            assets=_assets(),
+            bandwidth_id=2,
+        )
+        codes = torch.ones((2, 4, 1), dtype=torch.long)
 
-        audio = codec.decode(codes, bandwidth_id=torch.tensor([2]))
+        audio = codec.decode(codes)
 
-        self.assertEqual(tuple(audio.shape), (2, 16))
+        self.assertEqual(tuple(audio.shape), (2, 1, 16))
         self.assertTrue(model.codes_to_features_called)
         self.assertTrue(torch.equal(model.bandwidth_id, torch.tensor([2])))
 
     def test_decode_features_uses_continuous_feature_boundary(self):
         model = FakeUniCodecModel()
-        codec = UniCodec(model=model, device=torch.device("cpu"), assets=_assets())
-        features = torch.ones((2, 3, 4))
+        codec = UniCodec(
+            model=model,
+            device=torch.device("cpu"),
+            assets=_assets(),
+            bandwidth_id=2,
+        )
+        features = torch.ones((2, 4, 3))
 
-        audio = codec.decode_features(features, bandwidth_id=torch.tensor([2]))
+        audio = codec.decode_features(features)
 
-        self.assertEqual(tuple(audio.shape), (2, 16))
+        self.assertEqual(tuple(audio.shape), (2, 1, 16))
         self.assertTrue(model.decode_called)
         self.assertFalse(model.codes_to_features_called)
         self.assertTrue(torch.equal(model.bandwidth_id, torch.tensor([2])))
 
     def test_encode_rejects_unknown_domain(self):
-        codec = UniCodec(
-            model=FakeUniCodecModel(),
-            device=torch.device("cpu"),
-            assets=_assets(),
-        )
-
         with self.assertRaisesRegex(ValueError, "domain"):
-            codec.encode(torch.zeros((1, 8)), domain="speech")
-
-    def test_encode_rejects_domain_batch_mismatch(self):
-        codec = UniCodec(
-            model=FakeUniCodecModel(),
-            device=torch.device("cpu"),
-            assets=_assets(),
-        )
-
-        with self.assertRaisesRegex(ValueError, "batch size"):
-            codec.encode(torch.zeros((2, 8)), domain=("0",))
+            UniCodec(
+                model=FakeUniCodecModel(),
+                device=torch.device("cpu"),
+                assets=_assets(),
+                domain="speech",
+            )
 
 
 class FakeUniCodecFactory:

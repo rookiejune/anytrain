@@ -49,32 +49,33 @@ from anytrain.codec.longcat import LongCat
 
 codec = LongCat.from_pretrained(
     device="cuda",
-    decoders=("24k_4codebooks",),
+    decoder="24k_4codebooks",
 )
 
-semantic_codes, acoustic_codes = codec.encode(
+codes = codec.encode(
     audio,
     sample_rate=16000,
-    n_acoustic_codebooks=2,
 )
-audio_24k = codec.decode(
-    semantic_codes,
-    acoustic_codes,
-    decoder="24k_4codebooks",
-)
+audio_24k = codec.decode(codes)
 
 acoustic_features = codec.acoustic_codes_to_features(
-    acoustic_codes,
-    decoder="24k_4codebooks",
+    codes[..., 1:].transpose(1, 2),
 )
 audio_from_features = codec.decode_features(
-    semantic_codes,
+    codes[..., 0],
     acoustic_features,
-    decoder="24k_4codebooks",
 )
 ```
 
-`acoustic_codes_to_features()` 显式调用 LongCat decoder 的 acoustic dequantizer，
+主离散接口遵循统一 codec 契约：`audio` 是 `[batch, channels, time]`，`codes` 是
+`[batch, frame, codebook]`。4-codebook decoder 的 `codebook_sizes` 是
+`(8192, 90, 90, 90)`；2-codebook decoder 是 `(8192, 90)`。LongCat wrapper 内部知道
+如何把这些 codebooks 传给上游 semantic/acoustic 分支，调用方不需要拆分。
+
+`codec.sample_rate` 是所选 decoder 的输出采样率。encoder 内部固定使用 16 kHz，
+`encode(audio, sample_rate)` 会把输入采样率交给上游预处理逻辑。
+
+`acoustic_codes_to_features()` 是 LongCat 专用扩展，显式调用 decoder 的 acoustic dequantizer，
 对外返回 `[batch, time, dim]` 的连续 acoustic features。`decode_features()` 接收同样
 形状的连续 features，再交给 LongCat decoder 合成波形。下游 DiT 或 flow sampler 应该接
 这个 feature 边界；只有原始 codec roundtrip 才直接使用离散 `acoustic_codes`。

@@ -13,7 +13,7 @@ from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 
 DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
 SEMANTIC_CODEBOOK_SIZE = 8192
-ACOUSTIC_CODEBOOK_SIZE = 90
+ACOUSTIC_FACTOR_CODEBOOK_SIZE = 90
 DECODER_SAMPLE_RATES: dict[LongCatDecoderName, int] = {
     "16k_4codebooks": 16_000,
     "24k_2codebooks": 24_000,
@@ -44,7 +44,14 @@ class LongCat(nn.Module):
         self.decoder = decoder
         model = self._decoder()
         num_codebooks = int(getattr(model, "n_codebooks", DECODER_CODEBOOKS[decoder] - 1)) + 1
-        acoustic_size = int(getattr(model, "acoustic_codebook_size", ACOUSTIC_CODEBOOK_SIZE))
+        acoustic_factor_size = int(
+            getattr(
+                model,
+                "acoustic_codebook_size",
+                ACOUSTIC_FACTOR_CODEBOOK_SIZE,
+            )
+        )
+        acoustic_size = acoustic_factor_size**2
         self.sample_rate = DECODER_SAMPLE_RATES[decoder]
         self.codebook_sizes = (SEMANTIC_CODEBOOK_SIZE,) + (acoustic_size,) * (
             num_codebooks - 1

@@ -61,7 +61,7 @@ class LongCatCodecTest(unittest.TestCase):
                 self.assertIsInstance(codec.encoder, nn.Identity)
                 self.assertIsInstance(codec.decoders["16k_4codebooks"], nn.Identity)
                 self.assertEqual(codec.sample_rate, 16000)
-                self.assertEqual(codec.codebook_sizes, (8192, 90, 90, 90))
+                self.assertEqual(codec.codebook_sizes, (8192, 8100, 8100, 8100))
                 self.assertNotIn("LONGCAT_AUDIO_CODEC_CKPT_DIR", os.environ)
 
     def test_encode_returns_time_major_aligned_codebooks(self):
@@ -102,7 +102,7 @@ class LongCatCodecTest(unittest.TestCase):
             device=torch.device("cpu"),
             assets=_assets(),
         )
-        acoustic_codes = torch.tensor([[[1, 2, 3], [4, 5, 6]]])
+        acoustic_codes = torch.tensor([[[1, 2, 3], [8099, 8006, 7729]]])
 
         features = codec.acoustic_codes_to_features(acoustic_codes)
 

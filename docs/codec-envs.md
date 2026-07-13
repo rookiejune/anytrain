@@ -70,6 +70,34 @@ codes/cache，再由主训练环境读取产物。
 `Unicodec.codes_to_features()` 现在通过 quantizer 的公开 `decode()`，`SimVQ1D.decode()`
 使用与 encode 相同的 projected codebook。
 
+## Codec speech evaluator 2026-07-13
+
+`121` 上从 `wmt19_tts` train split 选择 target index 310：
+`But progress is not to be confused with victory.`。原始音频是 24 kHz、2.56 秒，
+SHA-256 为 `51411b4ed815e23481d2ffffff972d02dbcab1fec57bf98ae9f4fdb77f769f15`。
+筛选时要求原始音频在 `large-v3-turbo`、English、temperature 0 配置下达到
+WER 0、BLEU 100、chrF 100；三个 codec 都从保存后的同一个 PCM16 WAV 读取输入。
+
+codec 配置：
+
+- LongCat：`16k_4codebooks`，输出 16 kHz。
+- Stable Codec：`speech-16k`，`normalize=False`，输出 16 kHz。
+- UniCodec：speech domain `0`、bandwidth id `0`，输出 24 kHz。
+
+SpeechEvaluator 使用同一个 `large-v3-turbo` ASR 实例和
+`tarepan/SpeechMOS:v1.2.0` 的 `utmos22_strong`：
+
+| Audio | WER | BLEU | chrF | UTMOS |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 0.0000 | 100.0000 | 100.0000 | 4.4607 |
+| LongCat | 0.0000 | 100.0000 | 100.0000 | 4.4808 |
+| Stable Codec | 0.1111 | 86.3340 | 83.0299 | 3.8711 |
+| UniCodec | 0.0000 | 100.0000 | 100.0000 | 4.3878 |
+
+Stable Codec 的转写在最后一个词变成 `Vig-`；原始音频、LongCat 和 UniCodec 的转写与
+reference 一致。完整 WAV、codec metadata、候选筛选结果和 evaluator JSON 位于顶层
+`debug/codec-speech-eval-20260713/`。这里只验证单条样本，不能据此推导总体 codec 排名。
+
 ## Stable Codec py39 recipe
 
 `121` 已验证环境位置：

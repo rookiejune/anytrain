@@ -39,7 +39,3 @@
 
 - 在预置官方 checkpoint 的环境里用真实短音频跑一次 encode/decode smoke，确认
   `DAC.from_pretrained(local_files_only=True)`、统一 codes 轴和多 `n_quantizers` 配置。
-
-## LongCat Audio Codec
-
-- 用真实短音频跑一次 encode/decode smoke，确认 LongCat 上游权重和 torchaudio 版本在本地 `py312` 环境可用。

@@ -127,11 +127,28 @@ class LongCat(nn.Module):
         self,
         acoustic_codes: Tensor,
     ) -> Tensor:
+        if acoustic_codes.dim() != 3:
+            raise ValueError(
+                "acoustic_codes must have shape [batch, time, codebook]."
+            )
+        num_codebooks = len(self.codebook_sizes) - 1
+        if acoustic_codes.shape[-1] != num_codebooks:
+            raise ValueError(
+                f"acoustic_codes must contain {num_codebooks} aligned codebooks."
+            )
+        if (
+            acoustic_codes.dtype == torch.bool
+            or torch.is_floating_point(acoustic_codes)
+            or torch.is_complex(acoustic_codes)
+        ):
+            raise TypeError("acoustic_codes must contain integer ids.")
+
         model = self._decoder()
         convert = getattr(model, "acoustic_codes_to_latents", None)
         if not callable(convert):
             raise TypeError("LongCat decoder must provide acoustic_codes_to_latents().")
-        features = convert(acoustic_codes.to(self.device))
+        backend_codes = acoustic_codes.transpose(1, 2).contiguous().to(self.device)
+        features = convert(backend_codes)
         if not isinstance(features, Tensor):
             raise TypeError("LongCat acoustic_codes_to_latents() must return a Tensor.")
         if features.dim() != 3:
@@ -146,8 +163,12 @@ class LongCat(nn.Module):
         semantic_codes: Tensor,
         acoustic_features: Tensor,
     ) -> Tensor:
-        if semantic_codes.dim() != 2:
-            raise ValueError("semantic_codes must have shape [batch, time].")
+        if semantic_codes.dim() != 3:
+            raise ValueError(
+                "semantic_codes must have shape [batch, time, codebook]."
+            )
+        if semantic_codes.shape[-1] != 1:
+            raise ValueError("semantic_codes must contain 1 aligned codebook.")
         if (
             semantic_codes.dtype == torch.bool
             or torch.is_floating_point(semantic_codes)
@@ -156,14 +177,14 @@ class LongCat(nn.Module):
             raise TypeError("semantic_codes must contain integer ids.")
         if acoustic_features.dim() != 3:
             raise ValueError("acoustic_features must have shape [batch, time, dim].")
-        if acoustic_features.shape[:2] != semantic_codes.shape:
+        if acoustic_features.shape[:2] != semantic_codes.shape[:2]:
             raise ValueError("semantic_codes and acoustic_features must align on batch and time.")
         if not torch.is_floating_point(acoustic_features) or torch.is_complex(acoustic_features):
             raise TypeError("acoustic_features must be floating point tensors.")
 
         model = self._decoder()
         return model(
-            semantic_codes.to(self.device),
+            semantic_codes[..., 0].to(self.device),
             acoustic_features.to(self.device).transpose(1, 2),
         )
 

@@ -102,13 +102,24 @@ class LongCatCodecTest(unittest.TestCase):
             device=torch.device("cpu"),
             assets=_assets(),
         )
-        acoustic_codes = torch.tensor([[[1, 2], [3, 4]]])
+        acoustic_codes = torch.tensor([[[1, 2, 3], [4, 5, 6]]])
 
         features = codec.acoustic_codes_to_features(acoustic_codes)
 
         self.assertEqual(tuple(features.shape), (1, 2, 3))
-        self.assertTrue(torch.equal(decoder.codes, acoustic_codes))
+        self.assertTrue(torch.equal(decoder.codes, acoustic_codes.transpose(1, 2)))
         self.assertTrue(torch.equal(features, decoder.features.transpose(1, 2)))
+
+    def test_acoustic_codes_to_features_requires_time_major_full_codebooks(self):
+        codec = LongCat(
+            encoder=nn.Identity(),
+            decoders={"16k_4codebooks": FakeLongCatDecoder()},
+            device=torch.device("cpu"),
+            assets=_assets(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "3 aligned codebooks"):
+            codec.acoustic_codes_to_features(torch.ones((1, 3, 2), dtype=torch.long))
 
     def test_decode_features_feeds_longcat_decoder_with_channel_major_latents(self):
         decoder = FakeLongCatDecoder()
@@ -118,13 +129,13 @@ class LongCatCodecTest(unittest.TestCase):
             device=torch.device("cpu"),
             assets=_assets(),
         )
-        semantic_codes = torch.tensor([[7, 8]])
+        semantic_codes = torch.tensor([[[7], [8]]])
         acoustic_features = torch.arange(6, dtype=torch.float).reshape(1, 2, 3)
 
         audio = codec.decode_features(semantic_codes, acoustic_features)
 
         self.assertEqual(tuple(audio.shape), (1, 1, 6))
-        self.assertTrue(torch.equal(decoder.semantic_codes, semantic_codes))
+        self.assertTrue(torch.equal(decoder.semantic_codes, semantic_codes[..., 0]))
         self.assertTrue(torch.equal(decoder.acoustic, acoustic_features.transpose(1, 2)))
 
     def test_decode_features_requires_semantic_and_acoustic_time_alignment(self):
@@ -137,7 +148,7 @@ class LongCatCodecTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "align on batch and time"):
             codec.decode_features(
-                torch.tensor([[7, 8]]),
+                torch.tensor([[[7], [8]]]),
                 torch.zeros((1, 3, 4)),
             )
 

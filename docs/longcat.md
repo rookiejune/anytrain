@@ -59,10 +59,10 @@ codes = codec.encode(
 audio_24k = codec.decode(codes)
 
 acoustic_features = codec.acoustic_codes_to_features(
-    codes[..., 1:].transpose(1, 2),
+    codes[..., 1:],
 )
 audio_from_features = codec.decode_features(
-    codes[..., 0],
+    codes[..., :1],
     acoustic_features,
 )
 ```
@@ -75,10 +75,12 @@ audio_from_features = codec.decode_features(
 `codec.sample_rate` 是所选 decoder 的输出采样率。encoder 内部固定使用 16 kHz，
 `encode(audio, sample_rate)` 会把输入采样率交给上游预处理逻辑。
 
-`acoustic_codes_to_features()` 是 LongCat 专用扩展，显式调用 decoder 的 acoustic dequantizer，
-对外返回 `[batch, time, dim]` 的连续 acoustic features。`decode_features()` 接收同样
-形状的连续 features，再交给 LongCat decoder 合成波形。下游 DiT 或 flow sampler 应该接
-这个 feature 边界；只有原始 codec roundtrip 才直接使用离散 `acoustic_codes`。
+`acoustic_codes_to_features()` 是 LongCat 专用扩展，输入仍遵循统一的
+`[batch, time, codebook]` 契约，并显式调用 decoder 的 acoustic dequantizer，对外返回
+`[batch, time, dim]` 的连续 acoustic features。`decode_features()` 的 semantic codes
+同样保留 codebook 轴；LongCat 当前要求 `[batch, time, 1]`。wrapper 负责转换成上游
+decoder 的内部 shape，调用方不做转置或 squeeze。下游 DiT 或 flow sampler 应该接这个
+feature 边界；只有原始 codec roundtrip 才直接使用离散 `acoustic_codes`。
 
 默认从 Hugging Face 仓库 `meituan-longcat/LongCat-Audio-Codec` 下载：
 

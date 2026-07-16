@@ -26,7 +26,8 @@ class StableCodecTest(unittest.TestCase):
         self.assertEqual(FakeStableCodecBackend.kwargs["device"], torch.device("cpu"))
         self.assertEqual(codec.device, torch.device("cpu"))
         self.assertEqual(codec.sample_rate, 16000)
-        self.assertEqual(codec.codebook_sizes, (DEFAULT_CODEBOOK_SIZE,))
+        self.assertEqual(DEFAULT_CODEBOOK_SIZE, 17**6)
+        self.assertEqual(codec.codebook_sizes, (17**6,))
 
     def test_from_pretrained_sets_posthoc_bottleneck(self):
         with patch(
@@ -83,6 +84,64 @@ class StableCodecTest(unittest.TestCase):
         self.assertEqual(tuple(latents.shape), (2, 4, 5))
         self.assertEqual(tuple(tokens.shape), (2, 5, 1))
 
+    def test_posthoc_encode_joins_backend_codebooks(self):
+        with patch(
+            "anytrain.codec.stable_codec.codec._load_stable_codec_model",
+            return_value=FakeStableCodecBackend,
+        ):
+            codec = StableCodec.from_pretrained(
+                device="cpu",
+                posthoc_bottleneck="2x15625_700bps",
+            )
+
+        tokens = codec.encode(torch.zeros((2, 1, 16)), 16000)
+
+        self.assertEqual(tuple(tokens.shape), (2, 5, 2))
+        torch.testing.assert_close(tokens[..., 0], torch.zeros((2, 5), dtype=torch.long))
+        torch.testing.assert_close(tokens[..., 1], torch.ones((2, 5), dtype=torch.long))
+
+    def test_posthoc_encode_rejects_non_tensor_codebook(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        model.set_posthoc_bottleneck("1x46656_400bps")
+        model.posthoc_tokens = [None]
+        codec = StableCodec(
+            model=model,
+            device=torch.device("cpu"),
+            posthoc_bottleneck="1x46656_400bps",
+        )
+
+        with self.assertRaisesRegex(TypeError, "list of Tensors"):
+            codec.encode(torch.zeros((2, 1, 16)), 16000)
+
+    def test_posthoc_encode_rejects_codebook_axis_larger_than_one(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        model.set_posthoc_bottleneck("1x46656_400bps")
+        model.posthoc_tokens = [torch.zeros((2, 5, 2), dtype=torch.long)]
+        codec = StableCodec(
+            model=model,
+            device=torch.device("cpu"),
+            posthoc_bottleneck="1x46656_400bps",
+        )
+
+        with self.assertRaisesRegex(ValueError, r"\[batch, time, 1\]"):
+            codec.encode(torch.zeros((2, 1, 16)), 16000)
+
+    def test_posthoc_encode_rejects_misaligned_codebooks(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        model.set_posthoc_bottleneck("2x15625_700bps")
+        model.posthoc_tokens = [
+            torch.zeros((2, 5, 1), dtype=torch.long),
+            torch.zeros((2, 4, 1), dtype=torch.long),
+        ]
+        codec = StableCodec(
+            model=model,
+            device=torch.device("cpu"),
+            posthoc_bottleneck="2x15625_700bps",
+        )
+
+        with self.assertRaisesRegex(ValueError, "align on batch and time"):
+            codec.encode(torch.zeros((2, 1, 16)), 16000)
+
     def test_encode_resamples_from_input_sample_rate(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
         codec = StableCodec(model=model, device=torch.device("cpu"))
@@ -105,6 +164,32 @@ class StableCodecTest(unittest.TestCase):
 
         self.assertEqual(tuple(audio.shape), (2, 1, 16))
         self.assertFalse(model.posthoc)
+        self.assertIs(model.decoded_tokens, tokens)
+
+    def test_posthoc_decode_splits_public_codebook_axis(self):
+        with patch(
+            "anytrain.codec.stable_codec.codec._load_stable_codec_model",
+            return_value=FakeStableCodecBackend,
+        ):
+            codec = StableCodec.from_pretrained(
+                device="cpu",
+                posthoc_bottleneck="2x15625_700bps",
+            )
+        tokens = torch.stack(
+            (
+                torch.zeros((2, 5), dtype=torch.long),
+                torch.ones((2, 5), dtype=torch.long),
+            ),
+            dim=-1,
+        )
+
+        audio = codec.decode(tokens)
+
+        self.assertEqual(tuple(audio.shape), (2, 1, 16))
+        self.assertIsInstance(codec.model.decoded_tokens, list)
+        self.assertEqual(len(codec.model.decoded_tokens), 2)
+        torch.testing.assert_close(codec.model.decoded_tokens[0], tokens[..., :1])
+        torch.testing.assert_close(codec.model.decoded_tokens[1], tokens[..., 1:])
 
     def test_reconstruct_roundtrips_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
@@ -130,13 +215,14 @@ class StableCodecTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "shape"):
             codec.encode(torch.zeros((2, 16)), 16000)
 
-    def test_codebook_sizes_reads_backend_codebook_size(self):
+    def test_codebook_sizes_reads_nested_backend_bottleneck(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        model.codebook_size = 123
+        model.model.bottleneck.quantizer.codebook_size = 123
+        model.model.bottleneck.quantizer.num_codebooks = 2
 
         codec = StableCodec(model=model, device=torch.device("cpu"))
 
-        self.assertEqual(codec.codebook_sizes, (123,))
+        self.assertEqual(codec.codebook_sizes, (123, 123))
 
 
 class FakeStableCodecBackend(nn.Module):
@@ -150,6 +236,9 @@ class FakeStableCodecBackend(nn.Module):
         self.posthoc = False
         self.normalize = True
         self.decode_called = False
+        self.decoded_tokens = None
+        self.posthoc_tokens = None
+        self.model = FakeAudioAutoencoder()
 
     def set_posthoc_bottleneck(self, stages):
         self.posthoc_stages = stages
@@ -158,12 +247,47 @@ class FakeStableCodecBackend(nn.Module):
         self.posthoc = posthoc_bottleneck
         self.normalize = normalize
         batch = audio.size(0)
-        return torch.ones((batch, 4, 5)), torch.ones((batch, 5, 1), dtype=torch.long)
+        latents = torch.ones((batch, 4, 5))
+        if posthoc_bottleneck:
+            if self.posthoc_tokens is not None:
+                return latents, self.posthoc_tokens
+            count = {
+                "1x46656_400bps": 1,
+                "2x15625_700bps": 2,
+                "4x729_1000bps": 4,
+            }[self.posthoc_stages]
+            tokens = [
+                torch.full((batch, 5, 1), index, dtype=torch.long)
+                for index in range(count)
+            ]
+            return latents, tokens
+        return latents, torch.ones((batch, 5, 1), dtype=torch.long)
 
-    def decode(self, tokens: torch.Tensor, *, posthoc_bottleneck: bool, **kwargs):
+    def decode(self, tokens, *, posthoc_bottleneck: bool, **kwargs):
         self.decode_called = True
         self.posthoc = posthoc_bottleneck
-        return torch.ones((tokens.size(0), 1, 16))
+        self.decoded_tokens = tokens
+        first = tokens[0] if isinstance(tokens, list) else tokens
+        return torch.ones((first.size(0), 1, 16))
+
+
+class FakeAudioAutoencoder(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bottleneck = FakeBottleneck()
+
+
+class FakeBottleneck(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.quantizer = FakeQuantizer()
+
+
+class FakeQuantizer(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.codebook_size = 17**6
+        self.num_codebooks = 1
 
 
 if __name__ == "__main__":

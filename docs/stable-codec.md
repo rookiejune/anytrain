@@ -58,6 +58,11 @@ UniCodec 的 `domain` 参数；默认模型是 `stabilityai/stable-codec-speech-
 并重建 waveform。上游实现同时返回 pre-bottleneck continuous latents；需要直接操作这个
 边界时使用 `encode_latents()`。
 
+未启用 posthoc bottleneck 时，默认 speech 模型使用六维、每维 17 级的训练期 FSQ，
+因此 native `codebook_sizes` 是 `(17^6,)`，即 `(24137569,)`，不是 `(46656,)`。
+wrapper 从上游 `model.bottleneck.quantizer` 读取真实 `codebook_size` 和
+`num_codebooks`，不为本地 config 猜测码本大小。
+
 `121` 上确认的上游 `0.1.2` 签名与 wrapper 对齐：
 
 - `StableCodec(pretrained_model=..., device=...)`
@@ -90,6 +95,12 @@ audio_out = codec.decode(codes)
 - `"1x46656_400bps"`
 - `"2x15625_700bps"`
 - `"4x729_1000bps"`
+
+`stable-codec==0.1.2` 的 posthoc encode 为每个 stage 返回一个 `[batch, frame, 1]`
+Tensor 的 list。wrapper 会沿最后一维拼接为公共 `[batch, frame, codebook]` Tensor；
+decode 时再拆回上游所需的 list。`46656` 仅是 `1x46656_400bps` preset 的码本大小，
+需要把 Stable Codec tokens 交给语言模型时应显式选择 posthoc preset，并让产物配置记录
+该 preset。
 
 如果需要本地 config 和 checkpoint：
 

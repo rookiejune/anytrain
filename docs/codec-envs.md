@@ -34,8 +34,9 @@ codes/cache，再由主训练环境读取产物。
   `CFLAGS="-fcommon" pip install --no-build-isolation pypesq==1.2.4`。Stable Codec
   应使用独立 py39/torch2.4 环境，不放进 `anytrain` extra 自动安装。安装匹配
   torch 2.4/CUDA 12.1 的 `flash-attn==2.7.4.post1` 后，已在 `121` A100 上用统一接口
-  完成真实 1 秒静音 roundtrip：`codebook_sizes == (46656,)`，codes shape 是
-  `(1, 25, 1)`，decode 输出 `(1, 1, 16000)` 且数值有限。
+  完成未启用 posthoc 的真实 1 秒静音 roundtrip：native
+  `codebook_sizes == (24137569,)`，codes shape 是 `(1, 25, 1)`，decode 输出
+  `(1, 1, 16000)` 且数值有限。
 
 ## Policy
 
@@ -140,13 +141,17 @@ PY
 
 - `StableCodec(model_config_path=None, ckpt_path=None, pretrained_model=None, device=torch.device("cpu"))`
 - `encode(audio, posthoc_bottleneck=False, normalize=True, **kwargs)` 返回
-  `(continuous_latents, tokens)`，tokens 形状为 `(B, S, 1)`。
-- `decode(tokens, posthoc_bottleneck=False, **kwargs)` 接收 tokens，返回 `(B, C, L)` waveform。
+  `(continuous_latents, tokens)`；native tokens 是 `(B, S, 1)` Tensor，posthoc tokens 是
+  每个 stage 一个 `(B, S, 1)` Tensor 的 list。
+- `decode(tokens, posthoc_bottleneck=False, **kwargs)` 在 native 模式接收 Tensor，在 posthoc
+  模式接收该 list，返回 `(B, C, L)` waveform。
 - `set_posthoc_bottleneck(stages)` 支持 preset 字符串或 stage 配置。
 
 因此 `anytrain.codec.stable_codec.StableCodec` 继续作为 optional thin wrapper：
 `from_pretrained()` / `from_config()` 只负责加载上游模型，`encode()` 返回统一的
 `[batch, frame, codebook]` codes，`encode_latents()` 暴露上游 latent/code 边界，
-`decode()` 接收 codes。现有 wrapper
+`decode()` 接收 codes。wrapper 在 posthoc 模式负责上游 list 与公共 Tensor 间的双向转换，
+native `codebook_sizes` 从 `model.model.bottleneck.quantizer` 读取；默认 speech 模型是
+`(17^6,) == (24137569,)`，`(46656,)` 只对应 `1x46656_400bps` posthoc preset。现有 wrapper
 签名和上游 `0.1.2` 对齐，不需要为了 Stable Codec 修改 `anytrain` 主环境或
 `pyproject.toml`。

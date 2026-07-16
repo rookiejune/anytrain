@@ -26,7 +26,7 @@ DEFAULT_VERSION: SupportedVersion = "speech-16k"
 DEFAULT_PRETRAINED_MODEL = f"stabilityai/stable-codec-{DEFAULT_VERSION}"
 SAMPLE_RATE = 16_000
 NUM_CHANNELS = 1
-DEFAULT_CODEBOOK_SIZE = 46_656
+DEFAULT_CODEBOOK_SIZE = 17**6
 POSTHOC_CODEBOOK_SIZES: dict[PosthocBottleneckPreset, tuple[int, ...]] = {
     "1x46656_400bps": (46_656,),
     "2x15625_700bps": (15_625, 15_625),
@@ -137,6 +137,7 @@ class StableCodec(nn.Module):
             posthoc_bottleneck=self.posthoc_bottleneck,
             normalize=self.normalize,
         )
+        tokens = _codes(tokens, posthoc_bottleneck=self.posthoc_bottleneck)
         self._validate_codes(tokens)
         return latents, tokens
 
@@ -146,8 +147,13 @@ class StableCodec(nn.Module):
         tokens: Tensor,
     ) -> Tensor:
         self._validate_codes(tokens)
+        backend_tokens: Tensor | list[Tensor]
+        if self.posthoc_bottleneck:
+            backend_tokens = list(tokens.to(self.device).split(1, dim=-1))
+        else:
+            backend_tokens = tokens.to(self.device)
         return self.model.decode(
-            tokens.to(self.device),
+            backend_tokens,
             posthoc_bottleneck=self.posthoc_bottleneck,
         )
 
@@ -193,22 +199,39 @@ def _load_stable_codec_model() -> Any:
 
 
 def _codebook_sizes(
-    model: nn.Module,
+    model: Any,
     posthoc_bottleneck: PosthocBottleneck | None,
 ) -> tuple[int, ...]:
     if posthoc_bottleneck is not None:
         return _posthoc_codebook_sizes(posthoc_bottleneck)
 
-    for name in ("semantic_vocab_size", "codebook_size", "cardinality"):
-        value = getattr(model, name, None)
-        if value is not None:
-            return (int(value),)
-    bottleneck = getattr(model, "bottleneck", None)
-    if bottleneck is not None:
-        value = getattr(bottleneck, "codebook_size", None)
-        if value is not None:
-            return (int(value),)
-    return (DEFAULT_CODEBOOK_SIZE,)
+    quantizer = model.model.bottleneck.quantizer
+    return (int(quantizer.codebook_size),) * int(quantizer.num_codebooks)
+
+
+def _codes(
+    tokens: Tensor | list[Tensor],
+    *,
+    posthoc_bottleneck: bool,
+) -> Tensor:
+    if not posthoc_bottleneck:
+        if not isinstance(tokens, Tensor):
+            raise TypeError("Stable Codec native encode must return a Tensor.")
+        return tokens
+
+    if not isinstance(tokens, list):
+        raise TypeError("Stable Codec posthoc encode must return a list of Tensors.")
+    if not tokens:
+        raise ValueError("Stable Codec posthoc encode returned no codebooks.")
+    if any(not isinstance(token, Tensor) for token in tokens):
+        raise TypeError("Stable Codec posthoc encode must return a list of Tensors.")
+    if any(token.dim() != 3 or token.shape[-1] != 1 for token in tokens):
+        raise ValueError(
+            "Each Stable Codec posthoc codebook must have shape [batch, time, 1]."
+        )
+    if any(token.shape[:2] != tokens[0].shape[:2] for token in tokens[1:]):
+        raise ValueError("Stable Codec posthoc codebooks must align on batch and time.")
+    return torch.cat(tokens, dim=-1)
 
 
 def _posthoc_codebook_sizes(stages: PosthocBottleneck) -> tuple[int, ...]:

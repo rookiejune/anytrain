@@ -16,7 +16,7 @@ def corpus():
 @unittest.skipIf(tokenizers is None, "tokenizers is not installed")
 class CodecBPERegressionTest(unittest.TestCase):
     def test_from_pretrained_round_trip(self):
-        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5)
+        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=18)
 
         with tempfile.TemporaryDirectory() as tmp:
             bpe.save_pretrained(tmp)
@@ -26,11 +26,11 @@ class CodecBPERegressionTest(unittest.TestCase):
         self.assertEqual(loaded.encode([[1], [2], [3]]), bpe.encode([[1], [2], [3]]))
 
     def test_progress_keeps_same_result(self):
-        plain = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+        plain = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=18, show_progress=False)
         with_progress = CodecBPE.train(
             corpus,
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
             show_progress=True,
         )
 

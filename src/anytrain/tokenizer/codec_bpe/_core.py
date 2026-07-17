@@ -53,18 +53,28 @@ class CoreBPE:
         cls,
         corpus: Callable[[], Iterable[Sequence[int]]],
         *,
+        base: Iterable[int] | None = None,
         vocab_size: int = 30_000,
         min_frequency: int = 0,
         show_progress: bool = True,
         max_token_length: int | None = None,
     ) -> Self:
-        base, num_training_sequences = scan_base_corpus(
-            corpus,
-            show_progress=show_progress,
-        )
-        base_tokens = private_use_tokens(base)
+        if base is None:
+            base_ids, num_training_sequences = scan_base_corpus(
+                corpus,
+                show_progress=show_progress,
+            )
+        else:
+            base_ids = set(base)
+            num_training_sequences = None
+            if show_progress:
+                from tqdm.auto import tqdm
+
+                tqdm.write("CodecBPE alphabet: skipped for single codebook")
+        base_tokens = private_use_tokens(base_ids)
         tokenizer = train_tokenizers_bpe(
             text_corpus(corpus, base_tokens),
+            base_tokens=base_tokens,
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             show_progress=show_progress,
@@ -102,6 +112,10 @@ def private_use_char(index: int) -> str:
             return chr(start + index)
         index -= size
     raise ValueError("private-use character index out of range")
+
+
+def private_use_capacity() -> int:
+    return sum(end - start + 1 for start, end in PRIVATE_USE_RANGES)
 
 
 def private_use_tokens(base_ids: Iterable[int]) -> dict[int, str]:
@@ -149,11 +163,15 @@ def text_corpus(
     corpus: Callable[[], Iterable[Sequence[int]]],
     base_tokens: Mapping[int, str],
 ) -> Iterable[str]:
+    num_sequences = 0
     for seq in corpus():
         ids = tuple(seq)
+        num_sequences += 1
         if not ids:
             raise ValueError("corpus must not contain empty sequences")
         yield base_text(ids, base_tokens)
+    if num_sequences == 0:
+        raise ValueError("corpus must not be empty")
 
 
 def base_text(base_ids: Sequence[int], base_tokens: Mapping[int, str]) -> str:
@@ -168,6 +186,7 @@ def base_text(base_ids: Sequence[int], base_tokens: Mapping[int, str]) -> str:
 def train_tokenizers_bpe(
     corpus: Iterable[str],
     *,
+    base_tokens: Mapping[int, str],
     vocab_size: int,
     min_frequency: int,
     show_progress: bool,
@@ -181,6 +200,7 @@ def train_tokenizers_bpe(
         min_frequency=min_frequency,
         show_progress=show_progress,
         max_token_length=max_token_length,
+        initial_alphabet=list(base_tokens.values()),
     )
     tokenizer.train_from_iterator(corpus, trainer=trainer, length=length)
     return tokenizer

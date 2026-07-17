@@ -85,10 +85,13 @@ encode 唯一走 `tokenizers.models.BPE.tokenize`。训练入口使用
 alphabet，因此如果 corpus 中不同 frame 数量更多，最终 compact vocab 会保留完整 alphabet
 并可能大于传入值。`special_tokens`、`limit_alphabet` 和 `initial_alphabet` 这类文本
 tokenizer 参数暂不暴露，因为 `CodecBPE` 的每个 token 都必须能无损还原成 codec frame。
-训练会两遍扫描 corpus：第一遍收集完整 observed alphabet 并校验 frame，第二遍交给
-`BpeTrainer` 学习 merges。传入的 corpus 必须是 callable，并在每次调用时返回可重新遍历的
-frame sequence iterable。`show_progress=True` 时第一遍 alphabet scan 和第二遍 BPE
-trainer 各自显示独立进度。
+能由 Unicode 私用区完整表达时，单 codebook 的 alphabet 直接由 `codebook_sizes` 构造，训练
+只扫描 corpus 一遍；合法但未在训练语料出现的 code id 仍可编码。完整 alphabet 会计入
+`vocab_size`，因此最终 vocab 至少为单 codebook size。`show_progress=True` 时会明确提示跳过
+alphabet scan。超过私用区容量的单 codebook 会回退到 observed alphabet scan。多 codebook 仍会
+两遍扫描 corpus：第一遍收集完整 observed frame alphabet 并校验 frame，第二遍交给
+`BpeTrainer` 学习 merges。多 codebook 传入的 corpus 必须是 callable，并在每次调用时返回
+可重新遍历的 frame sequence iterable。
 `evaluate()` 也支持 `show_progress`，用于评估大语料压缩率和 BPE token 使用分布时显示独立进度。
 它返回扁平的 `EvalStats`：压缩指标里 `original_frames` 是 codec frame 数，
 `encoded_tokens` 是 BPE token 数；同时包含 token 出现次数直方图、top-k token、实际使用

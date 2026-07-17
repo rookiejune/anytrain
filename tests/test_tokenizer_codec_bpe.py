@@ -1,7 +1,9 @@
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,13 +80,13 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             replay([[[1], [2], [1], [2], [3]], [[1], [2], [3]]]),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
         )
 
         token_ids = bpe.encode([[1], [2], [1], [2], [3]])
 
-        self.assertEqual(bpe.vocab_size, 5)
-        self.assertEqual(token_ids, [3, 4])
+        self.assertEqual(bpe.vocab_size, 18)
+        self.assertEqual(token_ids, [16, 17])
         self.assertEqual(bpe.decode(token_ids), [(1,), (2,), (1,), (2,), (3,)])
 
     def test_train_supports_longcat_scale_frame_vocab(self):
@@ -104,8 +106,8 @@ class BPETest(unittest.TestCase):
             show_progress=False,
         )
 
-        self.assertEqual(bpe.vocab_size, 3)
-        self.assertEqual(bpe.encode([[100], [101], [102]]), [0, 1, 2])
+        self.assertEqual(bpe.vocab_size, 128)
+        self.assertEqual(bpe.encode([[100], [101], [102]]), [100, 101, 102])
 
     def test_train_respects_min_frequency(self):
         bpe = CodecBPE.train(
@@ -116,20 +118,20 @@ class BPETest(unittest.TestCase):
             show_progress=False,
         )
 
-        self.assertEqual(bpe.vocab_size, 2)
-        self.assertEqual(bpe.encode([[1], [2]]), [0, 1])
+        self.assertEqual(bpe.vocab_size, 16)
+        self.assertEqual(bpe.encode([[1], [2]]), [1, 2])
 
     def test_train_respects_max_token_length(self):
         bpe = CodecBPE.train(
             replay([[[1], [2], [3]], [[1], [2], [3]]]),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
             max_token_length=2,
             show_progress=False,
         )
 
-        self.assertEqual(bpe.vocab_size, 4)
-        self.assertEqual(bpe.encode([[1], [2], [3]]), [3, 2])
+        self.assertEqual(bpe.vocab_size, 17)
+        self.assertEqual(bpe.encode([[1], [2], [3]]), [16, 3])
 
     def test_train_merges_multi_codebook_frames_and_round_trips(self):
         corpus = [
@@ -149,13 +151,13 @@ class BPETest(unittest.TestCase):
         plain = CodecBPE.train(
             replay(corpus),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
             show_progress=False,
         )
         with_progress = CodecBPE.train(
             replay(corpus),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
             show_progress=True,
         )
 
@@ -165,7 +167,7 @@ class BPETest(unittest.TestCase):
             plain.encode([[1], [2], [1], [2], [3]]),
         )
 
-    def test_train_calls_corpus_twice(self):
+    def test_single_codebook_train_calls_corpus_once(self):
         calls = 0
 
         def corpus():
@@ -173,10 +175,51 @@ class BPETest(unittest.TestCase):
             calls += 1
             return iter([[[1], [2], [1], [2], [3]], [[1], [2], [3]]])
 
-        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=5, show_progress=False)
+        bpe = CodecBPE.train(corpus, codebook_sizes=(16,), vocab_size=18, show_progress=False)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(bpe.decode(bpe.encode([[1], [2], [3]])), [(1,), (2,), (3,)])
+
+    def test_multi_codebook_train_calls_corpus_twice(self):
+        calls = 0
+
+        def corpus():
+            nonlocal calls
+            calls += 1
+            return iter([[[1, 2], [2, 3]]])
+
+        CodecBPE.train(corpus, codebook_sizes=(4, 4), show_progress=False)
 
         self.assertEqual(calls, 2)
-        self.assertEqual(bpe.encode([[1], [2], [3]]), [4])
+
+    def test_large_single_codebook_falls_back_to_alphabet_scan(self):
+        calls = 0
+
+        def corpus():
+            nonlocal calls
+            calls += 1
+            return iter([[[1], [2]]])
+
+        bpe = CodecBPE.train(
+            corpus,
+            codebook_sizes=(200_000,),
+            show_progress=False,
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(bpe.decode(bpe.encode([[1], [2]])), [(1,), (2,)])
+
+    def test_single_codebook_reports_skipped_alphabet(self):
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            CodecBPE.train(
+                replay([[[1], [2]]]),
+                codebook_sizes=(4,),
+                show_progress=True,
+            )
+
+        self.assertIn("alphabet: skipped for single codebook", output.getvalue())
 
     def test_rejects_invalid_frames(self):
         with self.assertRaisesRegex(ValueError, "number of codebooks"):
@@ -199,8 +242,9 @@ class BPETest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "frames"):
             bpe.encode([])
-        with self.assertRaisesRegex(KeyError, "unknown frame"):
-            bpe.encode([[4]])
+        self.assertEqual(bpe.decode(bpe.encode([[4]])), [(4,)])
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            bpe.encode([[16]])
 
     def test_decode_rejects_empty_and_unknown_token_ids(self):
         bpe = CodecBPE.train(replay([[[1], [2], [3]]]), codebook_sizes=(16,), vocab_size=4)
@@ -214,7 +258,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             replay([[[1], [2], [1], [2], [3]], [[1], [2], [3]]]),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
         )
 
         stats = bpe.evaluate(
@@ -235,7 +279,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             replay([[[1], [2], [1], [2], [3]], [[1], [2], [3]]]),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
         )
 
         stats = bpe.evaluate(
@@ -266,7 +310,7 @@ class BPETest(unittest.TestCase):
         bpe = CodecBPE.train(
             replay([[[1], [2], [1], [2], [3]], [[1], [2], [3]]]),
             codebook_sizes=(16,),
-            vocab_size=5,
+            vocab_size=18,
         )
 
         stats = bpe.evaluate(

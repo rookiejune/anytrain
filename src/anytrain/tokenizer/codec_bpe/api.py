@@ -7,7 +7,7 @@ from typing import TypedDict
 
 from anytrain._compat import Self
 
-from ._core import CoreBPE, base_text, private_use_tokens
+from ._core import CoreBPE, base_text, private_use_capacity, private_use_tokens
 from ._deps import bpe_class
 from ._eval import EvalStats
 from ._eval import evaluate as run_eval
@@ -68,6 +68,12 @@ class CodecBPE:
         codec = FrameCodec(codebook_sizes)
         core = CoreBPE.train(
             lambda: ([codec.encode(frame) for frame in frames] for frames in corpus()),
+            base=(
+                range(codec.vocab_size)
+                if codec.num_codebooks == 1
+                and codec.vocab_size <= private_use_capacity()
+                else None
+            ),
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             show_progress=show_progress,

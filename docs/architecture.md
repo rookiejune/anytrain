@@ -32,13 +32,16 @@ PyTorch 是否提供 `torch.optim.Muon`，不影响其余 core API。
 
 ### Optional General
 
-这些组件不绑定具体领域，但需要额外依赖：
+当前已实现的组件不绑定具体领域，但需要额外依赖：
 
 - `plotter`：matplotlib/plotly/seaborn 等可视化。
 - `chat`：环境变量驱动的大模型调用入口，用于训练工程里的实验总结、日志解释和 LLM 辅助评估原型。
 - `tokenizer`：基于 Hugging Face `tokenizers` 的 codec frame BPE。
-- metrics evaluator：基于 torchmetrics 的通用分类/回归指标。
 - third-party logger backend：wandb、mlflow 等。
+
+规划中的 optional general 组件：
+
+- metrics evaluator：基于 torchmetrics 的通用分类/回归指标。
 
 ### Optional Domain
 
@@ -51,11 +54,15 @@ PyTorch 是否提供 `torch.optim.Muon`，不影响其余 core API。
 
 ### Optional Framework
 
-研究框架可以作为 optional module 提供：
+当前提供的 optional framework：
 
 - flow matching。
+- GAN adversarial objective、feature matching、WGAN-GP 和 DAC discriminator preset。
+
+只有跨项目复用需求明确后再考虑：
+
 - masked autoencoder。
-- GAN adversarial objective、D/G monitor、manual optimization helper。
+- GAN manual optimization helper。
 - 其他跨项目复用的训练范式。
 
 这些不进入 core，避免 `anytrain` 的默认依赖和默认心智负担膨胀。

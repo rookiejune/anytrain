@@ -39,11 +39,14 @@ loss = loss_fn(prediction, target)
 
 主返回必须是可用于 `backward()` 的 scalar Tensor。需要额外日志时，loss 可以返回 `(loss, details)`；`details` 是可选的 mapping，不参与反传。
 
-建议接口：
+当前接口：
 
 - `LossABC`：抽象基类，子类实现 `compute_loss()`，统一校验 scalar 主 loss 和可选 details。
 - `LossGroup`：用 mapping/`ModuleDict` 组合多个 loss，返回 `(total, details)`。
 - `LossBalancerABC`：把多个命名 scalar loss 合成为一个 scalar total，可选返回 details；默认实现是 `MeanLossBalancer`，core 也提供 `UncertaintyLossBalancer`。
+
+规划接口：
+
 - `TaskLoss`：面向用户配置的组合容器，不绑定具体任务语义。
 
 optional loss：
@@ -104,7 +107,9 @@ quantization 只依赖 core；Qwen3 builder 单独要求 `module` extra。
 当前提供：
 
 - Adaptive Dirichlet Tempering，用于 MoE/router logits 的自适应温度缩放。
-- 1D Dynamic Conv / Dynamic Conv Transpose，用于按样本或按分段组合 expert kernel；router 可注入，也可通过 `forward_manually()` 显式传入 expert 权重。
+- 1D Dynamic Conv / Dynamic Conv Transpose 和 2D Dynamic Conv，用于按样本或按分段组合 expert kernel；router 可注入，也可通过显式入口传入 expert 权重。
+- embedding、finite scalar、grouped 和 residual quantizer。
+- 依赖 `module` extra 的 Qwen3 builder。
 
 ## Plotter
 

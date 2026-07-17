@@ -10,19 +10,21 @@
 - `lightning` 负责 task-agnostic 的 LightningModule logging mixin 和训练调试 callback；Lightning 是核心依赖，不是 optional integration。
 - 公开接口优先围绕 `pl_module`，不要把单一 `model` 写成硬边界。
 - 下游 `pl_module` 直接继承 Lightning 原生 `LightningModule`；不要提供或要求继承 `AnyTrainModule` 这类魔法基类。
-- `loss`、`evaluator`、`optim`、`module`、`plotter`、`framework` 是下游训练模块可显式组合的组件，按 core/optional 子模块拆分依赖。
-- `registry.py`、`types.py` 是轻量支撑层。
+- `lightning`、`loss`、`evaluator`、`optim`、`module` 和 `idspace` 构成默认依赖下的核心体验。
+- `plotter`、`chat`、`tokenizer`、`codec`、`tts`、`framework` 和领域组件按依赖拆分为 optional 子模块。
+- package root 保持轻量，不从 `anytrain` 根包导出跨模块快捷别名。
 
-## 第一版保留
+## 当前模块
 
-- `lightning`
-- `loss`
-- `evaluator`
-- `plotter`
-- `framework`
-- 从 `deepaudio.protocol` 中抽出的通用基础类型和 registry 边界
+- `lightning`：logging mixin、checkpoint 和训练调试 callback。
+- `loss`、`evaluator`：通用接口、组合器及按领域拆分的实现。
+- `optim`：optimizer 参数分组、scheduler 和 LLM/Muon helper。
+- `module`、`idspace`：task-agnostic `nn.Module` 积木和 token id space。
+- `plotter`、`chat`、`tokenizer`：optional general 组件。
+- `codec`、`tts`：optional domain adapter。
+- `framework`：flow matching、GAN 等 optional/experimental 训练范式组件。
 
-## 第一版避免
+## 明确避免
 
 - 不迁移 `datasets/`、`data_module/`、具体 `task/`、`wrapper/`、`zoo/`、`_pretrained/`。
 - 不把 optimizer / scheduler / batch schema 做成隐藏注入协议。
@@ -30,4 +32,4 @@
 - 不把 `anydataset` 的数据集适配规则复制进来；数据依赖留给下游项目。
 - 不把需要领域依赖的 loss/evaluator/plotter 放进 core；放 optional 子模块。
 
-Lightning 边界见 `docs/lightning.md`，组件分层见 `docs/components.md`，正式架构见 `docs/architecture.md`，逐模块设计见 `docs/modules/index.md`，待办拆分见 `todo.md`。
+Lightning 边界见 `docs/lightning.md`，组件分层见 `docs/components.md`，正式架构见 `docs/architecture.md`，逐模块设计见 `docs/modules/index.md`，未实现需求见 `todo.md`。

@@ -145,4 +145,4 @@ PYTHONPATH=src python examples/tiny_regression.py
 ```
 
 Lightning 边界见 `docs/lightning.md`，组件分层见 `docs/components.md`，总体架构见
-`docs/architecture.md`，迁移清单见 `todo.md`。
+`docs/architecture.md`，未实现需求见 `todo.md`。

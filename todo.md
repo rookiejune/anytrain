@@ -6,7 +6,6 @@
 
 - 实现 `TaskLoss`：plain-config 友好的组合容器，不绑定具体任务语义。
 - 增加更多 balancer 策略，例如 deviation。
-- `framework.gan` 后续补 manual optimization helper；通用 adversarial objective 已不放在 `loss` 下。
 - 只有在依赖和复用需求明确后，再加入 `loss.text` / `loss.speech`。
 
 ## Evaluator
@@ -14,9 +13,6 @@
 - 根据下游真实使用情况决定是否增加常用 stateful evaluator，例如 MAE、MSE、accuracy。
 - 增加 `evaluator.metrics`：torchmetrics-backed 通用分类/回归 evaluator，放 optional 子模块而不是 core。
 - 增加 `evaluator.audio`：codec、speech 或 audio quality evaluator。
-- 按下游真实环境选择 Whisper backend 包装层，固定模型名、语言、device 和 decode options 配置入口。
-- 按下游真实环境选择 UTMOS backend 包装层，固定 checkpoint、cache、device 和 batch 推理行为。
-- 如需切到 `sacrebleu` / `jiwer`，把依赖加入 `text` extra，并用当前测试锁住 public key 和空 reference 策略。
 
 ## Module
 
@@ -32,7 +28,7 @@
 
 - 后续新增 framework 子模块时，需要明确依赖 extra 和最小测试。
 - masked autoencoder 等训练范式只有在跨项目复用明确后再迁入。
-- `framework.gan` 后续根据真实复用需求补 manual optimization helper 和 audio discriminator。
+- `framework.gan` 后续根据真实复用需求补 manual optimization helper。
 - framework 不替用户写完整 `pl_module`，只提供训练逻辑可复用组件。
 
 ## Descript Audio Codec

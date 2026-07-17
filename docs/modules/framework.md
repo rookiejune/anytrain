@@ -34,7 +34,6 @@ src/anytrain/framework/
       __init__.py
       dac.py
     types.py
-  todo.md
 ```
 
 `anytrain.framework.__init__` 不默认导出 framework 子模块。用户显式导入：

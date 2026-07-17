@@ -399,7 +399,7 @@ class WhisperASREvaluator(EvaluatorABC):
             load_options=load_options,
         )
         self.download_root = self._backend.download_root
-        self.text_evaluator = self._resolve_text_evaluator(text_evaluator)
+        self.text_evaluator = self._text_evaluator(text_evaluator)
         self.decode_options = self._validate_decode_options(decode_options)
 
     def evaluate(
@@ -411,7 +411,7 @@ class WhisperASREvaluator(EvaluatorABC):
         target_text: TextInput | None = None,
         **decode_options: Any,
     ) -> MetricDict:
-        reference_text = self._resolve_reference_text(reference_text, target_text)
+        reference_text = self._reference_text(reference_text, target_text)
         prediction_text = self.transcribe(audio, sample_rate, **decode_options)
         predictions = self._normalize_text_input(prediction_text, label="prediction_text")
         references = self._normalize_text_input(reference_text, label="reference_text")
@@ -434,7 +434,7 @@ class WhisperASREvaluator(EvaluatorABC):
             return output
         return self._normalize_text_input(output, label="prediction_text")
 
-    def _resolve_text_evaluator(
+    def _text_evaluator(
         self,
         text_evaluator: TextComparisonEvaluator | None,
     ) -> TextComparisonEvaluator:
@@ -444,7 +444,7 @@ class WhisperASREvaluator(EvaluatorABC):
             raise TypeError("text_evaluator must be a TextComparisonEvaluator.")
         return text_evaluator
 
-    def _resolve_reference_text(
+    def _reference_text(
         self,
         reference_text: TextInput | None,
         target_text: TextInput | None,

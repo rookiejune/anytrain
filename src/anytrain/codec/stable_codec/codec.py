@@ -66,7 +66,7 @@ class StableCodec(nn.Module):
         normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         model = model_cls(
             pretrained_model=pretrained_model or f"stabilityai/stable-codec-{version}",
             device=resolved_device,
@@ -92,7 +92,7 @@ class StableCodec(nn.Module):
         normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         model = model_cls(
             model_config_path=str(model_config_path),
             ckpt_path=None if ckpt_path is None else str(ckpt_path),
@@ -181,7 +181,7 @@ class StableCodec(nn.Module):
             raise TypeError("codes must contain integer ids.")
 
 
-def _resolve_device(device: str | torch.device | None) -> torch.device:
+def _device(device: str | torch.device | None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")

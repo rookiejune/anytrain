@@ -176,7 +176,7 @@ class MossTTS:
             ) from exc
         try:
             processor = auto_processor_cls.from_pretrained(
-                _resolve_pretrained_source(
+                _pretrained_source(
                     model,
                     cache_dir=cache_dir,
                     local_files_only=local_files_only,
@@ -195,7 +195,7 @@ class MossTTS:
                 f"failed to load Hugging Face MOSS-TTS v1.5 processor {model!s}"
             ) from exc
         _set_attention_implementation(loaded, load_kwargs.get("attn_implementation", "sdpa"))
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         return cls(
             model=loaded,
             processor=cast(_Processor, processor),
@@ -355,7 +355,7 @@ def _processor_pretrained_kwargs(
         kwargs["revision"] = revision
     if trust_remote_code:
         kwargs["trust_remote_code"] = trust_remote_code
-    kwargs["codec_path"] = _resolve_pretrained_source(
+    kwargs["codec_path"] = _pretrained_source(
         str(codec_model),
         cache_dir=cache_dir,
         local_files_only=local_files_only,
@@ -364,7 +364,7 @@ def _processor_pretrained_kwargs(
     return kwargs
 
 
-def _resolve_pretrained_source(
+def _pretrained_source(
     source: str | Path,
     *,
     cache_dir: str | Path | None,
@@ -376,17 +376,17 @@ def _resolve_pretrained_source(
         return raw
     try:
         from huggingface_hub import snapshot_download
-    except ImportError:
-        return raw
-    try:
-        return snapshot_download(
-            repo_id=raw,
-            cache_dir=None if cache_dir is None else str(cache_dir),
-            local_files_only=True,
-            revision=revision,
-        )
-    except Exception:
-        return raw
+    except ImportError as exc:
+        raise ImportError(
+            "Resolving a cached MOSS-TTS repository requires `huggingface-hub`. "
+            "Install `anytrain[moss-tts]`."
+        ) from exc
+    return snapshot_download(
+        repo_id=raw,
+        cache_dir=None if cache_dir is None else str(cache_dir),
+        local_files_only=True,
+        revision=revision,
+    )
 
 
 def _processor_message_kwargs(
@@ -605,7 +605,7 @@ def _hashable_value(value: object) -> object:
     return str(value)
 
 
-def _resolve_device(device: str | torch.device | None) -> torch.device:
+def _device(device: str | torch.device | None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")

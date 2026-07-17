@@ -204,7 +204,7 @@ def build_norm_1d(name: NormName, channels: int, *, norm_groups: int | None) -> 
     if name == "batch":
         return nn.BatchNorm1d(channels)
     if name == "group":
-        groups = _resolve_group_count(channels, norm_groups)
+        groups = _group_count(channels, norm_groups)
         return nn.GroupNorm(groups, channels)
     if name == "identity":
         return nn.Identity()
@@ -215,14 +215,14 @@ def build_norm_2d(name: NormName, channels: int, *, norm_groups: int | None) -> 
     if name == "batch":
         return nn.BatchNorm2d(channels)
     if name == "group":
-        groups = _resolve_group_count(channels, norm_groups)
+        groups = _group_count(channels, norm_groups)
         return nn.GroupNorm(groups, channels)
     if name == "identity":
         return nn.Identity()
     raise ValueError(f"Unsupported norm {name!r}.")
 
 
-def _resolve_group_count(channels: int, requested_groups: int | None) -> int:
+def _group_count(channels: int, requested_groups: int | None) -> int:
     if requested_groups is not None:
         if requested_groups <= 0:
             raise ValueError(f"norm_groups must be positive, got {requested_groups}.")

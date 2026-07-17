@@ -10,7 +10,7 @@ from ._output import Features, split
 from .criterion import _LogitCriterion
 from .feature import _FeatureMatching
 from .penalty import _GradientPenalty
-from .types import GAN, Preset, Reduction, resolve_gan, resolve_preset
+from .types import GAN, Preset, Reduction, _gan, _preset
 
 
 class Loss(nn.Module):
@@ -31,7 +31,7 @@ class Loss(nn.Module):
         if gp_weight is not None and gp_weight < 0:
             raise ValueError("gp_weight must be non-negative.")
 
-        self.gan = resolve_gan(gan)
+        self.gan = _gan(gan)
         self.reduction = Reduction(reduction)
         self.discriminator = discriminator
         self._criterion = _LogitCriterion(self.gan, reduction=self.reduction)
@@ -55,7 +55,7 @@ class Loss(nn.Module):
         gp_weight: float | None = None,
         **kwargs,
     ) -> Loss:
-        resolved = resolve_preset(preset)
+        resolved = _preset(preset)
         if resolved == Preset.DAC:
             from .audio import DACDiscriminator
 

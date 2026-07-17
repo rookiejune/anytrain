@@ -30,7 +30,7 @@ class TorchHubUTMOSBackend:
 
     def score(self, audio: Any, sample_rate: int) -> Tensor:
         wave, sample_rate = load_wave_batch(audio, sample_rate)
-        device = self._resolve_device()
+        device = self._device()
         model = self._prepare_model(self._load_model(), device=device)
 
         with torch.inference_mode():
@@ -51,7 +51,7 @@ class TorchHubUTMOSBackend:
         self.model = model
         return model
 
-    def _resolve_device(self) -> torch.device:
+    def _device(self) -> torch.device:
         if self.device is not None:
             return torch.device(self.device)
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -94,7 +94,7 @@ class UTMOSEvaluator(EvaluatorABC):
         backend_load_options: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
-        self.backend = self._resolve_backend(
+        self.backend = self._backend(
             backend,
             repo=repo,
             model_name=model_name,
@@ -108,7 +108,7 @@ class UTMOSEvaluator(EvaluatorABC):
         scores = self._normalize_scores(score)
         return {"utmos": sum(scores) / len(scores)}
 
-    def _resolve_backend(
+    def _backend(
         self,
         backend: UTMOSBackendProtocol | None,
         *,

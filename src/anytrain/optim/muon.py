@@ -14,8 +14,8 @@ from .options import (
 from .rules import (
     ExcludedModules,
     LRScaleRules,
+    _excluded_module_ids,
     is_muon_parameter_for_module,
-    resolve_excluded_module_ids,
 )
 
 
@@ -76,7 +76,7 @@ def split_muon_params(
     """
 
     validate_module(module)
-    excluded_module_ids = resolve_excluded_module_ids(module, excluded_modules)
+    excluded_module_ids = _excluded_module_ids(module, excluded_modules)
 
     def is_muon(
         child_module: nn.Module,

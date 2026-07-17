@@ -50,7 +50,7 @@ else:
     TorchAudioSpectrogram = _TorchAudioSpectrogram
 
 
-def _resolve_backend(backend: str, torchaudio_cls: object | None) -> str:
+def _backend(backend: str, torchaudio_cls: object | None) -> str:
     if backend not in {"auto", "torchaudio", "torch"}:
         raise ValueError("backend must be 'auto', 'torchaudio', or 'torch'.")
     if backend == "torchaudio":
@@ -95,7 +95,7 @@ class STFTTransform(nn.Module):
         self.window = window
         self.center = center
         self.normalized = normalized
-        self.backend = _resolve_backend(backend, TorchAudioSpectrogram)
+        self.backend = _backend(backend, TorchAudioSpectrogram)
         self.transform: nn.Module | None = None
         if self.backend == "torchaudio":
             spectrogram_cls = _require_torchaudio_spectrogram()
@@ -170,7 +170,7 @@ class MelSpectrogramTransform(nn.Module):
         if mel_scale not in {"htk", "slaney"}:
             raise ValueError("mel_scale must be 'htk' or 'slaney'.")
 
-        self.backend = _resolve_backend(backend, TorchAudioMelSpectrogram)
+        self.backend = _backend(backend, TorchAudioMelSpectrogram)
         self.mel_scale = mel_scale
         self.power = power
         self.transform: nn.Module | None = None

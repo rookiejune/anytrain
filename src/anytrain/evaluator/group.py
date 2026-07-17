@@ -13,49 +13,52 @@ class EvaluatorGroup(nn.Module):
 
     def __init__(
         self,
-        metrics: Mapping[str, EvaluatorABC],
+        evaluators: Mapping[str, EvaluatorABC],
     ) -> None:
         super().__init__()
-        self.metrics = cast(dict[str, EvaluatorABC], nn.ModuleDict(self._validate_metrics(metrics)))
+        self.evaluators = cast(
+            dict[str, EvaluatorABC],
+            nn.ModuleDict(self._validate_evaluators(evaluators)),
+        )
 
     def forward(self, *args: Any, **kwargs: Any) -> MetricDict:
         output: MetricDict = {}
-        for name, metric in self.metrics.items():
-            metrics = metric(*args, **kwargs)
+        for name, evaluator in self.evaluators.items():
+            metrics = evaluator(*args, **kwargs)
             self._merge_metric_output(output, name, metrics)
         return output
 
     def update(self, *args: Any, **kwargs: Any) -> None:
-        for metric in self.metrics.values():
-            metric.update(*args, **kwargs)
+        for evaluator in self.evaluators.values():
+            evaluator.update(*args, **kwargs)
 
     def compute(self) -> MetricDict:
         output: MetricDict = {}
-        for name, metric in self.metrics.items():
-            metrics = metric.compute()
+        for name, evaluator in self.evaluators.items():
+            metrics = evaluator.compute()
             self._merge_metric_output(output, name, metrics)
         return output
 
     def reset(self) -> None:
-        for metric in self.metrics.values():
-            metric.reset()
+        for evaluator in self.evaluators.values():
+            evaluator.reset()
 
-    def _validate_metrics(
+    def _validate_evaluators(
         self,
-        metrics: Mapping[str, EvaluatorABC],
+        evaluators: Mapping[str, EvaluatorABC],
     ) -> dict[str, EvaluatorABC]:
-        if not isinstance(metrics, Mapping):
-            raise TypeError("metrics must be a mapping of names to evaluators.")
+        if not isinstance(evaluators, Mapping):
+            raise TypeError("evaluators must be a mapping of names to evaluators.")
 
-        if not metrics:
-            raise ValueError("metrics must contain at least one evaluator.")
+        if not evaluators:
+            raise ValueError("evaluators must contain at least one evaluator.")
 
         validated: dict[str, EvaluatorABC] = {}
-        for raw_name, metric in metrics.items():
-            name = self._validate_name(raw_name, "metric name")
-            if not isinstance(metric, EvaluatorABC):
-                raise TypeError(f"Metric {name!r} must inherit EvaluatorABC.")
-            validated[name] = metric
+        for raw_name, evaluator in evaluators.items():
+            name = self._validate_name(raw_name, "evaluator name")
+            if not isinstance(evaluator, EvaluatorABC):
+                raise TypeError(f"Evaluator {name!r} must inherit EvaluatorABC.")
+            validated[name] = evaluator
         return validated
 
     def _merge_metric_output(

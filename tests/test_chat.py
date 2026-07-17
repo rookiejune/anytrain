@@ -14,7 +14,17 @@ class ChatTest(unittest.TestCase):
         self.assertNotIn("Chat", anytrain_exports)
 
     def test_chat_module_only_exports_chat_client(self):
-        self.assertEqual(chat_api.__all__, ["Chat"])
+        self.assertEqual(
+            chat_api.__all__,
+            [
+                "Chat",
+                "ChatConfig",
+                "ImageGeneration",
+                "ImageOutput",
+                "ModelType",
+                "config_from_env",
+            ],
+        )
 
     def test_model_type_uses_lowercase_string_values(self):
         self.assertEqual(chat_api.ModelType.DEEPSEEK.value, "deepseek")

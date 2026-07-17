@@ -30,7 +30,7 @@ _NORMALIZATION_MODULE_TYPES: Final[tuple[type[nn.Module], ...]] = (
 )
 
 
-def resolve_excluded_module_ids(
+def _excluded_module_ids(
     module: nn.Module,
     excluded_modules: ExcludedModules,
 ) -> frozenset[int]:
@@ -86,6 +86,5 @@ __all__ = [
     "is_embedding_module",
     "is_muon_parameter_for_module",
     "is_normalization_module",
-    "resolve_excluded_module_ids",
     "validate_excluded_modules",
 ]

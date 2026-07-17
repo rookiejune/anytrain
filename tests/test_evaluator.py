@@ -83,8 +83,8 @@ class EvaluatorTest(unittest.TestCase):
     def test_evaluator_group_registers_metrics_in_module_dict(self):
         evaluator = EvaluatorGroup({"error": ErrorEvaluator(), "running": RunningAbsoluteError()})
 
-        self.assertEqual(set(evaluator.metrics.keys()), {"error", "running"})
-        self.assertIsInstance(evaluator.metrics, nn.ModuleDict)
+        self.assertEqual(set(evaluator.evaluators.keys()), {"error", "running"})
+        self.assertIsInstance(evaluator.evaluators, nn.ModuleDict)
 
     def test_evaluator_abc_can_return_direct_evaluate_without_storing(self):
         prediction = torch.tensor([1.0, 3.0], requires_grad=True)
@@ -159,11 +159,11 @@ class EvaluatorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "separator"):
             evaluator(torch.tensor([1.0]), torch.tensor([0.0]))
 
-    def test_evaluator_group_rejects_empty_metrics(self):
+    def test_evaluator_group_rejects_empty_evaluators(self):
         with self.assertRaisesRegex(ValueError, "at least one"):
             EvaluatorGroup({})
 
-    def test_evaluator_group_rejects_metric_sequences(self):
+    def test_evaluator_group_rejects_evaluator_sequences(self):
         with self.assertRaisesRegex(TypeError, "mapping"):
             EvaluatorGroup([ErrorEvaluator()])
 

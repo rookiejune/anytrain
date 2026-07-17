@@ -65,7 +65,7 @@ class DAC(nn.Module):
             local_files_only=local_files_only,
             force_download=force_download,
         )
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         model = _load_checkpoint(assets["checkpoint"], resolved_device)
         return cls(
             model=model,
@@ -87,7 +87,7 @@ class DAC(nn.Module):
         if not path.is_file():
             raise FileNotFoundError(f"DAC checkpoint does not exist: {path}.")
 
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         model = _load_checkpoint(path, resolved_device)
         return cls(
             model=model,
@@ -155,7 +155,7 @@ def _load_checkpoint(checkpoint: Path, device: torch.device) -> nn.Module:
     return model
 
 
-def _resolve_device(device: str | torch.device | None) -> torch.device:
+def _device(device: str | torch.device | None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")

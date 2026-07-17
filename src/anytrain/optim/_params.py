@@ -26,7 +26,7 @@ def split_parameters_by_predicate(
     selected_params: Collection[nn.Parameter] | None = None,
 ) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
     validate_module(module)
-    selected_param_ids = resolve_selected_param_ids(module, selected_params)
+    selected_param_ids = _selected_param_ids(module, selected_params)
     entries_by_id: dict[int, tuple[nn.Parameter, bool]] = {}
 
     for child_module in module.modules():
@@ -61,7 +61,7 @@ def make_scaled_param_groups(
     base_lr: float,
     lr_scale_rules: LRScaleRules = (),
 ) -> list[dict[str, object]]:
-    lr_scales = resolve_parameter_lr_scales(module, lr_scale_rules)
+    lr_scales = _parameter_lr_scales(module, lr_scale_rules)
     param_groups: list[dict[str, object]] = []
 
     for params, options in groups:
@@ -79,12 +79,12 @@ def make_scaled_param_groups(
     return param_groups
 
 
-def resolve_parameter_lr_scales(
+def _parameter_lr_scales(
     module: nn.Module,
     lr_scale_rules: LRScaleRules = (),
 ) -> dict[int, float]:
     validate_module(module)
-    rules = _resolve_lr_scale_rules(module, lr_scale_rules)
+    rules = _lr_scale_rules(module, lr_scale_rules)
     if not rules:
         return {}
 
@@ -117,7 +117,7 @@ def resolve_parameter_lr_scales(
     }
 
 
-def resolve_selected_param_ids(
+def _selected_param_ids(
     module: nn.Module,
     selected_params: Collection[nn.Parameter] | None,
 ) -> set[int] | None:
@@ -137,7 +137,7 @@ def resolve_selected_param_ids(
     return selected_param_ids
 
 
-def _resolve_lr_scale_rules(
+def _lr_scale_rules(
     module: nn.Module,
     lr_scale_rules: LRScaleRules,
 ) -> tuple[tuple[str, float], ...]:

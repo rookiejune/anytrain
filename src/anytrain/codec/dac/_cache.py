@@ -10,7 +10,7 @@ from ...env import anytrain_home
 DEFAULT_DAC_HOME = DEFAULT_ANYTRAIN_HOME / "dac"
 
 
-def resolve_dac_cache_dir(cache_dir: str | os.PathLike[str] | None = None) -> Path:
+def cache_dir(cache_dir: str | os.PathLike[str] | None = None) -> Path:
     if cache_dir is not None:
         return Path(cache_dir).expanduser()
     return anytrain_home() / "dac"
@@ -19,5 +19,4 @@ def resolve_dac_cache_dir(cache_dir: str | os.PathLike[str] | None = None) -> Pa
 __all__ = [
     "ANYTRAIN_HOME_ENV",
     "DEFAULT_DAC_HOME",
-    "resolve_dac_cache_dir",
 ]

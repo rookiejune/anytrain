@@ -16,8 +16,8 @@ class SpeechEvaluator(EvaluatorABC):
         utmos: UTMOSEvaluator | None = None,
     ) -> None:
         super().__init__()
-        self.asr = self._resolve_asr(asr)
-        self.utmos = self._resolve_utmos(utmos)
+        self.asr = self._asr(asr)
+        self.utmos = self._utmos(utmos)
 
     def evaluate(
         self,
@@ -41,14 +41,14 @@ class SpeechEvaluator(EvaluatorABC):
             metrics[name] = value
         return metrics
 
-    def _resolve_asr(self, asr: WhisperASREvaluator | None) -> WhisperASREvaluator:
+    def _asr(self, asr: WhisperASREvaluator | None) -> WhisperASREvaluator:
         if asr is None:
             return WhisperASREvaluator()
         if not isinstance(asr, WhisperASREvaluator):
             raise TypeError("asr must be a WhisperASREvaluator.")
         return asr
 
-    def _resolve_utmos(self, utmos: UTMOSEvaluator | None) -> UTMOSEvaluator:
+    def _utmos(self, utmos: UTMOSEvaluator | None) -> UTMOSEvaluator:
         if utmos is None:
             return UTMOSEvaluator()
         if not isinstance(utmos, UTMOSEvaluator):

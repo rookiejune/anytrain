@@ -84,7 +84,7 @@ class LongCat(nn.Module):
             local_files_only=local_files_only,
             force_download=force_download,
         )
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
 
         with _longcat_checkpoint_env(assets.ckpt_dir):
             encoder = load_encoder(str(assets.configs.encoder), resolved_device)
@@ -240,7 +240,7 @@ def _validate_decoders(decoders: Sequence[LongCatDecoderName]) -> tuple[LongCatD
     return tuple(dict.fromkeys(decoders))
 
 
-def _resolve_device(device: str | torch.device | None) -> torch.device:
+def _device(device: str | torch.device | None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -103,7 +103,7 @@ class AutoGroupResidualVectorQuantizer(nn.Module):
         num_active_codebooks: int | None = None,
     ) -> QuantizeOutput:
         _checks.input_latents(latents, self.input_dim)
-        active_count = self._resolve_active_codebooks(num_active_codebooks)
+        active_count = self._active_codebooks(num_active_codebooks)
         leading_shape = latents.shape[:-1]
         flat_latents = latents.reshape(-1, self.input_dim)
         dropout_enabled = (
@@ -280,7 +280,7 @@ class AutoGroupResidualVectorQuantizer(nn.Module):
         num_active_codebooks: int | None = None,
     ) -> Tensor:
         _checks.input_latents(latents, self.input_dim)
-        active_count = self._resolve_active_codebooks(num_active_codebooks)
+        active_count = self._active_codebooks(num_active_codebooks)
         leading_shape = latents.shape[:-1]
         residual = latents.reshape(-1, self.input_dim)
 
@@ -377,7 +377,7 @@ class AutoGroupResidualVectorQuantizer(nn.Module):
             raise RuntimeError(f"AGRVQ quantizer output unexpectedly omitted {name}.")
         return value
 
-    def _resolve_active_codebooks(self, num_active_codebooks: int | None) -> int:
+    def _active_codebooks(self, num_active_codebooks: int | None) -> int:
         if num_active_codebooks is None:
             return self.num_codebooks
         if num_active_codebooks <= 0 or num_active_codebooks > self.num_codebooks:

@@ -269,7 +269,7 @@ from anytrain.framework.flow_matching import (
 
 - 增加本设计文档。
 - 在 `docs/modules/framework.md` 和 docs index 加链接。
-- 在 `src/anytrain/framework/todo.md` 记录分阶段任务。
+- 在根 `todo.md` 的 Framework 章节记录尚未完成的任务。
 
 ### P1: 最小包结构和依赖边界
 

@@ -85,6 +85,10 @@ class MossTTSAdapterTest(unittest.TestCase):
                 "anytrain.tts.moss.tts.load_transformers_auto_processor_class",
                 return_value=FakeAutoProcessor,
             ),
+            patch(
+                "anytrain.tts.moss.tts._pretrained_source",
+                side_effect=lambda source, **kwargs: str(source),
+            ),
         ):
             tts = MossTTS.from_pretrained(
                 "OpenMOSS-Team/MOSS-TTS-v1.5",

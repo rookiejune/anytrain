@@ -23,7 +23,7 @@ def create_scheduler_from_config(
     optimizer: torch.optim.Optimizer,
     config: Schedule,
 ) -> torch.optim.lr_scheduler.LambdaLR:
-    phases = _resolve_phases(config)
+    phases = _phases(config)
 
     def lr_lambda(step: int) -> float:
         clamped_step = max(step, 0)
@@ -35,7 +35,7 @@ def create_scheduler_from_config(
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-def _resolve_phases(config: Schedule) -> tuple[_ResolvedPhase, ...]:
+def _phases(config: Schedule) -> tuple[_ResolvedPhase, ...]:
     resolved_phases: list[_ResolvedPhase] = []
     start_step = 0
     previous_lr_ratio = 1.0

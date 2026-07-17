@@ -21,9 +21,6 @@ class LossGroup(LossABC):
         self.losses = cast(dict[str, nn.Module], nn.ModuleDict(validated_losses))
         self.balancer = self._validate_balancer(balancer)
 
-    def forward(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, LossDetails]:
-        return self.compute_loss(*args, **kwargs)
-
     def compute_loss(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, LossDetails]:
         loss_values: dict[str, torch.Tensor] = {}
         details: LossDetails = {}
@@ -85,7 +82,10 @@ class LossGroup(LossABC):
         if not isinstance(result, tuple) or len(result) != 2:
             raise TypeError("loss result must be a scalar tensor or (scalar tensor, details).")
         loss, details = result
-        return self._validate_loss_tensor(loss), self._validate_nested_loss_details(details)
+        return self._validate_loss_tensor(loss), self._validate_nested_loss_details(
+            details,
+            detach=True,
+        )
 
     def _add_detail(self, details: LossDetails, name: str, value: object) -> None:
         name = self._validate_detail_name(name)
@@ -114,15 +114,28 @@ class LossGroup(LossABC):
             ]
         )
 
-    def _validate_nested_loss_details(self, details: object) -> LossDetails:
+    def _validate_nested_loss_details(
+        self,
+        details: object,
+        *,
+        detach: bool,
+    ) -> LossDetails:
         if not isinstance(details, Mapping):
             raise TypeError("loss details must be a mapping of string keys to detail values.")
 
         validated: LossDetails = {}
         for raw_name, raw_value in details.items():
             name = self._validate_detail_path(raw_name)
-            validated[name] = self._validate_detail_value(raw_value, name=name, detach=True)
+            validated[name] = self._validate_detail_value(raw_value, name=name, detach=detach)
         return validated
+
+    def _validate_loss_details(
+        self,
+        details: object,
+        *,
+        detach: bool,
+    ) -> LossDetails:
+        return self._validate_nested_loss_details(details, detach=detach)
 
     def _validate_detail_path(self, name: object) -> str:
         if not isinstance(name, str):

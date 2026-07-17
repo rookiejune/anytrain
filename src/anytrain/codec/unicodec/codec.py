@@ -64,7 +64,7 @@ class UniCodec(nn.Module):
 
         assets = ensure_unicodec_assets(**kwargs)
         model_cls = _load_unicodec_model()
-        resolved_device = _resolve_device(device)
+        resolved_device = _device(device)
         model = model_cls.from_pretrained0802(
             str(assets["config"]),
             str(assets["checkpoint"]),
@@ -173,7 +173,7 @@ def _codebook_sizes(model: nn.Module) -> tuple[int, ...]:
     return (codebook_size,) * num_codebooks
 
 
-def _resolve_device(device: str | torch.device | None) -> torch.device:
+def _device(device: str | torch.device | None) -> torch.device:
     if device is not None:
         return torch.device(device)
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")

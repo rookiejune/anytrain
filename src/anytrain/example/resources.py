@@ -16,7 +16,7 @@ def list_example_audio() -> tuple[ExampleAudio, ...]:
 
 
 def example_audio_path(name: ExampleAudio | str) -> Path:
-    audio = _resolve_audio(name)
+    audio = _audio(name)
     resource = files("anytrain.example").joinpath(*_relative_parts(audio))
     return Path(resource)
 
@@ -29,7 +29,7 @@ def color_your_night_path() -> Path:
     return example_audio_path(ExampleAudio.COLOR_YOUR_NIGHT)
 
 
-def _resolve_audio(name: ExampleAudio | str) -> ExampleAudio:
+def _audio(name: ExampleAudio | str) -> ExampleAudio:
     if isinstance(name, ExampleAudio):
         return name
     if not isinstance(name, str):

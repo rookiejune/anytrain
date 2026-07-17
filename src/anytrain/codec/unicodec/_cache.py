@@ -10,12 +10,11 @@ from ...env import hf_home
 __all__ = [
     "DEFAULT_HF_HOME",
     "HF_HOME_ENV",
-    "resolve_longcat_cache_dir",
 ]
 
 
-def resolve_longcat_cache_dir(cache_dir: str | os.PathLike[str] | None = None) -> Path:
+def cache_dir(cache_dir: str | os.PathLike[str] | None = None) -> Path:
     if cache_dir is not None:
         return Path(cache_dir).expanduser()
 
-    return hf_home() / "longcat-audio-codec"
+    return hf_home() / "unicodec"

@@ -88,7 +88,7 @@ def _load_audio_with_torchcodec(
     metadata = decoder.metadata
     sample_rate = int(metadata.sample_rate)
     total_duration = float(metadata.duration_seconds)
-    stop_seconds = _resolve_stop_seconds(
+    stop_seconds = _stop_seconds(
         start_seconds=start_seconds,
         duration=duration,
         total_duration=total_duration,
@@ -108,7 +108,7 @@ def _load_audio_with_torchaudio(
     waveform, loaded_sample_rate = torchaudio.load(str(path))
     sample_rate = int(loaded_sample_rate)
     total_duration = waveform.shape[-1] / sample_rate
-    _resolve_stop_seconds(
+    _stop_seconds(
         start_seconds=start_seconds,
         duration=duration,
         total_duration=total_duration,
@@ -130,7 +130,7 @@ def _validate_time_range(*, start_seconds: float, duration: float | None) -> Non
         raise ValueError("duration must be positive when provided.")
 
 
-def _resolve_stop_seconds(
+def _stop_seconds(
     *,
     start_seconds: float,
     duration: float | None,

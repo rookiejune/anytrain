@@ -10,9 +10,9 @@ from .options import AdamWOptions
 from .rules import (
     ExcludedModules,
     LRScaleRules,
+    _excluded_module_ids,
     is_embedding_module,
     is_normalization_module,
-    resolve_excluded_module_ids,
 )
 
 
@@ -72,7 +72,7 @@ def split_adamw_decay_params(
     if not isinstance(decay_selected_params, bool):
         raise TypeError("decay_selected_params must be a bool.")
 
-    excluded_module_ids = resolve_excluded_module_ids(module, excluded_modules)
+    excluded_module_ids = _excluded_module_ids(module, excluded_modules)
 
     def should_decay(
         child_module: nn.Module,

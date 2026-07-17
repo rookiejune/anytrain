@@ -8,7 +8,6 @@ from .longcat import (
     LongCatConfigPaths,
     LongCatDecoderName,
     ensure_longcat_assets,
-    resolve_longcat_cache_dir,
 )
 from .protocol import Codec
 from .stable_codec import StableCodec
@@ -27,5 +26,4 @@ __all__ = [
     "StableCodec",
     "UniCodec",
     "ensure_longcat_assets",
-    "resolve_longcat_cache_dir",
 ]

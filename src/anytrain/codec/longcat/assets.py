@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .cache import resolve_longcat_cache_dir
+from ._cache import cache_dir as _cache_dir
 
 DEFAULT_HF_REPO_ID = "meituan-longcat/LongCat-Audio-Codec"
 
@@ -72,7 +72,7 @@ def ensure_longcat_assets(
     force_download: bool = False,
 ) -> LongCatAssets:
     decoder_names = _validate_decoders(decoders)
-    root = resolve_longcat_cache_dir(cache_dir)
+    root = _cache_dir(cache_dir)
     ckpt_dir = root / "ckpts"
     config_dir = root / "configs"
     ckpt_dir.mkdir(parents=True, exist_ok=True)

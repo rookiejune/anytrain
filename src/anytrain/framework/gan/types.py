@@ -20,7 +20,7 @@ class Reduction(StrEnum):
     Sum = auto()
 
 
-def resolve_gan(value: GAN | str) -> GAN:
+def _gan(value: GAN | str) -> GAN:
     if isinstance(value, GAN):
         return value
     if not isinstance(value, str):
@@ -32,7 +32,7 @@ def resolve_gan(value: GAN | str) -> GAN:
         raise ValueError(f"Unknown GAN type {value!r}. Supported: {supported}.") from exc
 
 
-def resolve_preset(value: Preset) -> Preset:
+def _preset(value: Preset) -> Preset:
     if not isinstance(value, Preset):
         raise TypeError("preset must be a Preset.")
     return value

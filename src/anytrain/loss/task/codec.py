@@ -55,7 +55,7 @@ class CodecLoss(LossGroup):
         mel_scale: str = "htk",
         backend: str = "auto",
     ) -> CodecLoss:
-        preset = cls._resolve_preset(preset)
+        preset = cls._preset(preset)
         if preset == CodecLossPreset.DAC:
             return cls(
                 {
@@ -93,7 +93,7 @@ class CodecLoss(LossGroup):
         raise ValueError(f"Unsupported codec loss preset {preset!r}.")
 
     @staticmethod
-    def _resolve_preset(preset: CodecLossPreset | str) -> CodecLossPreset:
+    def _preset(preset: CodecLossPreset | str) -> CodecLossPreset:
         if isinstance(preset, CodecLossPreset):
             return preset
         if not isinstance(preset, str):

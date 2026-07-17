@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import TypedDict
 
-from .cache import resolve_unicodec_cache_dir
+from ._cache import cache_dir as _cache_dir
 
 DEFAULT_HF_REPO_ID = "Yidiii/UniCodec_ckpt"
 DEFAULT_CONFIG_NAME = "unicodec_frame75_10s_nq1_code16384_dim512_acousitic.yaml"
@@ -26,7 +26,7 @@ def ensure_unicodec_assets(
     local_files_only: bool = False,
     force_download: bool = False,
 ) -> UniCodecAssets:
-    root = resolve_unicodec_cache_dir(cache_dir)
+    root = _cache_dir(cache_dir)
     root.mkdir(parents=True, exist_ok=True)
     checkpoint = _ensure_checkpoint(
         repo_id=repo_id,

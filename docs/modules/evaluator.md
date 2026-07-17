@@ -59,7 +59,7 @@ dict[str, float | torch.Tensor]
 - `MetricDict`：`dict[str, MetricValue]`，不再额外维护 metric map / mapping 类型。
 - `EvaluatorGroup`：组合多个 `EvaluatorABC`，内部用 `nn.ModuleDict` 注册子 evaluator，并处理 key 校验。
 
-`EvaluatorGroup` 接收 evaluator mapping：
+`EvaluatorGroup` 接收 evaluator mapping，并通过 `evaluators` 属性注册子模块：
 
 ```python
 evaluator = EvaluatorGroup(

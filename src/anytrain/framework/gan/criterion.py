@@ -6,7 +6,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from .types import GAN, Reduction, resolve_gan
+from .types import GAN, Reduction, _gan
 
 
 class _LogitCriterion(nn.Module):
@@ -17,7 +17,7 @@ class _LogitCriterion(nn.Module):
         reduction: Reduction | str = Reduction.Mean,
     ) -> None:
         super().__init__()
-        self.gan = resolve_gan(gan)
+        self.gan = _gan(gan)
         self.reduction = Reduction(reduction)
 
     def discriminator_loss(

@@ -12,7 +12,7 @@ from anytrain import chat
 response = chat.Chat("deepseek")("summarize this training curve")
 ```
 
-`anytrain.chat.__all__` 只导出 `Chat`。环境变量名、provider 默认参数和配置读取 helper 是模块实现细节，测试可以覆盖，但不作为通配导入 API。
+`anytrain.chat` 导出 `Chat`、公共配置、provider 枚举和返回类型。环境变量名与 provider 默认参数仍是模块实现细节，不进入 `__all__`。
 
 同一个 `Chat` 实例会保留已成功请求的 user/assistant 消息，后续请求会把历史消息作为上下文继续发送。需要开启新上下文时，可以调用 `client.refresh()`，或在单次请求中传入 `refresh=True`：
 

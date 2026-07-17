@@ -24,6 +24,7 @@ PosthocBottleneck: TypeAlias = Union[
 
 DEFAULT_VERSION: SupportedVersion = "speech-16k"
 DEFAULT_PRETRAINED_MODEL = f"stabilityai/stable-codec-{DEFAULT_VERSION}"
+DEFAULT_POSTHOC_BOTTLENECK: PosthocBottleneckPreset = "1x46656_400bps"
 SAMPLE_RATE = 16_000
 NUM_CHANNELS = 1
 DEFAULT_CODEBOOK_SIZE = 17**6
@@ -43,12 +44,14 @@ class StableCodec(nn.Module):
         model: nn.Module,
         device: torch.device,
         *,
-        posthoc_bottleneck: PosthocBottleneck | None = None,
+        posthoc_bottleneck: PosthocBottleneck | None = DEFAULT_POSTHOC_BOTTLENECK,
         normalize: bool = True,
     ) -> None:
         super().__init__()
 
         self.model = model
+        if posthoc_bottleneck is not None:
+            self.model.set_posthoc_bottleneck(posthoc_bottleneck)
         self.device = device
         self.posthoc_bottleneck = posthoc_bottleneck is not None
         self.normalize = normalize
@@ -62,7 +65,7 @@ class StableCodec(nn.Module):
         *,
         pretrained_model: str | None = None,
         device: str | torch.device | None = None,
-        posthoc_bottleneck: PosthocBottleneck | None = None,
+        posthoc_bottleneck: PosthocBottleneck | None = DEFAULT_POSTHOC_BOTTLENECK,
         normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
@@ -71,9 +74,6 @@ class StableCodec(nn.Module):
             pretrained_model=pretrained_model or f"stabilityai/stable-codec-{version}",
             device=resolved_device,
         )
-        if posthoc_bottleneck is not None:
-            model.set_posthoc_bottleneck(posthoc_bottleneck)
-
         return cls(
             model=model,
             device=resolved_device,
@@ -88,7 +88,7 @@ class StableCodec(nn.Module):
         *,
         ckpt_path: str | os.PathLike[str] | None = None,
         device: str | torch.device | None = None,
-        posthoc_bottleneck: PosthocBottleneck | None = None,
+        posthoc_bottleneck: PosthocBottleneck | None = DEFAULT_POSTHOC_BOTTLENECK,
         normalize: bool = True,
     ) -> StableCodec:
         model_cls = _load_stable_codec_model()
@@ -98,9 +98,6 @@ class StableCodec(nn.Module):
             ckpt_path=None if ckpt_path is None else str(ckpt_path),
             device=resolved_device,
         )
-        if posthoc_bottleneck is not None:
-            model.set_posthoc_bottleneck(posthoc_bottleneck)
-
         return cls(
             model=model,
             device=resolved_device,

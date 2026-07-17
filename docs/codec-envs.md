@@ -151,7 +151,8 @@ PY
 `from_pretrained()` / `from_config()` 只负责加载上游模型，`encode()` 返回统一的
 `[batch, frame, codebook]` codes，`encode_latents()` 暴露上游 latent/code 边界，
 `decode()` 接收 codes。wrapper 在 posthoc 模式负责上游 list 与公共 Tensor 间的双向转换，
-native `codebook_sizes` 从 `model.model.bottleneck.quantizer` 读取；默认 speech 模型是
-`(17^6,) == (24137569,)`，`(46656,)` 只对应 `1x46656_400bps` posthoc preset。现有 wrapper
+native `codebook_sizes` 从 `model.model.bottleneck.quantizer` 读取；wrapper 默认启用
+`1x46656_400bps` posthoc preset，得到 `(46656,)`。显式传入 `posthoc_bottleneck=None`
+时，speech 模型使用 `(17^6,) == (24137569,)` 的 native FSQ。现有 wrapper
 签名和上游 `0.1.2` 对齐，不需要为了 Stable Codec 修改 `anytrain` 主环境或
 `pyproject.toml`。

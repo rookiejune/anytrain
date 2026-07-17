@@ -8,6 +8,7 @@ from torch import nn
 
 from anytrain.codec.stable_codec import (
     DEFAULT_CODEBOOK_SIZE,
+    DEFAULT_POSTHOC_BOTTLENECK,
     DEFAULT_PRETRAINED_MODEL,
     StableCodec,
 )
@@ -27,7 +28,9 @@ class StableCodecTest(unittest.TestCase):
         self.assertEqual(codec.device, torch.device("cpu"))
         self.assertEqual(codec.sample_rate, 16000)
         self.assertEqual(DEFAULT_CODEBOOK_SIZE, 17**6)
-        self.assertEqual(codec.codebook_sizes, (17**6,))
+        self.assertEqual(DEFAULT_POSTHOC_BOTTLENECK, "1x46656_400bps")
+        self.assertEqual(codec.codebook_sizes, (46656,))
+        self.assertEqual(codec.model.posthoc_stages, DEFAULT_POSTHOC_BOTTLENECK)
 
     def test_from_pretrained_sets_posthoc_bottleneck(self):
         with patch(
@@ -65,7 +68,12 @@ class StableCodecTest(unittest.TestCase):
 
     def test_encode_returns_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"), normalize=False)
+        codec = StableCodec(
+            model=model,
+            device=torch.device("cpu"),
+            posthoc_bottleneck=None,
+            normalize=False,
+        )
         audio = torch.zeros((2, 1, 16))
 
         tokens = codec.encode(audio, 16000)
@@ -76,7 +84,7 @@ class StableCodecTest(unittest.TestCase):
 
     def test_encode_latents_exposes_upstream_latent_boundary(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
         audio = torch.zeros((2, 1, 16))
 
         latents, tokens = codec.encode_latents(audio, 16000)
@@ -144,7 +152,7 @@ class StableCodecTest(unittest.TestCase):
 
     def test_encode_resamples_from_input_sample_rate(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
         audio = torch.zeros((2, 1, 8))
 
         with patch(
@@ -157,7 +165,7 @@ class StableCodecTest(unittest.TestCase):
 
     def test_decode_uses_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
         tokens = torch.ones((2, 5, 1), dtype=torch.long)
 
         audio = codec.decode(tokens)
@@ -193,7 +201,7 @@ class StableCodecTest(unittest.TestCase):
 
     def test_reconstruct_roundtrips_tokens(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
         audio = torch.zeros((2, 1, 16))
 
         reconstructed = codec.reconstruct(audio, 16000)
@@ -203,14 +211,14 @@ class StableCodecTest(unittest.TestCase):
 
     def test_encode_rejects_non_mono_audio(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
 
         with self.assertRaisesRegex(ValueError, "mono"):
             codec.encode(torch.zeros((2, 2, 16)), 16000)
 
     def test_encode_rejects_missing_channel_axis(self):
         model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
 
         with self.assertRaisesRegex(ValueError, "shape"):
             codec.encode(torch.zeros((2, 16)), 16000)
@@ -220,7 +228,7 @@ class StableCodecTest(unittest.TestCase):
         model.model.bottleneck.quantizer.codebook_size = 123
         model.model.bottleneck.quantizer.num_codebooks = 2
 
-        codec = StableCodec(model=model, device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
 
         self.assertEqual(codec.codebook_sizes, (123, 123))
 

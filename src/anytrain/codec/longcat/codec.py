@@ -9,6 +9,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from .._module import DeviceModule
 from .assets import LongCatAssets, LongCatDecoderName, ensure_longcat_assets
 
 DEFAULT_DECODER: LongCatDecoderName = "16k_4codebooks"
@@ -26,7 +27,7 @@ DECODER_CODEBOOKS: dict[LongCatDecoderName, int] = {
 }
 
 
-class LongCat(nn.Module):
+class LongCat(DeviceModule):
     def __init__(
         self,
         encoder: Any,
@@ -39,7 +40,6 @@ class LongCat(nn.Module):
 
         self.encoder = encoder
         self.decoders = nn.ModuleDict(decoders)
-        self.device = device
         self.assets = assets
         self.decoder = decoder
         model = self._decoder()
@@ -56,6 +56,7 @@ class LongCat(nn.Module):
         self.codebook_sizes = (SEMANTIC_CODEBOOK_SIZE,) + (acoustic_size,) * (
             num_codebooks - 1
         )
+        self._init_device(device)
 
     @property
     def semantic_codebook(self) -> Tensor:

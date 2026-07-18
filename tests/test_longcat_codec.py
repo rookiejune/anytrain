@@ -152,10 +152,38 @@ class LongCatCodecTest(unittest.TestCase):
                 torch.zeros((1, 3, 4)),
             )
 
+    def test_to_moves_encoder_decoder_and_public_device_together(self):
+        codec = LongCat(
+            encoder=FakeLongCatEncoder(),
+            decoders={"16k_4codebooks": FakeLongCatDecoder()},
+            device=torch.device("cpu"),
+            assets=_assets(),
+        )
+
+        codec.to("meta")
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.encoder.device_probe.device, codec.device)
+        self.assertEqual(codec.decoders["16k_4codebooks"].device_probe.device, codec.device)
+        self.assertNotIn("_device", codec.state_dict())
+
+    def test_constructor_moves_backends_to_requested_device(self):
+        codec = LongCat(
+            encoder=FakeLongCatEncoder(),
+            decoders={"16k_4codebooks": FakeLongCatDecoder()},
+            device=torch.device("meta"),
+            assets=_assets(),
+        )
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.encoder.device_probe.device, codec.device)
+        self.assertEqual(codec.decoders["16k_4codebooks"].device_probe.device, codec.device)
+
 
 class FakeLongCatDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
         self.n_codebooks = 3
         self.acoustic_codebook_size = 90
         self.codes: torch.Tensor | None = None
@@ -175,6 +203,10 @@ class FakeLongCatDecoder(nn.Module):
 
 
 class FakeLongCatEncoder(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+
     def forward(
         self,
         audio: torch.Tensor,

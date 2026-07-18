@@ -29,6 +29,45 @@ class EmbeddingTest(unittest.TestCase):
         self.assertEqual(embed.num_embeddings, 12)
         self.assertEqual(embed.vocab_size, 12)
 
+    def test_homogeneous_inference_allows_unselected_blocks(self):
+        layout = Layout(text=(0, 2), audio=(10, 12))
+        text = nn.Embedding(2, 2)
+        audio = nn.Embedding(2, 2)
+        embed = Embedding(layout, text=text, audio=audio)
+
+        with torch.no_grad():
+            output = embed(torch.tensor([0, 1]))
+
+        self.assertTrue(torch.equal(output, text(torch.tensor([0, 1]))))
+
+    def test_training_keeps_unselected_block_gradient_absent(self):
+        layout = Layout(text=(0, 2), audio=(10, 12))
+        text = nn.Embedding(2, 2)
+        audio = nn.Embedding(2, 2)
+        embed = Embedding(layout, text=text, audio=audio)
+        optimizer = torch.optim.AdamW(embed.parameters(), lr=0.1, weight_decay=0.1)
+        audio_before = audio.weight.detach().clone()
+
+        output = embed(torch.tensor([0, 1]))
+        output.sum().backward()
+
+        self.assertIsNotNone(text.weight.grad)
+        self.assertIsNone(audio.weight.grad)
+        optimizer.step()
+        self.assertTrue(torch.equal(audio.weight, audio_before))
+
+    def test_homogeneous_inference_falls_back_for_mixed_dtypes(self):
+        layout = Layout(text=(0, 2), audio=(10, 12))
+        text = nn.Embedding(2, 2, dtype=torch.float32)
+        audio = nn.Embedding(2, 2, dtype=torch.float64)
+        embed = Embedding(layout, text=text, audio=audio)
+
+        with torch.no_grad():
+            output = embed(torch.tensor([0, 1]))
+
+        self.assertEqual(output.dtype, torch.float32)
+        self.assertTrue(torch.equal(output, text(torch.tensor([0, 1]))))
+
     def test_forward_applies_block_adapter(self):
         layout = Layout(text=(0, 2), audio=(2, 4))
         text = nn.Embedding(2, 4)

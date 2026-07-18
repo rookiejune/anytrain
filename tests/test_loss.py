@@ -1,5 +1,6 @@
 import unittest
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -363,6 +364,57 @@ class LossTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "exceed"):
             loss(audio, audio, lengths=[4, 5])
+
+    def test_codec_loss_rejects_non_integer_tensor_lengths(self):
+        loss = CodecLoss({"l1": nn.L1Loss()})
+        audio = torch.zeros(2, 1, 4)
+
+        invalid_lengths = (
+            torch.tensor([4.0, 4.0]),
+            torch.tensor([True, True]),
+            torch.tensor([4 + 0j, 4 + 0j]),
+        )
+        for lengths in invalid_lengths:
+            with (
+                self.subTest(dtype=lengths.dtype),
+                self.assertRaisesRegex(TypeError, "integer dtype"),
+            ):
+                loss(audio, audio, lengths=lengths)
+
+    def test_codec_loss_rejects_non_index_sequence_lengths(self):
+        loss = CodecLoss({"l1": nn.L1Loss()})
+        audio = torch.zeros(2, 1, 4)
+
+        for lengths in ([4.0, 4.0], [True, True], [4 + 0j, 4 + 0j], ["4", "4"]):
+            with (
+                self.subTest(lengths=lengths),
+                self.assertRaisesRegex(TypeError, "index-compatible integers"),
+            ):
+                loss(audio, audio, lengths=lengths)
+
+    def test_codec_loss_rejects_bool_like_sequence_lengths(self):
+        loss = CodecLoss({"l1": nn.L1Loss()})
+        audio = torch.zeros(2, 1, 4)
+
+        bool_values = (torch.tensor(True), np.bool_(True), np.array(True))
+        for value in bool_values:
+            with (
+                self.subTest(value_type=type(value)),
+                self.assertRaisesRegex(TypeError, "not bool"),
+            ):
+                loss(audio, audio, lengths=[value, value])
+
+    def test_codec_loss_rejects_non_sequence_length_containers(self):
+        loss = CodecLoss({"l1": nn.L1Loss()})
+        audio = torch.zeros(2, 1, 4)
+
+        invalid = ({0: 4, 1: 4}, iter([4, 4]), b"44")
+        for lengths in invalid:
+            with (
+                self.subTest(lengths_type=type(lengths)),
+                self.assertRaisesRegex(TypeError, "non-text sequence"),
+            ):
+                loss(audio, audio, lengths=lengths)
 
     def test_codec_loss_rejects_unknown_preset(self):
         with self.assertRaisesRegex(ValueError, "Unknown codec loss preset"):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import operator
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -21,6 +22,18 @@ DYNACODEC_LOSS_WEIGHTS = {
     "multi_mel": 10.0,
     "multi_stft": 10.0,
 }
+_INTEGER_DTYPES = frozenset(
+    {
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+        torch.uint64,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+    }
+)
 
 
 class CodecLossPreset(StrEnum):
@@ -148,9 +161,27 @@ def _validate_lengths(
     if isinstance(lengths, Tensor):
         if lengths.ndim != 1:
             raise ValueError("lengths must be a 1D tensor or sequence.")
-        raw_lengths = [int(value) for value in lengths.detach().cpu().tolist()]
+        if lengths.dtype not in _INTEGER_DTYPES:
+            raise TypeError("lengths tensor must use an integer dtype.")
+        raw_lengths = lengths.detach().cpu().tolist()
     else:
-        raw_lengths = [int(value) for value in lengths]
+        if not isinstance(lengths, Sequence) or isinstance(
+            lengths,
+            (str, bytes, bytearray, memoryview),
+        ):
+            raise TypeError("lengths must be a 1D integer tensor or non-text sequence.")
+        raw_lengths = []
+        for value in lengths:
+            if _is_boolean_scalar(value):
+                raise TypeError(
+                    "lengths sequence values must be index-compatible integers, not bool."
+                )
+            try:
+                raw_lengths.append(operator.index(value))
+            except TypeError as exc:
+                raise TypeError(
+                    "lengths sequence values must be index-compatible integers."
+                ) from exc
 
     if len(raw_lengths) != batch_size:
         raise ValueError(
@@ -165,6 +196,15 @@ def _validate_lengths(
                 f"lengths cannot exceed audio time dimension: got {length}, max {max_length}."
             )
     return tuple(raw_lengths)
+
+
+def _is_boolean_scalar(value: object) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, Tensor):
+        return value.dtype == torch.bool
+    dtype = getattr(value, "dtype", None)
+    return getattr(dtype, "kind", None) == "b"
 
 
 def _group_length_indices(lengths: Sequence[int]) -> tuple[tuple[int, list[int]], ...]:

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from anytrain.evaluator import EvaluatorABC
+from anytrain.evaluator import EvaluatorABC, EvaluatorGroup
 from anytrain.evaluator.text import TextComparisonEvaluator
 from anytrain.evaluator.text.scores import corpus_chrf_score, word_error_rate
 
@@ -33,6 +33,142 @@ class TextComparisonEvaluatorTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["wer"], 1.0 / 6.0)
         self.assertGreater(metrics["chrf"], 50.0)
         self.assertLess(metrics["chrf"], 100.0)
+
+    def test_running_scores_match_direct_corpus_across_uneven_batches(self):
+        correct_predictions = ["the quick brown fox"] * 10
+        correct_targets = ["the quick brown fox"] * 10
+        wrong_predictions = ["slow turtle sleeps now"]
+        wrong_targets = ["the quick brown fox"]
+        evaluator = TextComparisonEvaluator()
+
+        direct = evaluator(
+            correct_predictions + wrong_predictions,
+            correct_targets + wrong_targets,
+        )
+        evaluator.update(correct_predictions, correct_targets)
+        evaluator.update(wrong_predictions, wrong_targets)
+        running = evaluator.compute()
+
+        for name, expected in direct.items():
+            self.assertAlmostEqual(running[name], expected)
+        self.assertAlmostEqual(running["wer"], 1.0 / 11.0)
+
+    def test_running_scores_reset_clears_corpus(self):
+        evaluator = TextComparisonEvaluator()
+        evaluator.update("hello world", "hello world")
+
+        self.assertEqual(evaluator.compute()["wer"], 0.0)
+        evaluator.reset()
+
+        with self.assertRaisesRegex(ValueError, "No text pairs"):
+            evaluator.compute()
+
+    def test_evaluator_group_delegates_text_corpus_lifecycle(self):
+        correct_predictions = ["the quick brown fox"] * 10
+        correct_targets = ["the quick brown fox"] * 10
+        wrong_predictions = ["slow turtle sleeps now"]
+        wrong_targets = ["the quick brown fox"]
+        expected = TextComparisonEvaluator()(
+            correct_predictions + wrong_predictions,
+            correct_targets + wrong_targets,
+        )
+        evaluator = EvaluatorGroup({"text": TextComparisonEvaluator()})
+
+        evaluator.update(correct_predictions, correct_targets)
+        evaluator.update(wrong_predictions, wrong_targets)
+        running = evaluator.compute()
+
+        for name, value in expected.items():
+            self.assertAlmostEqual(running[f"text/{name}"], value)
+        evaluator.reset()
+        with self.assertRaisesRegex(ValueError, "No text pairs"):
+            evaluator.compute()
+
+    def test_group_rejects_mixed_lifecycle_before_updating_stateful_evaluator(self):
+        class StatelessEvaluator(EvaluatorABC):
+            def evaluate(self, prediction_text, target_text):
+                del prediction_text, target_text
+                return {"score": 1.0}
+
+        text = TextComparisonEvaluator()
+        evaluator = EvaluatorGroup({"text": text, "stateless": StatelessEvaluator()})
+
+        with self.assertRaisesRegex(NotImplementedError, "complete stateful lifecycle"):
+            evaluator.update("hello", "hello")
+
+        with self.assertRaisesRegex(ValueError, "No text pairs"):
+            text.compute()
+
+    def test_compute_gathers_text_corpus_from_all_distributed_ranks(self):
+        evaluator = TextComparisonEvaluator(lowercase=True)
+        evaluator.update(" Local, TEXT! ", "local text")
+        remote = (("wrong words",), ("right words",))
+        expected = evaluator(
+            ["local text", "wrong words"],
+            ["local text", "right words"],
+        )
+
+        def gather(corpora, local):
+            self.assertEqual(local, (("local text",), ("local text",)))
+            corpora[0] = local
+            corpora[1] = remote
+
+        with (
+            patch("anytrain.evaluator.text.evaluator.dist.is_available", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.is_initialized", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.get_world_size", return_value=2),
+            patch(
+                "anytrain.evaluator.text.evaluator.dist.all_gather_object",
+                side_effect=gather,
+            ) as all_gather_object,
+        ):
+            running = evaluator.compute()
+
+        all_gather_object.assert_called_once()
+        for name, value in expected.items():
+            self.assertAlmostEqual(running[name], value)
+
+    def test_compute_accepts_empty_local_distributed_corpus(self):
+        evaluator = TextComparisonEvaluator()
+        remote = (("hello world",), ("hello world",))
+        expected = evaluator(*remote)
+
+        def gather(corpora, local):
+            self.assertEqual(local, ((), ()))
+            corpora[0] = local
+            corpora[1] = remote
+
+        with (
+            patch("anytrain.evaluator.text.evaluator.dist.is_available", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.is_initialized", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.get_world_size", return_value=2),
+            patch(
+                "anytrain.evaluator.text.evaluator.dist.all_gather_object",
+                side_effect=gather,
+            ),
+        ):
+            running = evaluator.compute()
+
+        self.assertEqual(running, expected)
+
+    def test_compute_rejects_globally_empty_distributed_corpus(self):
+        evaluator = TextComparisonEvaluator()
+
+        def gather(corpora, local):
+            corpora[0] = local
+            corpora[1] = local
+
+        with (
+            patch("anytrain.evaluator.text.evaluator.dist.is_available", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.is_initialized", return_value=True),
+            patch("anytrain.evaluator.text.evaluator.dist.get_world_size", return_value=2),
+            patch(
+                "anytrain.evaluator.text.evaluator.dist.all_gather_object",
+                side_effect=gather,
+            ),
+            self.assertRaisesRegex(ValueError, "No text pairs"),
+        ):
+            evaluator.compute()
 
     def test_normalization_defaults_strip_and_collapse_whitespace(self):
         evaluator = TextComparisonEvaluator()

@@ -21,6 +21,11 @@ class Codec(Protocol):
 - `sample_rate` 表示 `decode()` 输出 waveform 的采样率。
 - `codebook_sizes[k]` 是第 `k` 个码本的 local id 数量。
 - `decode()` 接收 codec 实例配置的完整、有序 K 个码本；码本轴不能重排或用任意子集冒充。
+- 当前四个 concrete wrapper 都是 `nn.Module`，公开只读 `device` 属性；调用 `.to()`、
+  `.cuda()` 或 `.cpu()` 时，backend 子模块和该设备属性会一起迁移。设备标记不写入
+  `state_dict()`。直接构造 wrapper 时也会把 backend 统一迁移到指定设备；普通
+  `load_state_dict()` 保持设备不变。wrapper 不支持可能替换 tensor device 的
+  `load_state_dict(assign=True)`，会明确抛出 `ValueError`。
 
 公共层不区分 semantic / acoustic code。LongCat wrapper 内部仍按上游 decoder 的要求拆分
 第 0 个码本和后续码本，但调用方只操作统一的 `codes`。Stable Codec 的 posthoc bottleneck、

@@ -130,11 +130,29 @@ pl_module:
     lr: 0.0003
   evaluator:
     _target_: anytrain.evaluator.EvaluatorGroup
-    metrics:
+    evaluators:
       error:
-        _target_: anytrain.evaluator.MeanAbsoluteError
+        _target_: my_project.evaluator.BatchError
   lr: 0.0003
 ```
+
+上例的 `BatchError` 是下游实现的无状态 evaluator，因此 validation step 直接调用
+`evaluator(...)` 并交给 Lightning 聚合。corpus text metric 则使用独立的 stateful 生命周期：
+
+```python
+def validation_step(self, batch, batch_idx):
+    prediction_text, target_text = batch
+    self.text_evaluator.update(prediction_text, target_text)
+
+def on_validation_epoch_end(self):
+    metrics = self.text_evaluator.compute()
+    self.text_evaluator.reset()
+    self.log_dict({f"val/text/{key}": value for key, value in metrics.items()})
+```
+
+`TextComparisonEvaluator.compute()` 在 distributed 已初始化时自行聚合所有 rank 的文本，不能
+再把逐 batch BLEU/WER/chrF 交给 Lightning 求均值。只实现 `evaluate()` 的无状态 evaluator
+调用 `update/compute/reset` 时会明确抛出 `NotImplementedError`。
 
 如果下游使用领域组件，也还是挂在 `pl_module` 里：
 

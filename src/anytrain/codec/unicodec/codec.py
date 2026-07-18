@@ -8,6 +8,7 @@ from torch import Tensor, nn
 from typing_extensions import TypeAlias
 
 from .._audio import resample
+from .._module import DeviceModule
 from .assets import UniCodecAssets, ensure_unicodec_assets
 
 Domain: TypeAlias = Union[str, int]
@@ -16,7 +17,7 @@ NUM_CHANNELS = 1
 DEFAULT_CODEBOOK_SIZE = 16_384
 
 
-class UniCodec(nn.Module):
+class UniCodec(DeviceModule):
     def __init__(
         self,
         model: nn.Module,
@@ -29,12 +30,12 @@ class UniCodec(nn.Module):
         super().__init__()
 
         self.model = model
-        self.device = device
         self.assets = assets
         self.domain = _domain(domain)
         self.bandwidth_id = bandwidth_id
         self.sample_rate = SAMPLE_RATE
         self.codebook_sizes = _codebook_sizes(model)
+        self._init_device(device)
 
     @classmethod
     def from_pretrained(

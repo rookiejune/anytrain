@@ -103,6 +103,36 @@ class DACCodecTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "2 aligned codebooks"):
             codec.decode(torch.zeros((1, 3, 3), dtype=torch.long))
 
+    def test_to_moves_model_and_public_device_together(self):
+        codec = _codec(FakeDACModel())
+
+        codec.to("meta")
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+        self.assertNotIn("_device", codec.state_dict())
+
+    def test_constructor_moves_backend_to_requested_device(self):
+        codec = DAC(
+            model=FakeDACModel(),
+            device=torch.device("meta"),
+            checkpoint=Path("weights.pth"),
+        )
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+
+    def test_load_state_dict_rejects_assign(self):
+        codec = _codec(FakeDACModel())
+
+        with self.assertRaisesRegex(ValueError, "assign=True"):
+            codec.load_state_dict(codec.state_dict(), assign=True)
+
+        parent = nn.Module()
+        parent.codec = codec
+        with self.assertRaisesRegex(ValueError, "assign=True"):
+            parent.load_state_dict(parent.state_dict(), assign=True)
+
 
 class FakeDACFactory:
     checkpoint: Path | None = None
@@ -129,6 +159,7 @@ class FakeDACQuantizer(nn.Module):
 class FakeDACModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
         self.sample_rate = 24000
         self.n_codebooks = 4
         self.codebook_size = 1024

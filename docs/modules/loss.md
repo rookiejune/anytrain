@@ -168,6 +168,10 @@ padding 污染重建 loss：
 loss, details = loss_fn(reconstruction, target, lengths=batch.lengths)
 ```
 
+`lengths` 必须是一维整数 Tensor，或由 index-compatible integer 组成的 sequence；bool、浮点、
+复数和字符串会直接抛出 `TypeError`，不会通过 `int()` 截断或转换。dict、generator、bytes
+等非 sequence 或文本/二进制容器也不作为 batch lengths 接受。
+
 ## 当前限制
 
 当前 core 已有最小可用实现，但还没有：

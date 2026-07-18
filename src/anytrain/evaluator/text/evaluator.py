@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import torch.distributed as dist
+
 from ..abc import EvaluatorABC, MetricDict
 from .normalization import TextNormalizationConfig, normalize_text_batch
 from .scores import corpus_bleu_score, corpus_chrf_score, word_error_rate
@@ -33,12 +35,41 @@ class TextComparisonEvaluator(EvaluatorABC):
             chinese=chinese,
         )
         self.bleu_smoothing = bleu_smoothing
+        self._predictions: list[str] = []
+        self._targets: list[str] = []
 
     def evaluate(
         self,
         prediction_text: str | Sequence[str],
         target_text: str | Sequence[str],
     ) -> MetricDict:
+        predictions, targets = self._normalize_pair(prediction_text, target_text)
+        return self._scores(predictions, targets)
+
+    def update(
+        self,
+        prediction_text: str | Sequence[str],
+        target_text: str | Sequence[str],
+    ) -> None:
+        predictions, targets = self._normalize_pair(prediction_text, target_text)
+        self._predictions.extend(predictions)
+        self._targets.extend(targets)
+
+    def compute(self) -> MetricDict:
+        predictions, targets = self._corpus()
+        if not predictions:
+            raise ValueError("No text pairs have been recorded.")
+        return self._scores(predictions, targets)
+
+    def reset(self) -> None:
+        self._predictions.clear()
+        self._targets.clear()
+
+    def _normalize_pair(
+        self,
+        prediction_text: str | Sequence[str],
+        target_text: str | Sequence[str],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         predictions = normalize_text_batch(
             prediction_text,
             name="prediction_text",
@@ -54,9 +85,34 @@ class TextComparisonEvaluator(EvaluatorABC):
                 "prediction_text and target_text must have the same batch length: "
                 f"got {len(predictions)} and {len(targets)}."
             )
+        if not predictions:
+            raise ValueError("prediction_text and target_text must contain at least one item.")
+        return predictions, targets
 
+    def _scores(self, predictions: Sequence[str], targets: Sequence[str]) -> MetricDict:
         return {
             "bleu": corpus_bleu_score(predictions, targets, smooth=self.bleu_smoothing),
             "wer": word_error_rate(predictions, targets),
             "chrf": corpus_chrf_score(predictions, targets),
         }
+
+    def _corpus(self) -> tuple[list[str], list[str]]:
+        if not dist.is_available() or not dist.is_initialized():
+            return list(self._predictions), list(self._targets)
+
+        local = (tuple(self._predictions), tuple(self._targets))
+        gathered: list[tuple[tuple[str, ...], tuple[str, ...]] | None]
+        gathered = [None] * dist.get_world_size()
+        dist.all_gather_object(gathered, local)
+
+        predictions: list[str] = []
+        targets: list[str] = []
+        for corpus in gathered:
+            if corpus is None:
+                raise RuntimeError(
+                    "Distributed text corpus gathering returned no value for a rank."
+                )
+            rank_predictions, rank_targets = corpus
+            predictions.extend(rank_predictions)
+            targets.extend(rank_targets)
+        return predictions, targets

@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from torch import nn
 
+from ._validation import validate_metric_dict
 from .abc import EvaluatorABC, MetricDict
 
 
@@ -29,10 +30,12 @@ class EvaluatorGroup(nn.Module):
         return output
 
     def update(self, *args: Any, **kwargs: Any) -> None:
+        self._require_stateful_lifecycle()
         for evaluator in self.evaluators.values():
             evaluator.update(*args, **kwargs)
 
     def compute(self) -> MetricDict:
+        self._require_stateful_lifecycle()
         output: MetricDict = {}
         for name, evaluator in self.evaluators.items():
             metrics = evaluator.compute()
@@ -40,8 +43,23 @@ class EvaluatorGroup(nn.Module):
         return output
 
     def reset(self) -> None:
+        self._require_stateful_lifecycle()
         for evaluator in self.evaluators.values():
             evaluator.reset()
+
+    def _require_stateful_lifecycle(self) -> None:
+        for name, evaluator in self.evaluators.items():
+            missing = [
+                method
+                for method in ("update", "compute", "reset")
+                if getattr(type(evaluator), method) is getattr(EvaluatorABC, method)
+            ]
+            if missing:
+                methods = ", ".join(f"{method}()" for method in missing)
+                raise NotImplementedError(
+                    f"Evaluator {name!r} does not implement the complete stateful lifecycle: "
+                    f"{methods}."
+                )
 
     def _validate_evaluators(
         self,
@@ -75,15 +93,7 @@ class EvaluatorGroup(nn.Module):
             output[name] = value
 
     def _validate_metric_dict(self, metrics: object) -> MetricDict:
-        if not isinstance(metrics, dict):
-            raise TypeError("metrics must be a dict of string keys to metric values.")
-        if not metrics:
-            raise ValueError("metrics must contain at least one value.")
-        validated: MetricDict = {}
-        for key, value in metrics.items():
-            key = self._validate_name(key, "metric key")
-            validated[key] = value
-        return validated
+        return validate_metric_dict(metrics, separator=self.metric_key_separator)
 
     def _validate_name(self, name: str, label: str) -> str:
         if not isinstance(name, str):

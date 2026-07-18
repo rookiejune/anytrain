@@ -54,6 +54,24 @@ class AdaptiveDirichletTemperingTest(unittest.TestCase):
         self.assertFalse(torch.allclose(adt.expert_means, before))
         self.assertTrue(torch.isfinite(adt.expert_vars).all())
 
+    def test_large_fp16_uniform_logits_accumulate_finite_stats(self):
+        self._assert_large_low_precision_stats(
+            dtype=torch.float16,
+            logits_per_token=torch.zeros(4),
+        )
+
+    def test_large_fp16_skewed_logits_accumulate_finite_stats(self):
+        self._assert_large_low_precision_stats(
+            dtype=torch.float16,
+            logits_per_token=torch.tensor([8.0, 0.0, -2.0, -4.0]),
+        )
+
+    def test_large_bfloat16_logits_accumulate_finite_stats(self):
+        self._assert_large_low_precision_stats(
+            dtype=torch.bfloat16,
+            logits_per_token=torch.tensor([4.0, 1.0, -1.0, -3.0]),
+        )
+
     def test_eval_does_not_update_stats_by_default(self):
         adt = ADT.from_kwargs(num_experts=3)
         adt.eval()
@@ -290,6 +308,39 @@ class AdaptiveDirichletTemperingTest(unittest.TestCase):
             ema_update(x, y)
         with self.assertRaisesRegex(ValueError, "Exactly one"):
             ema_update(x, y, momentum=0.5, decay=0.5)
+
+    def _assert_large_low_precision_stats(
+        self,
+        *,
+        dtype: torch.dtype,
+        logits_per_token: torch.Tensor,
+    ) -> None:
+        num_tokens = 70_001
+        adt = ADT.from_kwargs(
+            num_experts=4,
+            stat_ema_decays=(0.0, 0.0, 0.0),
+            minka_refinement_iters=1,
+        )
+        logits = logits_per_token.to(dtype=dtype).expand(num_tokens, -1)
+
+        sums, square_sums, log_sums, count, local_count = adt._router_stat_sums(
+            logits,
+            mask=None,
+        )
+        adt.update_stats(logits)
+
+        self.assertEqual(local_count, num_tokens)
+        self.assertEqual(count.item(), num_tokens)
+        for value in (sums, square_sums, log_sums, count):
+            self.assertEqual(value.dtype, torch.float32)
+            self.assertTrue(torch.isfinite(value).all())
+
+        expected_means = logits_per_token.softmax(dim=-1)
+        self.assertTrue(torch.allclose(adt.expert_means, expected_means, atol=2e-5, rtol=2e-5))
+        self.assertTrue(torch.all(adt.expert_vars < 2e-6))
+        self.assertTrue(torch.isfinite(adt.expert_vars).all())
+        self.assertTrue(torch.isfinite(adt.expert_logs).all())
+        self.assertTrue(torch.isfinite(adt.temperature).all())
 
 
 if __name__ == "__main__":

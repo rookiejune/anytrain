@@ -10,6 +10,7 @@ from torch import Tensor, nn
 from typing_extensions import TypeAlias
 
 from .._audio import resample
+from .._module import DeviceModule
 
 SupportedVersion = Literal["speech-16k", "speech-16k-base"]
 PosthocBottleneckPreset = Literal[
@@ -35,7 +36,7 @@ POSTHOC_CODEBOOK_SIZES: dict[PosthocBottleneckPreset, tuple[int, ...]] = {
 }
 
 
-class StableCodec(nn.Module):
+class StableCodec(DeviceModule):
     num_channels: int = NUM_CHANNELS
     sample_rate: int = SAMPLE_RATE
 
@@ -52,11 +53,11 @@ class StableCodec(nn.Module):
         self.model = model
         if posthoc_bottleneck is not None:
             self.model.set_posthoc_bottleneck(posthoc_bottleneck)
-        self.device = device
         self.posthoc_bottleneck = posthoc_bottleneck is not None
         self.normalize = normalize
         self.sample_rate = int(getattr(model, "sample_rate", SAMPLE_RATE))
         self.codebook_sizes = _codebook_sizes(model, posthoc_bottleneck)
+        self._init_device(device)
 
     @classmethod
     def from_pretrained(

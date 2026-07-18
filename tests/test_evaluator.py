@@ -35,9 +35,22 @@ class SeparatorKeyEvaluator(EvaluatorABC):
         return {"a/b": (prediction - target).abs().mean()}
 
 
-class RunningAbsoluteError(EvaluatorABC):
-    def evaluate(self, prediction: torch.Tensor, target: torch.Tensor):
-        return {"mae": (prediction - target).abs().mean()}
+class StatefulValueEvaluator(EvaluatorABC):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def evaluate(self):
+        return {"score": 1.0}
+
+    def update(self):
+        pass
+
+    def compute(self):
+        return {"score": self.value}
+
+    def reset(self):
+        pass
 
 
 class EvaluatorTest(unittest.TestCase):
@@ -60,18 +73,18 @@ class EvaluatorTest(unittest.TestCase):
         self.assertEqual(set(metrics), {"error/mae", "error/mse"})
         self.assertTrue(torch.isclose(metrics["error/mae"], torch.tensor(1.5)))
         self.assertTrue(metrics["error/mae"].requires_grad)
-        with self.assertRaisesRegex(ValueError, "No metric values"):
+        with self.assertRaisesRegex(NotImplementedError, "complete stateful lifecycle"):
             evaluator.compute()
 
-    def test_evaluator_group_update_stores_detached_0d_tensors(self):
-        prediction = torch.tensor([1.0, 3.0], requires_grad=True)
-        target = torch.tensor([0.0, 1.0])
-        evaluator = EvaluatorGroup({"error": ErrorEvaluator()})
+    def test_stateless_evaluator_lifecycle_is_explicit(self):
+        evaluator = ErrorEvaluator()
 
-        evaluator.update(prediction, target)
-        metrics = evaluator.compute()
-
-        self.assertFalse(metrics["error/mae"].requires_grad)
+        with self.assertRaisesRegex(NotImplementedError, "stateful update"):
+            evaluator.update(torch.tensor([1.0]), torch.tensor([0.0]))
+        with self.assertRaisesRegex(NotImplementedError, "stateful compute"):
+            evaluator.compute()
+        with self.assertRaisesRegex(NotImplementedError, "stateful reset"):
+            evaluator.reset()
 
     def test_evaluator_group_accepts_float_metric_values(self):
         evaluator = EvaluatorGroup({"float_score": FloatEvaluator()})
@@ -81,9 +94,9 @@ class EvaluatorTest(unittest.TestCase):
         self.assertEqual(metrics["float_score/score"], 1.5)
 
     def test_evaluator_group_registers_metrics_in_module_dict(self):
-        evaluator = EvaluatorGroup({"error": ErrorEvaluator(), "running": RunningAbsoluteError()})
+        evaluator = EvaluatorGroup({"error": ErrorEvaluator(), "other": ErrorEvaluator()})
 
-        self.assertEqual(set(evaluator.evaluators.keys()), {"error", "running"})
+        self.assertEqual(set(evaluator.evaluators.keys()), {"error", "other"})
         self.assertIsInstance(evaluator.evaluators, nn.ModuleDict)
 
     def test_evaluator_abc_can_return_direct_evaluate_without_storing(self):
@@ -96,12 +109,12 @@ class EvaluatorTest(unittest.TestCase):
         self.assertTrue(metrics["mae"].requires_grad)
 
     def test_evaluator_call_returns_validated_metric_dict_without_storing(self):
-        evaluator = RunningAbsoluteError()
+        evaluator = ErrorEvaluator()
 
         metrics = evaluator(torch.tensor([1.0]), torch.tensor([0.0]))
 
         self.assertTrue(torch.isclose(metrics["mae"], torch.tensor(1.0)))
-        with self.assertRaisesRegex(ValueError, "No metric values"):
+        with self.assertRaisesRegex(NotImplementedError, "stateful compute"):
             evaluator.compute()
 
     def test_evaluator_abc_rejects_separator_in_metric_keys(self):
@@ -110,26 +123,20 @@ class EvaluatorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "separator"):
             evaluator(torch.tensor([1.0]), torch.tensor([0.0]))
 
-        with self.assertRaisesRegex(ValueError, "separator"):
-            evaluator.update(torch.tensor([1.0]), torch.tensor([0.0]))
-
-    def test_evaluator_group_supports_stateful_lifecycle(self):
-        evaluator = EvaluatorGroup({"error": RunningAbsoluteError()})
-
-        evaluator.update(torch.tensor([1.0, 3.0]), torch.tensor([0.0, 1.0]))
-        evaluator.update(torch.tensor([2.0]), torch.tensor([1.0]))
-        metrics = evaluator.compute()
-        evaluator.reset()
-
-        self.assertTrue(torch.isclose(metrics["error/mae"], torch.tensor(1.25)))
-        with self.assertRaisesRegex(ValueError, "No metric values"):
-            evaluator.compute()
-
     def test_evaluator_group_rejects_integer_metric_values(self):
         evaluator = EvaluatorGroup({"invalid": IntegerValueEvaluator()})
 
         with self.assertRaisesRegex(TypeError, "float or 0-d tensor"):
             evaluator(torch.tensor([1.0]), torch.tensor([0.0]))
+
+    def test_evaluator_group_compute_validates_stateful_metric_values(self):
+        invalid_values = (1, True, torch.ones(2))
+        for value in invalid_values:
+            with self.subTest(value=value):
+                evaluator = EvaluatorGroup({"invalid": StatefulValueEvaluator(value)})
+                expected_error = ValueError if isinstance(value, torch.Tensor) else TypeError
+                with self.assertRaises(expected_error):
+                    evaluator.compute()
 
     def test_evaluator_group_rejects_non_scalar_tensor_metric_values(self):
         evaluator = EvaluatorGroup({"invalid": VectorTensorEvaluator()})

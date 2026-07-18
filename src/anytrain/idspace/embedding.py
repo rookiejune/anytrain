@@ -20,6 +20,7 @@ class Embedding(nn.Module):
         self.layout = layout
         self.embeddings = _init_embeddings(layout, embeddings)
         self.adapters = _init_adapters(layout, adapters)
+        self._homogeneous_output_dim = _homogeneous_output_dim(self.embeddings, self.adapters)
 
     @property
     def num_embeddings(self) -> int:
@@ -30,6 +31,27 @@ class Embedding(nn.Module):
         return self.num_embeddings
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        if input_ids.numel() == 0:
+            raise ValueError("input_ids must not be empty.")
+        if self._homogeneous_output_dim is not None and _can_use_homogeneous_path(self.embeddings):
+            return self._forward_homogeneous(input_ids, output_dim=self._homogeneous_output_dim)
+        return self._forward_with_adapters(input_ids)
+
+    def _forward_homogeneous(self, input_ids: torch.Tensor, *, output_dim: int) -> torch.Tensor:
+        first = next(iter(self.embeddings.values()))
+        output = first.weight.new_empty((*input_ids.shape, output_dim))
+        covered = torch.zeros(input_ids.shape, dtype=torch.bool, device=input_ids.device)
+
+        for name, embed in self.embeddings.items():
+            start, end = self.layout.blocks[name]
+            mask = (input_ids >= start) & (input_ids < end)
+            output[mask] = embed(input_ids[mask] - start)
+            covered |= mask
+
+        _validate_covered(input_ids, covered)
+        return output
+
+    def _forward_with_adapters(self, input_ids: torch.Tensor) -> torch.Tensor:
         output: torch.Tensor | None = None
         covered = torch.zeros(input_ids.shape, dtype=torch.bool, device=input_ids.device)
 
@@ -57,7 +79,7 @@ class Embedding(nn.Module):
             bad_id = int(input_ids[~covered].reshape(-1)[0].detach().cpu())
             raise ValueError(f"input_ids contains id outside space: {bad_id}.")
         if output is None:
-            raise ValueError("input_ids must not be empty.")
+            raise RuntimeError("embedding routing produced no output.")
         return output
 
 
@@ -107,6 +129,32 @@ def _validate_weight_size(name: str, embed: nn.Embedding, block: tuple[int, int]
         raise ValueError(
             f"embeddings[{name!r}].num_embeddings must match id block size {expected}."
         )
+
+
+def _homogeneous_output_dim(
+    embeddings: nn.ModuleDict,
+    adapters: nn.ModuleDict,
+) -> int | None:
+    if len(adapters) > 0:
+        return None
+    output_dims = {embed.embedding_dim for embed in embeddings.values()}
+    if len(output_dims) != 1:
+        return None
+    return output_dims.pop()
+
+
+def _validate_covered(input_ids: torch.Tensor, covered: torch.Tensor) -> None:
+    if not bool(covered.all()):
+        bad_id = int(input_ids[~covered].reshape(-1)[0].detach().cpu())
+        raise ValueError(f"input_ids contains id outside space: {bad_id}.")
+
+
+def _can_use_homogeneous_path(embeddings: nn.ModuleDict) -> bool:
+    weights = [embed.weight for embed in embeddings.values()]
+    first = weights[0]
+    if any(weight.device != first.device or weight.dtype != first.dtype for weight in weights[1:]):
+        return False
+    return not torch.is_grad_enabled() or not any(weight.requires_grad for weight in weights)
 
 
 __all__ = [

@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 
 from .._audio import resample
+from .._module import DeviceModule
 from .assets import (
     DEFAULT_MODEL_BITRATE,
     DEFAULT_MODEL_TYPE,
@@ -20,7 +21,7 @@ from .assets import (
 NUM_CHANNELS = 1
 
 
-class DAC(nn.Module):
+class DAC(DeviceModule):
     def __init__(
         self,
         model: nn.Module,
@@ -33,7 +34,6 @@ class DAC(nn.Module):
         super().__init__()
 
         self.model = model
-        self.device = device
         self.checkpoint = checkpoint
         self.assets = assets
         self.sample_rate = int(model.sample_rate)
@@ -43,6 +43,7 @@ class DAC(nn.Module):
         if not 1 <= self.n_quantizers <= total:
             raise ValueError(f"n_quantizers must be between 1 and {total}.")
         self.codebook_sizes = (int(model.codebook_size),) * self.n_quantizers
+        self._init_device(device)
 
     @classmethod
     def from_pretrained(

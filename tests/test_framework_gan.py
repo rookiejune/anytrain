@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest import mock
 
 import torch
 from torch import nn
@@ -257,6 +258,25 @@ class LossTest(unittest.TestCase):
         self.assertTrue(
             all(isinstance(tensor, torch.Tensor) for branch in output for tensor in branch)
         )
+
+    def test_dac_discriminator_reuses_registered_stft_window(self):
+        from anytrain.framework.gan.audio import DACDiscriminator
+
+        discriminator = DACDiscriminator(
+            in_channels=1,
+            periods=(),
+            n_ffts=(16,),
+            bands=(0.25, 0.5, 0.75),
+            mrd_dim=2,
+        )
+        mrd = discriminator.layers[0]
+
+        self.assertIn("window", dict(mrd.named_buffers()))
+        self.assertNotIn("layers.0.window", discriminator.state_dict())
+        with mock.patch("torch.hann_window", side_effect=AssertionError("rebuilt window")):
+            output = discriminator(torch.randn(2, 1, 64))
+
+        self.assertEqual(len(output), 1)
 
     def test_from_preset_requires_preset_enum(self):
         with self.assertRaisesRegex(TypeError, "Preset"):

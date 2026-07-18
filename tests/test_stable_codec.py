@@ -232,12 +232,30 @@ class StableCodecTest(unittest.TestCase):
 
         self.assertEqual(codec.codebook_sizes, (123, 123))
 
+    def test_to_moves_model_and_public_device_together(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("cpu"), posthoc_bottleneck=None)
+
+        codec.to("meta")
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+        self.assertNotIn("_device", codec.state_dict())
+
+    def test_constructor_moves_backend_to_requested_device(self):
+        model = FakeStableCodecBackend(pretrained_model="fake", device=torch.device("cpu"))
+        codec = StableCodec(model=model, device=torch.device("meta"), posthoc_bottleneck=None)
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+
 
 class FakeStableCodecBackend(nn.Module):
     kwargs: dict[str, object] = {}
 
     def __init__(self, **kwargs) -> None:
         super().__init__()
+        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
         type(self).kwargs = kwargs
         self.sample_rate = 16000
         self.posthoc_stages = None

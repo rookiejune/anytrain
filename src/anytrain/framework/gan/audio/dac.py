@@ -144,6 +144,7 @@ class _MRD(nn.Module):
 
         self.n_fft = n_fft
         self.hop_length = int(hop_factor * n_fft)
+        self.window = nn.Buffer(torch.hann_window(n_fft), persistent=False)
         bins = n_fft // 2 + 1
         self.bands = _split_indices(bands, bins=bins)
         branch_count = len(self.bands) + 1
@@ -179,7 +180,7 @@ class _MRD(nn.Module):
             x.reshape(-1, x.shape[-1]),
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            window=torch.hann_window(self.n_fft, device=x.device, dtype=x.dtype),
+            window=self.window.to(device=x.device, dtype=x.dtype),
             return_complex=True,
         )
         spec = torch.view_as_real(spec)

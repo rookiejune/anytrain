@@ -83,6 +83,13 @@ class EmbeddingVectorQuantizer(nn.Module):
             self.codebook.weight.requires_grad_(False)
         self.reset_parameters()
 
+    def _apply(self, fn, recurse: bool = True):
+        module = super()._apply(fn, recurse)
+        if self.use_ema:
+            self._ema_counts.data = self._ema_counts.data.float()
+            self._ema_sums.data = self._ema_sums.data.float()
+        return module
+
     @property
     def use_ema(self) -> bool:
         return self.config.use_ema
@@ -193,10 +200,17 @@ class EmbeddingVectorQuantizer(nn.Module):
     @torch.no_grad()
     def _update_ema(self, projected_latents: Tensor, indices: Tensor) -> None:
         flat_latents = projected_latents.detach().reshape(-1, self.codebook_dim)
+        flat_latents = flat_latents.float()
         flat_indices = indices.reshape(-1)
-        one_hot = F.one_hot(flat_indices, self.codebook_size).to(dtype=flat_latents.dtype)
-        counts = one_hot.sum(dim=0)
-        sums = one_hot.t() @ flat_latents
+        counts = torch.bincount(flat_indices, minlength=self.codebook_size).float()
+        sums = torch.zeros(
+            self.codebook_size,
+            self.codebook_dim,
+            device=flat_latents.device,
+            dtype=torch.float32,
+        )
+        sums.index_add_(0, flat_indices, flat_latents)
+        self._sync_ema_stats(counts, sums)
 
         self._ema_counts.mul_(self.config.decay).add_(counts, alpha=1 - self.config.decay)
         self._ema_sums.mul_(self.config.decay).add_(sums, alpha=1 - self.config.decay)
@@ -210,3 +224,9 @@ class EmbeddingVectorQuantizer(nn.Module):
         self.codebook.weight.copy_(
             self._ema_sums / smoothed_counts.clamp_min(self.config.eps)[:, None]
         )
+
+    def _sync_ema_stats(self, counts: Tensor, sums: Tensor) -> None:
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return
+        torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(sums, op=torch.distributed.ReduceOp.SUM)

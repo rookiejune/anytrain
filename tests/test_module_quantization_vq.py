@@ -1,5 +1,6 @@
 import unittest
 from dataclasses import fields
+from unittest import mock
 
 import torch
 
@@ -8,6 +9,7 @@ from anytrain.module.quantization import (
     QuantizationLoss,
     VQConfig,
 )
+from anytrain.module.quantization.lookup import nearest_codebook_indices
 
 
 class EmbeddingVectorQuantizerTest(unittest.TestCase):
@@ -81,6 +83,105 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
         self.assertIsNone(output.loss)
         self.assertFalse(torch.allclose(quantizer.ema_counts, before_counts))
         self.assertFalse(quantizer.codebook.weight.requires_grad)
+
+    def test_ema_update_does_not_materialize_one_hot_assignments(self):
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=8, codebook_size=16, codebook_dim=4, use_ema=True)
+        )
+
+        with mock.patch("torch.nn.functional.one_hot", side_effect=AssertionError("one_hot")):
+            output = quantizer(torch.randn(32, 8))
+
+        self.assertIsNone(output.loss)
+        self.assertTrue(torch.isfinite(quantizer.codebook.weight).all())
+
+    def test_ema_update_synchronizes_counts_and_sums_when_distributed(self):
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=2, codebook_size=4, use_ema=True, decay=0.0)
+        )
+        calls: list[torch.Tensor] = []
+
+        def all_reduce(value, *, op):
+            self.assertEqual(op, torch.distributed.ReduceOp.SUM)
+            calls.append(value)
+            value.mul_(2)
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce", side_effect=all_reduce),
+        ):
+            quantizer(torch.randn(8, 2))
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].shape, quantizer._ema_counts.shape)
+        self.assertEqual(calls[1].shape, quantizer._ema_sums.shape)
+        self.assertTrue(torch.isfinite(quantizer.codebook.weight).all())
+
+    def test_ema_stats_stay_fp32_after_half_conversion_and_distributed_sum(self):
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=2, codebook_size=4, use_ema=True, decay=0.0)
+        ).half()
+        indices = torch.zeros(40_000, dtype=torch.long)
+        latents = torch.ones(40_000, 2, dtype=torch.float16)
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch(
+                "torch.distributed.all_reduce",
+                side_effect=lambda value, *, op: value.mul_(2),
+            ),
+        ):
+            quantizer._update_ema(latents, indices)
+
+        self.assertEqual(quantizer._ema_counts.dtype, torch.float32)
+        self.assertEqual(quantizer._ema_sums.dtype, torch.float32)
+        self.assertEqual(quantizer.codebook.weight.dtype, torch.float16)
+        self.assertTrue(torch.isfinite(quantizer._ema_counts).all())
+        self.assertTrue(torch.isfinite(quantizer.codebook.weight).all())
+
+    def test_lookup_chunks_large_comparison_matrices(self):
+        latents = torch.randn(7, 3)
+        codebook = torch.randn(5, 3)
+
+        for normalize in (False, True):
+            with self.subTest(normalize=normalize):
+                chunked = nearest_codebook_indices(
+                    latents,
+                    codebook,
+                    normalize=normalize,
+                    max_lookup_elements=10,
+                )
+                dense = nearest_codebook_indices(
+                    latents,
+                    codebook,
+                    normalize=normalize,
+                    max_lookup_elements=100,
+                )
+
+                self.assertTrue(torch.equal(chunked, dense))
+
+    def test_lookup_chunks_codebook_larger_than_comparison_limit(self):
+        latents = torch.randn(3, 4)
+        codebook = torch.randn(11, 4)
+
+        for normalize in (False, True):
+            with self.subTest(normalize=normalize):
+                chunked = nearest_codebook_indices(
+                    latents,
+                    codebook,
+                    normalize=normalize,
+                    max_lookup_elements=5,
+                )
+                dense = nearest_codebook_indices(
+                    latents,
+                    codebook,
+                    normalize=normalize,
+                    max_lookup_elements=100,
+                )
+
+                self.assertTrue(torch.equal(chunked, dense))
 
     def test_non_normalized_lookup(self):
         quantizer = EmbeddingVectorQuantizer(

@@ -86,6 +86,12 @@ dense global weight，也不提前跑 embedding/adapter probe。
 如果同一次 forward 命中的多个 block 输出维不一致，会直接报错。未知 global id 和空输入
 也会显式报错；输入 dtype 错误交给 PyTorch embedding 自身暴露。
 
+没有 adapter、所有 block embedding 输出维、dtype 和 device 一致，并且当前不记录参数梯度时，
+`forward()` 使用不做逐 block host 同步的快速路径。训练可学习 embedding 时仍使用通用路由路径，
+确保未命中的 block 保持 `grad is None`，不会被 AdamW 等 optimizer 误做 weight decay。未知 id
+只在所有 block 路由结束后同步一次并显式报错。带 adapter 或异构输出时也使用通用路径，且只
+要求本次实际命中的 block 输出维一致。
+
 `Embedding` 不提供输出 head。下游如果要做 tied head，直接读取对应 block
 embedding 的 `weight`，并显式使用 `layout` 做 label 的 global/local 转换：
 

@@ -39,6 +39,8 @@
 - `QuantizationLoss`
 
 ADT 用于 MoE/router logits 的自适应温度缩放和专家利用率统计，适合跨 audio、vision、text 等项目复用。
+FP16/BF16 logits 会先升到 FP32 再计算 softmax、计数和各阶统计，避免长序列 reduction
+溢出；启用 distributed stats 同步时也使用 FP32 collective。
 
 Dynamic Conv 用于按样本或按分段动态组合 expert convolution kernel。它保持 task-agnostic：
 
@@ -70,6 +72,12 @@ Quantization 提供 task-agnostic 的 FSQ、embedding-table VQ、GVQ 和 RVQ：
 - FSQ 默认使用 odd-only `levels` preset，推荐 odd `levels` 以保持 scalar grid 关于 0 对称；even `levels` 会触发 warning，但仍使用保留 0 码点的 zero-friendly grid。
 - FSQ 的 `bound_scale` 控制进入 `tanh` 前的 latent 尺度；调大它可以缓解大幅值 projected latents 的边界饱和。
 - `EmbeddingVectorQuantizer` 是 embedding table + nearest-neighbor VQ，实现名避免和 protocol 混淆。
+- nearest-neighbor 查找会沿 latent 和 codebook 两个维度自动分块，确保任一临时比较矩阵不
+  超过内部元素上限，限制长序列和超大码本组合时的峰值显存。
+- `EmbeddingVectorQuantizer` 配置 `VQConfig(use_ema=True)` 时使用 `bincount` / `index_add_`
+  以 FP32 聚合并保存统计，即使 quantizer 整体转换为 FP16/BF16 也不降低 EMA 精度；
+  `torch.distributed` 已初始化时会在更新 EMA 和 codebook 前全局求和 counts/sums，保证各 rank
+  使用同一份 codebook。
 - `GroupedVectorQuantizer` 是 learned product codebook，例如 `group_sizes=(90, 90)` 对外表现为 `codebook_size=8100` 的单 codebook，但内部只搜索两个 90-size group。
 - `ResidualVectorQuantizer` 组合多个 embedding VQ，第一版要求统一 `input_dim`、`codebook_dim` 和 `codebook_size`；`latents_to_codebook_vectors()` 不触发 dropout、loss 或 EMA 更新。
 - 量化输出统一为 `QuantizeOutput`，离散整数用 `indices`，连续 codebook 空间向量用 `codebook_vectors`。

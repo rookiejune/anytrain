@@ -374,13 +374,23 @@ class AdaptiveDirichletTempering(nn.Module):
             flat_mask = self._flatten_mask(mask, logits=logits)
             flat_logits = flat_logits[flat_mask]
 
+        accumulation_dtype = (
+            torch.float32
+            if flat_logits.dtype in {torch.float16, torch.bfloat16}
+            else flat_logits.dtype
+        )
+        flat_logits = flat_logits.to(dtype=accumulation_dtype)
         count_value = flat_logits.size(0)
         count = torch.tensor(
             count_value,
             device=logits.device,
-            dtype=logits.dtype,
+            dtype=accumulation_dtype,
         )
-        zeros = torch.zeros(self.config.num_experts, device=logits.device, dtype=logits.dtype)
+        zeros = torch.zeros(
+            self.config.num_experts,
+            device=logits.device,
+            dtype=accumulation_dtype,
+        )
         if count_value == 0:
             return zeros, zeros.clone(), zeros.clone(), count, count_value
 

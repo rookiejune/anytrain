@@ -125,6 +125,29 @@ class UniCodecCodecTest(unittest.TestCase):
                 domain="speech",
             )
 
+    def test_to_moves_model_and_public_device_together(self):
+        codec = UniCodec(
+            model=FakeUniCodecModel(),
+            device=torch.device("cpu"),
+            assets=_assets(),
+        )
+
+        codec.to("meta")
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+        self.assertNotIn("_device", codec.state_dict())
+
+    def test_constructor_moves_backend_to_requested_device(self):
+        codec = UniCodec(
+            model=FakeUniCodecModel(),
+            device=torch.device("meta"),
+            assets=_assets(),
+        )
+
+        self.assertEqual(codec.device, torch.device("meta"))
+        self.assertEqual(codec.model.device_probe.device, codec.device)
+
 
 class FakeUniCodecFactory:
     config_path: str | None = None
@@ -140,6 +163,7 @@ class FakeUniCodecFactory:
 class FakeUniCodecModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
         self.domains: tuple[str, ...] | None = None
         self.bandwidth_id: torch.Tensor | None = None
         self.decode_called = False

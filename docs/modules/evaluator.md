@@ -54,10 +54,10 @@ dict[str, float | torch.Tensor]
 
 第一版 core 组件：
 
-- `EvaluatorABC`：继承 `torch.nn.Module` 的有状态 evaluator 抽象基类，子类实现 `evaluate()`；基类统一提供 `update()`、`compute()`、`reset()`。
+- `EvaluatorABC`：继承 `torch.nn.Module` 的无状态 evaluator 抽象基类，子类实现 `evaluate()`。
 - `MetricValue`：只允许 Python `float` 或 0 维 `torch.Tensor`。
 - `MetricDict`：`dict[str, MetricValue]`，不再额外维护 metric map / mapping 类型。
-- `EvaluatorGroup`：组合多个 `EvaluatorABC`，内部用 `nn.ModuleDict` 注册子 evaluator，并处理 key 校验。
+- `EvaluatorGroup`：组合多个 `EvaluatorABC`，内部用 `nn.ModuleDict` 注册子 evaluator，处理 key 校验并代理可选的状态生命周期。
 
 `EvaluatorGroup` 接收 evaluator mapping，并通过 `evaluators` 属性注册子模块：
 
@@ -80,17 +80,22 @@ quality/snr
 
 metric dict 必须是一层 `dict[str, MetricValue]`。metric key 和 evaluator name 不允许包含 separator，默认是 `/`。evaluator name 还需要满足 `nn.ModuleDict` 的原生命名规则。
 
-evaluator 继承 `EvaluatorABC`，只实现单步 `evaluate()`：
+无状态 evaluator 继承 `EvaluatorABC`，只实现单步 `evaluate()`：
 
 ```python
-class RunningMAE(EvaluatorABC):
+class BatchMAE(EvaluatorABC):
     def evaluate(self, prediction, target):
         return {"mae": (prediction - target).abs().mean()}
 ```
 
 `EvaluatorABC.__call__()` 和 `EvaluatorGroup.forward()` 会调用 `evaluate()`，校验并返回合并后的 metric dict，不写入内部状态。
 
-`EvaluatorABC.update()` 会在 `evaluate()` 后统一校验返回值并写入内部状态。校验规则：
+`EvaluatorABC` 默认不假设 metric 能按 batch scalar 合并。`update()`、`compute()`、`reset()`
+是 stateful evaluator 的扩展点；没有实现状态的子类调用这些方法时会明确抛出
+`NotImplementedError`。需要状态的子类必须自己实现完整生命周期，并按指标定义保存充分状态。
+例如 corpus BLEU、WER 和 chrF 不能通过等权平均 batch scalar 得到。
+
+即时调用的返回值校验规则：
 
 - 返回值必须是非空 `dict`。
 - key 必须是非空字符串。
@@ -98,15 +103,25 @@ class RunningMAE(EvaluatorABC):
 - value 必须是 Python `float` 或 0 维 `torch.Tensor`。
 - Python `int`、`bool` 和非 0 维 tensor 会直接抛错。
 
-需要 epoch / running metric 时显式使用状态生命周期：
+`EvaluatorGroup.update/compute/reset` 会先确认所有子 evaluator 都实现了完整状态生命周期，
+再逐个代理；因此混入无状态 evaluator 时会在修改任何子状态前抛出 `NotImplementedError`，
+不会留下部分更新，也不会静默跳过或伪造 running metric。
+
+`TextComparisonEvaluator` 实现了正确的 corpus 状态生命周期：
 
 ```python
-evaluator.update(prediction, target)
+evaluator.update(prediction_text_batch, target_text_batch)
 metrics = evaluator.compute()
 evaluator.reset()
 ```
 
-`EvaluatorABC` 内部持有 `dict[str, list[MetricValue]]`，`compute()` 默认对每个 key 求均值，`reset()` 清空状态。`EvaluatorGroup` 只接受 `EvaluatorABC` 实例，不再支持 stateless callable evaluator。
+它在 `update()` 时保存规范化后的 Python 文本，不保存 batch metric 或 GPU tensor；`compute()`
+对所有已保存文本一次计算 corpus BLEU、WER 和 chrF，因此结果不受 batch 大小或切分方式影响。
+如果 `torch.distributed` 已初始化，所有 rank 必须共同调用 `compute()`；实现会通过
+`all_gather_object` 汇总各 rank 的文本 corpus，使每个 rank 得到相同的全局指标。`reset()` 只清空
+当前 rank 的本地文本状态。
+
+`EvaluatorGroup` 只接受 `EvaluatorABC` 实例，不支持 plain callable evaluator。
 
 ## 依赖分层
 
@@ -161,6 +176,7 @@ UTMOS backend 细节从 `anytrain.evaluator.speech.utmos` 显式导入。
 - 不直接操作 Trainer。
 - 不把领域 metric 放进 core import。
 - 不隐藏第三方 metric backend 的状态生命周期。
+- 不为任意 batch scalar 猜测聚合规则或 batch 权重。
 
 ## 测试策略
 
@@ -168,8 +184,9 @@ UTMOS backend 细节从 `anytrain.evaluator.speech.utmos` 显式导入。
 
 - 单个 evaluator 返回 dict。
 - 多 evaluator 组合和 key 校验。
-- `EvaluatorABC.update()` 后的通用校验和 detach 行为。
-- epoch metric 的 `update/compute/reset` 生命周期。
+- 无状态 `EvaluatorABC` 的 `update/compute/reset` 明确错误。
+- text corpus metric 在不等 batch 切分下与直接整 corpus 计算一致。
+- text evaluator 的 `update/compute/reset`、group 代理和分布式 corpus 聚合。
 - 错误返回类型、空 metrics、非 0 维 Tensor、Python 非 float 标量和非 ABC evaluator。
 
 后续实现 optional evaluator 后，需要补充 optional 缺依赖时的错误信息。

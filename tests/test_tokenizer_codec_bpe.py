@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from anytrain.tokenizer.codec_bpe import CodecBPE
 
@@ -191,6 +191,124 @@ class BPETest(unittest.TestCase):
 
         self.assertEqual(consumed, [[[1], [2]], [[3], [4]]])
         self.assertEqual(bpe.decode(bpe.encode([[3], [4]])), [(3,), (4,)])
+
+    def test_train_max_frames_progress_tracks_frame_limit(self):
+        with patch("tqdm.auto.tqdm") as tqdm:
+            CodecBPE.train(
+                replay(
+                    [
+                        [[1], [2]],
+                        [[3], [4], [5], [6]],
+                    ]
+                ),
+                codebook_sizes=(16,),
+                max_frames=3,
+                show_progress=True,
+            )
+
+        tqdm.assert_called_once_with(
+            total=3,
+            desc="CodecBPE frames",
+            unit="frame",
+            unit_scale=True,
+        )
+        tqdm.return_value.update.assert_has_calls([call(2), call(1)])
+        tqdm.return_value.close.assert_called_once_with()
+        tqdm.write.assert_any_call("CodecBPE corpus: 6 frames in 2 sequences; frame limit reached")
+
+    def test_train_max_frames_none_keeps_default_progress(self):
+        with patch("tqdm.auto.tqdm") as tqdm:
+            CodecBPE.train(
+                replay([[[1], [2]]]),
+                codebook_sizes=(16,),
+                max_frames=None,
+                show_progress=True,
+            )
+
+        tqdm.assert_not_called()
+        tqdm.write.assert_any_call("CodecBPE trainer: started (corpus, pair counts, merges)")
+        tqdm.write.assert_any_call("CodecBPE trainer: completed")
+
+    def test_train_max_frames_progress_reports_early_corpus_exhaustion(self):
+        with patch("tqdm.auto.tqdm") as tqdm:
+            CodecBPE.train(
+                replay([[[1], [2]], [[3], [4]]]),
+                codebook_sizes=(16,),
+                max_frames=10,
+                show_progress=True,
+            )
+
+        tqdm.return_value.update.assert_has_calls([call(2), call(2)])
+        tqdm.write.assert_any_call("CodecBPE corpus: 4 frames in 2 sequences; corpus exhausted")
+
+    def test_train_max_frames_progress_respects_show_progress(self):
+        with patch("tqdm.auto.tqdm") as tqdm:
+            CodecBPE.train(
+                replay([[[1], [2]]]),
+                codebook_sizes=(16,),
+                max_frames=2,
+                show_progress=False,
+            )
+
+        tqdm.assert_not_called()
+        tqdm.write.assert_not_called()
+
+    def test_train_max_frames_progress_closes_on_corpus_error(self):
+        def corpus():
+            yield [[1], [2]]
+            raise RuntimeError("corpus failed")
+
+        with (
+            patch("tqdm.auto.tqdm") as tqdm,
+            self.assertRaisesRegex(RuntimeError, "corpus failed"),
+        ):
+            CodecBPE.train(
+                corpus,
+                codebook_sizes=(16,),
+                max_frames=10,
+                show_progress=True,
+            )
+
+        tqdm.return_value.close.assert_called_once_with()
+        self.assertFalse(
+            any(
+                progress_call.args
+                and progress_call.args[0].startswith("CodecBPE corpus:")
+                for progress_call in tqdm.write.call_args_list
+            )
+        )
+        self.assertNotIn(call("CodecBPE trainer: completed"), tqdm.write.call_args_list)
+
+    def test_multi_codebook_frame_progress_only_wraps_training_pass(self):
+        frame_bar = MagicMock()
+
+        def progress(iterable=None, **_):
+            return iterable if iterable is not None else frame_bar
+
+        with patch("tqdm.auto.tqdm", side_effect=progress) as tqdm:
+            CodecBPE.train(
+                replay([[[1, 2], [2, 3]]]),
+                codebook_sizes=(4, 4),
+                max_frames=2,
+                show_progress=True,
+            )
+
+        frame_bars = [
+            progress_call
+            for progress_call in tqdm.call_args_list
+            if progress_call.kwargs.get("desc") == "CodecBPE frames"
+        ]
+        self.assertEqual(
+            frame_bars,
+            [
+                call(
+                    total=2,
+                    desc="CodecBPE frames",
+                    unit="frame",
+                    unit_scale=True,
+                )
+            ],
+        )
 
     def test_train_rejects_non_positive_max_frames(self):
         for max_frames in (0, -1):

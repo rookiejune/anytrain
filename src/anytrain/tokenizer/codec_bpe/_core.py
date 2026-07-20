@@ -202,7 +202,13 @@ def train_tokenizers_bpe(
         max_token_length=max_token_length,
         initial_alphabet=list(base_tokens.values()),
     )
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        tqdm.write("CodecBPE trainer: started (corpus, pair counts, merges)")
     tokenizer.train_from_iterator(corpus, trainer=trainer, length=length)
+    if show_progress:
+        tqdm.write("CodecBPE trainer: completed")
     return tokenizer
 
 

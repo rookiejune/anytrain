@@ -92,6 +92,11 @@ tokenizer 参数暂不暴露，因为 `CodecBPE` 的每个 token 都必须能无
 始终完整保留；frame 数跨 sequence 累计，并在一条 sequence 后达到或超过上限时停止，
 不会继续读取下一条。因此实际训练 frame 数可能高于 `max_frames`，超出量小于触发停止的
 最后一条 sequence 的 frame 数，但不会引入人为的 sequence 分界。
+`show_progress=True` 且 `max_frames` 为整数时，会额外按已读取的原始 codec frame 显示
+相对 frame 上限的百分比，并在语料读取结束后报告实际 frame 和 sequence 数。语料可以在上限前
+耗尽，此时进度停在实际比例；触发上限的完整 sequence 仍会全部送入训练，但进度最多显示
+100%。`max_frames=None` 时不接管 `BpeTrainer` 的默认进度。trainer 开始和完成会分别输出
+静态日志，便于在不渲染动态进度条的 job 日志中确认训练阶段。
 能由 Unicode 私用区完整表达时，单 codebook 的 alphabet 直接由 `codebook_sizes` 构造，训练
 只扫描 corpus 一遍；合法但未在训练语料出现的 code id 仍可编码。完整 alphabet 会计入
 `vocab_size`，因此最终 vocab 至少为单 codebook size。`show_progress=True` 时会明确提示跳过

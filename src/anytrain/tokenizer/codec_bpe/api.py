@@ -78,18 +78,26 @@ class CodecBPE:
                 raise ValueError("max_frames must be positive or None")
 
         codec = FrameCodec(codebook_sizes)
-        core = CoreBPE.train(
-            lambda: _encode_corpus(
+        base = (
+            range(codec.vocab_size)
+            if codec.num_codebooks == 1 and codec.vocab_size <= private_use_capacity()
+            else None
+        )
+        corpus_pass = 0
+
+        def encoded_corpus() -> Iterable[list[int]]:
+            nonlocal corpus_pass
+            corpus_pass += 1
+            return _encode_corpus(
                 corpus(),
                 codec=codec,
                 max_frames=max_frames,
-            ),
-            base=(
-                range(codec.vocab_size)
-                if codec.num_codebooks == 1
-                and codec.vocab_size <= private_use_capacity()
-                else None
-            ),
+                show_progress=show_progress and (base is not None or corpus_pass > 1),
+            )
+
+        core = CoreBPE.train(
+            encoded_corpus,
+            base=base,
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             show_progress=show_progress,
@@ -163,14 +171,52 @@ def _encode_corpus(
     *,
     codec: FrameCodec,
     max_frames: int | None,
+    show_progress: bool,
 ) -> Iterable[list[int]]:
     """Encode complete sequences until their frame count reaches the limit."""
 
     remaining = max_frames
-    for frames in corpus:
-        base_ids = [codec.encode(frame) for frame in frames]
-        yield base_ids
-        if remaining is not None:
-            remaining -= len(base_ids)
-            if remaining <= 0:
-                return
+    progress_bar = None
+    if show_progress and max_frames is not None:
+        from tqdm.auto import tqdm
+
+        progress_bar = tqdm(
+            total=max_frames,
+            desc="CodecBPE frames",
+            unit="frame",
+            unit_scale=True,
+        )
+
+    num_frames = 0
+    num_sequences = 0
+    completed = False
+    try:
+        for frames in corpus:
+            base_ids = [codec.encode(frame) for frame in frames]
+            frame_count = len(base_ids)
+            num_frames += frame_count
+            num_sequences += 1
+            if progress_bar is not None and remaining is not None:
+                progress_bar.update(min(frame_count, remaining))
+            if remaining is not None:
+                remaining -= frame_count
+
+            yield base_ids
+            if remaining is not None and remaining <= 0:
+                break
+        completed = True
+    finally:
+        if progress_bar is not None:
+            progress_bar.close()
+
+    if completed and progress_bar is not None:
+        from tqdm.auto import tqdm
+
+        status = (
+            "frame limit reached"
+            if remaining is not None and remaining <= 0
+            else "corpus exhausted"
+        )
+        tqdm.write(
+            f"CodecBPE corpus: {num_frames:,} frames in {num_sequences:,} sequences; {status}"
+        )

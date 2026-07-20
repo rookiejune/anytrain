@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import operator
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TypedDict
@@ -64,10 +65,25 @@ class CodecBPE:
         min_frequency: int = 0,
         show_progress: bool = True,
         max_token_length: int | None = None,
+        max_frames: int | None = 1_000_000_000,
     ) -> Self:
+        if max_frames is not None:
+            if isinstance(max_frames, bool):
+                raise TypeError("max_frames must be an integer or None")
+            try:
+                max_frames = operator.index(max_frames)
+            except TypeError as error:
+                raise TypeError("max_frames must be an integer or None") from error
+            if max_frames <= 0:
+                raise ValueError("max_frames must be positive or None")
+
         codec = FrameCodec(codebook_sizes)
         core = CoreBPE.train(
-            lambda: ([codec.encode(frame) for frame in frames] for frames in corpus()),
+            lambda: _encode_corpus(
+                corpus(),
+                codec=codec,
+                max_frames=max_frames,
+            ),
             base=(
                 range(codec.vocab_size)
                 if codec.num_codebooks == 1
@@ -140,3 +156,21 @@ class CodecBPE:
             encoding="utf-8",
         )
         return out
+
+
+def _encode_corpus(
+    corpus: Iterable[Sequence[Sequence[int]]],
+    *,
+    codec: FrameCodec,
+    max_frames: int | None,
+) -> Iterable[list[int]]:
+    """Encode complete sequences until their frame count reaches the limit."""
+
+    remaining = max_frames
+    for frames in corpus:
+        base_ids = [codec.encode(frame) for frame in frames]
+        yield base_ids
+        if remaining is not None:
+            remaining -= len(base_ids)
+            if remaining <= 0:
+                return

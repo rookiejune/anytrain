@@ -1,3 +1,4 @@
+import inspect
 import io
 import json
 import sys
@@ -45,6 +46,11 @@ def replay(corpus):
 
 @unittest.skipIf(tokenizers is None, "tokenizers is not installed")
 class BPETest(unittest.TestCase):
+    def test_train_defaults_to_one_billion_frames(self):
+        parameter = inspect.signature(CodecBPE.train).parameters["max_frames"]
+
+        self.assertEqual(parameter.default, 1_000_000_000)
+
     def test_train_reports_missing_tokenizer_extra(self):
         with (
             patch.dict(sys.modules, {"tokenizers": None, "tokenizers.models": None}),
@@ -133,6 +139,85 @@ class BPETest(unittest.TestCase):
         self.assertEqual(bpe.vocab_size, 17)
         self.assertEqual(bpe.encode([[1], [2], [3]]), [16, 3])
 
+    def test_train_stops_after_full_sequence_at_max_frames(self):
+        bpe = CodecBPE.train(
+            replay(
+                [
+                    [[1], [2]],
+                    [[4], [5], [4], [5]],
+                    [[16]],
+                ]
+            ),
+            codebook_sizes=(16,),
+            vocab_size=17,
+            max_frames=3,
+            show_progress=False,
+        )
+
+        token_ids = bpe.encode([[4], [5]])
+
+        self.assertEqual(len(token_ids), 1)
+        self.assertEqual(bpe.decode(token_ids), [(4,), (5,)])
+
+    def test_train_does_not_pull_after_max_frames_boundary(self):
+        def corpus():
+            yield [[1], [2]]
+            yield [[3], [4]]
+            raise AssertionError("corpus was read past max_frames")
+
+        bpe = CodecBPE.train(
+            corpus,
+            codebook_sizes=(16,),
+            max_frames=4,
+            show_progress=False,
+        )
+
+        self.assertEqual(bpe.decode(bpe.encode([[3], [4]])), [(3,), (4,)])
+
+    def test_train_max_frames_none_uses_full_corpus(self):
+        consumed = []
+
+        def corpus():
+            for frames in ([[1], [2]], [[3], [4]]):
+                consumed.append(frames)
+                yield frames
+
+        bpe = CodecBPE.train(
+            corpus,
+            codebook_sizes=(16,),
+            max_frames=None,
+            show_progress=False,
+        )
+
+        self.assertEqual(consumed, [[[1], [2]], [[3], [4]]])
+        self.assertEqual(bpe.decode(bpe.encode([[3], [4]])), [(3,), (4,)])
+
+    def test_train_rejects_non_positive_max_frames(self):
+        for max_frames in (0, -1):
+            with (
+                self.subTest(max_frames=max_frames),
+                self.assertRaisesRegex(ValueError, "max_frames"),
+            ):
+                CodecBPE.train(
+                    replay([[[1], [2]]]),
+                    codebook_sizes=(16,),
+                    max_frames=max_frames,
+                    show_progress=False,
+                )
+
+    def test_train_rejects_non_integer_max_frames(self):
+        for max_frames in (True, 1.5):
+            with (
+                self.subTest(max_frames=max_frames),
+                self.assertRaisesRegex(TypeError, "max_frames"),
+            ):
+                CodecBPE.train(
+                    replay([[[1], [2]]]),
+                    codebook_sizes=(16,),
+                    max_frames=max_frames,
+                    show_progress=False,
+                )
+
     def test_train_merges_multi_codebook_frames_and_round_trips(self):
         corpus = [
             [[1, 4], [2, 7], [1, 4], [2, 7], [3, 8]],
@@ -191,6 +276,35 @@ class BPETest(unittest.TestCase):
         CodecBPE.train(corpus, codebook_sizes=(4, 4), show_progress=False)
 
         self.assertEqual(calls, 2)
+
+    def test_multi_codebook_train_replays_same_max_frames_prefix(self):
+        pulled = []
+        sequences = (
+            [[1, 4], [2, 7]],
+            [[3, 8], [0, 9]],
+            [[4, 10]],
+        )
+
+        def corpus():
+            current = []
+            pulled.append(current)
+            for index, frames in enumerate(sequences):
+                current.append(index)
+                yield frames
+
+        bpe = CodecBPE.train(
+            corpus,
+            codebook_sizes=(4, 16),
+            max_frames=3,
+            show_progress=False,
+        )
+        prefix = [[1, 4], [2, 7], [3, 8], [0, 9]]
+
+        self.assertEqual(pulled, [[0, 1], [0, 1]])
+        self.assertEqual(
+            bpe.decode(bpe.encode(prefix)),
+            [(1, 4), (2, 7), (3, 8), (0, 9)],
+        )
 
     def test_large_single_codebook_falls_back_to_alphabet_scan(self):
         calls = 0

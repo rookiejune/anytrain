@@ -166,6 +166,9 @@ class ResidualVectorQuantizer(nn.Module):
                     loss_weight_sum = loss_weight_sum + loss_weight
                     has_loss = True
             else:
+                if quantizer.training and quantizer.use_ema:
+                    # Match peer EMA collectives when this rank has no assignments.
+                    quantizer._update_ema_without_assignments()
                 indices_i = torch.full(
                     (flat_size,),
                     -1,

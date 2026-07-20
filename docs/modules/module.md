@@ -90,9 +90,11 @@ Quantization 提供 task-agnostic 的 FSQ、embedding-table VQ、GVQ、RVQ 和 A
 - `EmbeddingVectorQuantizer` 配置 `VQConfig(use_ema=True)` 时使用 `bincount` / `index_add_`
   以 FP32 聚合并保存统计，即使 quantizer 整体转换为 FP16/BF16 也不降低 EMA 精度；
   `torch.distributed` 已初始化时会在更新 EMA 和 codebook 前全局求和 counts/sums。初始 EMA
-  state/codebook 必须已在 rank 间同步，且所有 rank 必须以相同顺序参与相同 quantizer stage
-  的 collective。当前 DDP 训练不能同时启用 RVQ 的 per-vector dropout 和 EMA；各 rank 独立
-  采样可能让 collective 参与顺序不一致。
+  state/codebook 必须已在 rank 间同步，且所有 rank 必须使用相同的 train/eval mode 和 active
+  stage 数。RVQ 同时启用 EMA 和 per-vector dropout 时，本地没有 assignment 的 stage 仍以零
+  counts/sums 参与 collective；如果该 stage 在所有 rank 都没有 assignment，则保持 EMA
+  state/codebook 不变。如果可能被整 stage dropout 的 quantizer 含可训练参数，PyTorch DDP
+  还需要设置 `find_unused_parameters=True`，因为该 rank 的参数不会进入本次 autograd graph。
 - `GroupedVectorQuantizer` 是 learned product codebook，例如 `group_sizes=(90, 90)` 对外表现为 `codebook_size=8100` 的单 codebook，但内部只搜索两个 90-size group。
 - `ResidualVectorQuantizer` 组合多个 embedding VQ，第一版要求统一 `input_dim`、`codebook_dim` 和 `codebook_size`；`latents_to_codebook_vectors()` 不触发 dropout、loss 或 EMA 更新。
 - `AutoGroupResidualVectorQuantizer` 从 `anytrain.module.quantization` 显式导入。每个 residual

@@ -16,7 +16,6 @@
 
 ## Module
 
-- RVQ：修正 DDP 下 `use_ema=True` 与训练 dropout 的 collective 参与顺序，并增加多 rank 测试。
 - Qwen3：根据真实训练需求暴露 SDPA / flash-attention knobs。
 - Qwen3：只有在 `anycodec` 需要比 Hugging Face `Qwen3Model` 更窄的契约时，再增加 codec-specific token-forward wrapper。
 - Qwen3：KV cache 语义需要独立设计，不混进训练 forward。

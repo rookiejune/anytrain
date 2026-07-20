@@ -1,4 +1,8 @@
 import unittest
+from datetime import timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
 
 import torch
 
@@ -8,6 +12,65 @@ from anytrain.module.quantization import (
     RVQConfig,
     VQConfig,
 )
+
+
+def _distributed_ema_dropout_worker(rank: int, world_size: int, init_method: str) -> None:
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=init_method,
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        torch.manual_seed(0)
+        quantizer = ResidualVectorQuantizer(
+            RVQConfig.from_kwargs(
+                input_dim=4,
+                num_codebooks=3,
+                codebook_size=8,
+                codebook_dim=2,
+                use_ema=True,
+                dropout=1.0,
+            )
+        )
+        distributed_quantizer = torch.nn.parallel.DistributedDataParallel(
+            quantizer,
+            find_unused_parameters=True,
+        )
+        before = [
+            (book._ema_counts.clone(), book._ema_sums.clone(), book.codebook.weight.clone())
+            for book in quantizer.quantizers
+        ]
+        active_mask = torch.tensor(
+            [[True, rank == 1, False]],
+            dtype=torch.bool,
+        )
+        with mock.patch.object(
+            quantizer,
+            "_sample_active_mask",
+            return_value=active_mask,
+        ):
+            output = distributed_quantizer(torch.full((1, 4), float(rank + 1)))
+            output.quantized_latents.square().mean().backward()
+
+        if not torch.equal(output.active_codebook_mask, active_mask):
+            raise AssertionError("RVQ did not preserve the rank-local dropout mask.")
+        for index, book in enumerate(quantizer.quantizers):
+            if index == 2:
+                for value, initial in strict_zip(
+                    (book._ema_counts, book._ema_sums, book.codebook.weight),
+                    before[index],
+                ):
+                    if not torch.equal(value, initial):
+                        raise AssertionError("A globally empty EMA stage changed state.")
+            for value in (book._ema_counts, book._ema_sums, book.codebook.weight):
+                gathered = [torch.empty_like(value) for _ in range(world_size)]
+                torch.distributed.all_gather(gathered, value)
+                for peer in gathered[1:]:
+                    torch.testing.assert_close(gathered[0], peer)
+    finally:
+        torch.distributed.destroy_process_group()
 
 
 class ResidualVectorQuantizerTest(unittest.TestCase):
@@ -88,6 +151,51 @@ class ResidualVectorQuantizerTest(unittest.TestCase):
 
         self.assertTrue((output.indices == -1).any())
         self.assertFalse(output.active_codebook_mask.all())
+
+    @unittest.skipUnless(
+        torch.distributed.is_available() and torch.distributed.is_gloo_available(),
+        "Gloo distributed backend is unavailable",
+    )
+    def test_distributed_ema_dropout_keeps_collectives_aligned(self):
+        with TemporaryDirectory() as tmp_dir:
+            init_method = (Path(tmp_dir) / "init").as_uri()
+            torch.multiprocessing.spawn(
+                _distributed_ema_dropout_worker,
+                args=(2, init_method),
+                nprocs=2,
+                join=True,
+            )
+
+    def test_empty_eval_ema_stage_does_not_join_training_collectives(self):
+        quantizer = ResidualVectorQuantizer(
+            RVQConfig.from_kwargs(
+                input_dim=4,
+                num_codebooks=2,
+                codebook_size=8,
+                use_ema=True,
+                dropout=1.0,
+            )
+        )
+        quantizer.quantizers[1].eval()
+        active_mask = torch.tensor([[True, False]], dtype=torch.bool)
+        calls: list[torch.Tensor] = []
+
+        with (
+            mock.patch.object(
+                quantizer,
+                "_sample_active_mask",
+                return_value=active_mask,
+            ),
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch(
+                "torch.distributed.all_reduce",
+                side_effect=lambda value, *, op: calls.append(value.clone()),
+            ),
+        ):
+            quantizer(torch.randn(1, 4))
+
+        self.assertEqual(len(calls), 2)
 
     def test_sample_active_mask_dropout_boundaries(self):
         quantizer = ResidualVectorQuantizer(

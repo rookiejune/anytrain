@@ -211,7 +211,23 @@ class EmbeddingVectorQuantizer(nn.Module):
         )
         sums.index_add_(0, flat_indices, flat_latents)
         self._sync_ema_stats(counts, sums)
+        self._apply_ema_stats(counts, sums)
 
+    @torch.no_grad()
+    def _update_ema_without_assignments(self) -> None:
+        if not self.use_ema:
+            raise RuntimeError("EMA participation requires use_ema=True.")
+        if not self._distributed_ready():
+            return
+
+        counts = torch.zeros_like(self._ema_counts)
+        sums = torch.zeros_like(self._ema_sums)
+        self._sync_ema_stats(counts, sums)
+        if not bool(counts.any().item()):
+            return
+        self._apply_ema_stats(counts, sums)
+
+    def _apply_ema_stats(self, counts: Tensor, sums: Tensor) -> None:
         self._ema_counts.mul_(self.config.decay).add_(counts, alpha=1 - self.config.decay)
         self._ema_sums.mul_(self.config.decay).add_(sums, alpha=1 - self.config.decay)
 
@@ -226,7 +242,10 @@ class EmbeddingVectorQuantizer(nn.Module):
         )
 
     def _sync_ema_stats(self, counts: Tensor, sums: Tensor) -> None:
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        if not self._distributed_ready():
             return
         torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.SUM)
         torch.distributed.all_reduce(sums, op=torch.distributed.ReduceOp.SUM)
+
+    def _distributed_ready(self) -> bool:
+        return torch.distributed.is_available() and torch.distributed.is_initialized()

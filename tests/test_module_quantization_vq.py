@@ -141,6 +141,32 @@ class EmbeddingVectorQuantizerTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(quantizer._ema_counts).all())
         self.assertTrue(torch.isfinite(quantizer.codebook.weight).all())
 
+    def test_empty_distributed_ema_participation_preserves_state(self):
+        quantizer = EmbeddingVectorQuantizer(
+            VQConfig(input_dim=2, codebook_size=4, use_ema=True)
+        )
+        before_counts = quantizer._ema_counts.clone()
+        before_sums = quantizer._ema_sums.clone()
+        before_weight = quantizer.codebook.weight.clone()
+        calls: list[torch.Tensor] = []
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch(
+                "torch.distributed.all_reduce",
+                side_effect=lambda value, *, op: calls.append(value.clone()),
+            ),
+        ):
+            quantizer._update_ema_without_assignments()
+
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(calls[0].any())
+        self.assertFalse(calls[1].any())
+        self.assertTrue(torch.equal(quantizer._ema_counts, before_counts))
+        self.assertTrue(torch.equal(quantizer._ema_sums, before_sums))
+        self.assertTrue(torch.equal(quantizer.codebook.weight, before_weight))
+
     def test_lookup_chunks_large_comparison_matrices(self):
         latents = torch.randn(7, 3)
         codebook = torch.randn(5, 3)

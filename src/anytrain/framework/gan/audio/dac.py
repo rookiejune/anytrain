@@ -8,6 +8,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.nn.utils import parametrizations
 
+from anytrain._buffer import register_buffer
 from anytrain._compat import strict_zip
 
 _BANDS = (0.1, 0.25, 0.5, 0.75)
@@ -127,6 +128,8 @@ class _MSD(nn.Module):
 
 
 class _MRD(nn.Module):
+    window: Tensor
+
     def __init__(
         self,
         *,
@@ -144,7 +147,7 @@ class _MRD(nn.Module):
 
         self.n_fft = n_fft
         self.hop_length = int(hop_factor * n_fft)
-        self.window = nn.Buffer(torch.hann_window(n_fft), persistent=False)
+        register_buffer(self, "window", torch.hann_window(n_fft), persistent=False)
         bins = n_fft // 2 + 1
         self.bands = _split_indices(bands, bins=bins)
         branch_count = len(self.bands) + 1

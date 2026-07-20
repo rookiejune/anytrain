@@ -6,6 +6,8 @@ from typing import Protocol
 import torch
 from torch import Tensor, nn
 
+from anytrain._buffer import register_buffer
+
 
 class _SpectrogramFactory(Protocol):
     def __call__(
@@ -109,7 +111,11 @@ class STFTTransform(nn.Module):
                 normalized=normalized,
             )
         else:
-            self.window_tensor = nn.Buffer(self._create_window(window, self.win_length))
+            register_buffer(
+                self,
+                "window_tensor",
+                self._create_window(window, self.win_length),
+            )
 
     def forward(self, waveform: Tensor) -> Tensor:
         if self.backend == "torchaudio":
@@ -196,7 +202,9 @@ class MelSpectrogramTransform(nn.Module):
                 win_length=win_length,
                 backend="torch",
             )
-            self.mel_filter = nn.Buffer(
+            register_buffer(
+                self,
+                "mel_filter",
                 self._create_mel_filter(
                     sample_rate=sample_rate,
                     n_fft=n_fft,

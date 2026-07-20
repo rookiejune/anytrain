@@ -8,6 +8,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
+from anytrain._buffer import register_buffer
 from anytrain.codec.dac.assets import DACAssets
 from anytrain.codec.dac.codec import DAC
 
@@ -159,7 +160,7 @@ class FakeDACQuantizer(nn.Module):
 class FakeDACModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+        register_buffer(self, "device_probe", torch.empty(0), persistent=False)
         self.sample_rate = 24000
         self.n_codebooks = 4
         self.codebook_size = 1024

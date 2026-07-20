@@ -6,6 +6,8 @@ from typing import Literal
 import torch
 from torch import Tensor, nn
 
+from anytrain._buffer import register_buffer
+
 DirichletStrategy = Literal["std", "var", "range"]
 
 
@@ -109,17 +111,17 @@ class AdaptiveDirichletTempering(nn.Module):
         super().__init__()
         self.config = config
 
-        self._expert_means = nn.Buffer(self._initial_expert_means())
-        self._expert_means_square = nn.Buffer(self._initial_expert_means().pow(2))
-        self._expert_logs = nn.Buffer(torch.zeros(config.num_experts))
+        register_buffer(self, "_expert_means", self._initial_expert_means())
+        register_buffer(self, "_expert_means_square", self._initial_expert_means().pow(2))
+        register_buffer(self, "_expert_logs", torch.zeros(config.num_experts))
 
         prior_mean, prior_var, prior_log = self._initial_priors()
-        self.prior_mean = nn.Buffer(prior_mean)
-        self.prior_var = nn.Buffer(prior_var)
-        self.prior_log = nn.Buffer(prior_log)
+        register_buffer(self, "prior_mean", prior_mean)
+        register_buffer(self, "prior_var", prior_var)
+        register_buffer(self, "prior_log", prior_log)
 
-        self._temperature_ema = nn.Buffer(torch.ones(config.num_experts))
-        self._num_updates = nn.Buffer(torch.zeros((), dtype=torch.long))
+        register_buffer(self, "_temperature_ema", torch.ones(config.num_experts))
+        register_buffer(self, "_num_updates", torch.zeros((), dtype=torch.long))
         self._num_updates_value = 0
 
         self._disabled = False

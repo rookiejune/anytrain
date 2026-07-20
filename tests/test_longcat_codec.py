@@ -9,6 +9,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
+from anytrain._buffer import register_buffer
 from anytrain.codec.longcat.assets import LongCatAssets, LongCatConfigPaths
 from anytrain.codec.longcat.codec import LongCat
 
@@ -183,7 +184,7 @@ class LongCatCodecTest(unittest.TestCase):
 class FakeLongCatDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+        register_buffer(self, "device_probe", torch.empty(0), persistent=False)
         self.n_codebooks = 3
         self.acoustic_codebook_size = 90
         self.codes: torch.Tensor | None = None
@@ -205,7 +206,7 @@ class FakeLongCatDecoder(nn.Module):
 class FakeLongCatEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+        register_buffer(self, "device_probe", torch.empty(0), persistent=False)
 
     def forward(
         self,

@@ -9,6 +9,8 @@ from typing import Literal
 import torch
 from torch import Tensor, nn
 
+from anytrain._buffer import register_buffer
+
 from . import _checks
 from .output import QuantizeOutput
 from .projection import make_projection
@@ -81,14 +83,23 @@ class FiniteScalarQuantizer(nn.Module):
         )
 
         levels = torch.tensor(config.levels, dtype=torch.long)
-        self._basis = nn.Buffer(torch.cumprod(torch.tensor([1, *config.levels[:-1]]), dim=0))
-        self._levels = nn.Buffer(levels)
-        self._half_width = nn.Buffer(levels.div(2, rounding_mode="floor").float())
-        self._half_levels = nn.Buffer((levels.float() - 1) * (1 - config.eps) / 2)
+        register_buffer(
+            self,
+            "_basis",
+            torch.cumprod(torch.tensor([1, *config.levels[:-1]]), dim=0),
+        )
+        register_buffer(self, "_levels", levels)
+        register_buffer(self, "_half_width", levels.div(2, rounding_mode="floor").float())
+        register_buffer(self, "_half_levels", (levels.float() - 1) * (1 - config.eps) / 2)
         offsets = torch.tensor([0.5 if level % 2 == 0 else 0.0 for level in config.levels])
-        self._offsets = nn.Buffer(offsets)
-        self._shifts = nn.Buffer((self._offsets / self._half_levels).tan())
-        self._level_mask = nn.Buffer(self._build_level_mask(config.levels), persistent=False)
+        register_buffer(self, "_offsets", offsets)
+        register_buffer(self, "_shifts", (self._offsets / self._half_levels).tan())
+        register_buffer(
+            self,
+            "_level_mask",
+            self._build_level_mask(config.levels),
+            persistent=False,
+        )
 
     def forward(self, latents: Tensor) -> QuantizeOutput:
         return self.quantize(latents)

@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from anytrain._buffer import register_buffer
 from anytrain._compat import strict_zip
 
 from . import _checks
@@ -104,8 +105,17 @@ class GroupedVectorQuantizer(nn.Module):
         self.codebooks = nn.ParameterList(
             [nn.Parameter(torch.empty(size, dim)) for size, dim in strict_zip(config.group_sizes, group_dims)]
         )
-        self._basis = nn.Buffer(torch.cumprod(torch.tensor([1, *config.group_sizes[:-1]]), dim=0))
-        self._group_sizes = nn.Buffer(torch.tensor(config.group_sizes), persistent=False)
+        register_buffer(
+            self,
+            "_basis",
+            torch.cumprod(torch.tensor([1, *config.group_sizes[:-1]]), dim=0),
+        )
+        register_buffer(
+            self,
+            "_group_sizes",
+            torch.tensor(config.group_sizes),
+            persistent=False,
+        )
         self.reset_parameters()
 
     def reset_parameters(self) -> None:

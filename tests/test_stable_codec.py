@@ -6,6 +6,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
+from anytrain._buffer import register_buffer
 from anytrain.codec.stable_codec import (
     DEFAULT_CODEBOOK_SIZE,
     DEFAULT_POSTHOC_BOTTLENECK,
@@ -255,7 +256,7 @@ class FakeStableCodecBackend(nn.Module):
 
     def __init__(self, **kwargs) -> None:
         super().__init__()
-        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+        register_buffer(self, "device_probe", torch.empty(0), persistent=False)
         type(self).kwargs = kwargs
         self.sample_rate = 16000
         self.posthoc_stages = None

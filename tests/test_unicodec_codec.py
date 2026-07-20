@@ -8,6 +8,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
+from anytrain._buffer import register_buffer
 from anytrain.codec.unicodec.assets import UniCodecAssets
 from anytrain.codec.unicodec.codec import UniCodec
 
@@ -163,7 +164,7 @@ class FakeUniCodecFactory:
 class FakeUniCodecModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.device_probe = nn.Buffer(torch.empty(0), persistent=False)
+        register_buffer(self, "device_probe", torch.empty(0), persistent=False)
         self.domains: tuple[str, ...] | None = None
         self.bandwidth_id: torch.Tensor | None = None
         self.decode_called = False

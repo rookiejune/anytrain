@@ -6,6 +6,8 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from anytrain._buffer import register_buffer
+
 from . import _checks
 from .lookup import nearest_codebook_indices
 from .output import QuantizationLoss, QuantizeOutput
@@ -78,8 +80,8 @@ class EmbeddingVectorQuantizer(nn.Module):
             scale_grad_by_freq=config.scale_grad_by_freq,
         )
         if config.use_ema:
-            self._ema_counts = nn.Buffer(torch.ones(config.codebook_size))
-            self._ema_sums = nn.Buffer(torch.empty(config.codebook_size, codebook_dim))
+            register_buffer(self, "_ema_counts", torch.ones(config.codebook_size))
+            register_buffer(self, "_ema_sums", torch.empty(config.codebook_size, codebook_dim))
             self.codebook.weight.requires_grad_(False)
         self.reset_parameters()
 

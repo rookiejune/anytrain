@@ -6,12 +6,16 @@ from typing import Any
 import torch
 from torch import nn
 
+from anytrain._buffer import register_buffer
+
 
 class DeviceModule(nn.Module):
     _device: torch.Tensor
 
     def _init_device(self, device: torch.device) -> None:
-        self._device = nn.Buffer(
+        register_buffer(
+            self,
+            "_device",
             torch.empty(0, dtype=torch.uint8, device=device),
             persistent=False,
         )

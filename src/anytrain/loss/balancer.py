@@ -6,6 +6,8 @@ from collections.abc import Mapping
 import torch
 from torch import Tensor, nn
 
+from anytrain._buffer import register_buffer
+
 from .abc import LossResult
 
 LossTensorDict = Mapping[str, Tensor]
@@ -51,6 +53,8 @@ class MeanLossBalancer(LossBalancerABC):
 
 
 class FixedWeightLossBalancer(LossBalancerABC):
+    weights: Tensor
+
     def __init__(
         self,
         loss_weights: Mapping[str, float],
@@ -65,7 +69,7 @@ class FixedWeightLossBalancer(LossBalancerABC):
             if weight_sum <= 0:
                 raise ValueError("loss_weights must have positive sum when normalize=True.")
             weights = weights / weight_sum
-        self.weights = nn.Buffer(weights)
+        register_buffer(self, "weights", weights)
 
     def forward(self, losses: LossTensorDict) -> LossResult:
         loss_tensor = self._stack_losses(losses)

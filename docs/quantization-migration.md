@@ -241,9 +241,11 @@ RVQ 可以在多个 VQ 上累加 residual。第一版建议优先支持所有 qu
 
 RVQ `forward()` 的临时截断参数不叫 `num_quantizers`，改叫 `num_active_codebooks`，避免和配置里的 `num_codebooks` 混淆。
 
-### 8. Buffer 使用 `nn.Buffer`
+### 8. Buffer 使用统一注册入口
 
-FSQ 的 basis、levels、half levels、offsets，VQ EMA 的 counter/sum 都用 `nn.Buffer`，保持当前项目规则和 IDE 友好性。
+FSQ 的 basis、levels、half levels、offsets，VQ EMA 的 counter/sum 都通过
+`anytrain._buffer.register_buffer` 注册。PyTorch 2.5 及以上使用 `nn.Buffer`，旧版本回退到
+`Module.register_buffer`，两条路径保持 `persistent`、设备迁移和 state dict 语义一致。
 
 ## 分阶段计划
 

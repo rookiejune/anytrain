@@ -35,7 +35,6 @@ Python import 显式组合进去：
 ```python
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Iterable
 from functools import partial
 
@@ -81,22 +80,18 @@ def train(data_module: pl.LightningDataModule) -> None:
         model=torch.nn.Linear(4, 1),
         optimizer=partial(torch.optim.AdamW, lr=0.0003),
     )
-    callbacks = []
-    if os.environ.get("ANYTRAIN_DEBUG") == "True":
-        callbacks.append(DebugCallback())
-
     trainer = pl.Trainer(
         max_epochs=10,
         accelerator="auto",
         devices="auto",
         default_root_dir="outputs/my_project/debug",
-        callbacks=callbacks,
+        callbacks=[DebugCallback()],
     )
     trainer.fit(module, datamodule=data_module)
 ```
 
-`DebugCallback` 只有在进程环境显式设置 `ANYTRAIN_DEBUG=True` 时才构造；未启用调试时应从
-callback 列表中移除，直接构造会明确报错。
+`DebugCallback` 只在调用方显式加入 callback 列表时启用。它会在每次 backward 后扫描参数和
+梯度；正式运行不需要该检查时，应从 callback 列表中移除。
 
 optimizer / scheduler 由下游 `pl_module.configure_optimizers()` 自己创建；多 optimizer、多
 模块参数组等复杂逻辑直接按 Lightning 原生写法返回。配置文件如果需要 YAML/JSON/Hydra

@@ -1,10 +1,8 @@
 import unittest
 from contextlib import redirect_stderr
 from io import StringIO
-from os import environ
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 
 class _LogModule:
@@ -43,15 +41,6 @@ class _CheckpointTrainer:
 
 
 class LightningTest(unittest.TestCase):
-    def test_debug_callback_requires_debug_env(self):
-        from anytrain.lightning import DebugCallback
-
-        with (
-            mock.patch.dict(environ, {}, clear=True),
-            self.assertRaisesRegex(RuntimeError, "ANYTRAIN_DEBUG=True"),
-        ):
-            DebugCallback()
-
     def test_debug_callback_reports_first_gradient_after_backward(self):
         import torch
 
@@ -68,8 +57,7 @@ class LightningTest(unittest.TestCase):
         module.bad.weight.grad = torch.full_like(module.bad.weight, float("inf"))
         trainer = SimpleNamespace(current_epoch=0, global_step=0, global_rank=0)
 
-        with mock.patch.dict(environ, {"ANYTRAIN_DEBUG": "True"}, clear=True):
-            callback = DebugCallback()
+        callback = DebugCallback()
 
         stderr = StringIO()
         with redirect_stderr(stderr), self.assertRaisesRegex(RuntimeError, "Non-finite gradient"):
@@ -201,8 +189,7 @@ class LightningTest(unittest.TestCase):
 
         from anytrain.lightning import DebugCallback
 
-        with mock.patch.dict(environ, {"ANYTRAIN_DEBUG": "True"}, clear=True):
-            callback = DebugCallback()
+        callback = DebugCallback()
         trainer = pl.Trainer(
             logger=False,
             enable_checkpointing=False,

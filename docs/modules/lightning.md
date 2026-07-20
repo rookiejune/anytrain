@@ -56,23 +56,22 @@ src/anytrain/lightning/
 
 ## Callback
 
-`DebugCallback` 由 `ANYTRAIN_DEBUG=True` 显式启用。未设置该环境变量时构造 callback 会直接
-报错，避免误把训练调试开销带入正式运行。它在 `on_after_backward()` 检查参数和梯度是否 finite，
+`DebugCallback` 在调用方显式加入 callback 列表时启用。它在 `on_after_backward()` 检查参数和梯度是否 finite，
 遇到 NaN 或 Inf 时打印第一个异常参数或梯度的 name、index、value、shape、dtype、device，并直接抛错。
+该检查会在每次 backward 后扫描参数和梯度，正式运行不需要时应从 callback 列表移除。
 
 `ModelCheckpoint` 继承 Lightning 原生 `ModelCheckpoint`。默认 `async_save=True`，rank 0 先保存到本机临时目录，再把复制和删除操作排进单线程后台队列。它用于目标 checkpoint 目录位于 NFS 等慢文件系统时，缩短训练主循环等待目标文件系统写入的时间；传入 `async_save=False` 时保持原版同步行为。
 
 Python 入口示例：
 
 ```python
-import os
-
 from lightning import pytorch as pl
 from anytrain.lightning import DebugCallback, ModelCheckpoint
 
-callbacks = [ModelCheckpoint(dirpath="outputs/checkpoints", async_save=True)]
-if os.environ.get("ANYTRAIN_DEBUG") == "True":
-    callbacks.append(DebugCallback())
+callbacks = [
+    ModelCheckpoint(dirpath="outputs/checkpoints", async_save=True),
+    DebugCallback(),
+]
 
 trainer = pl.Trainer(
     callbacks=callbacks,
@@ -102,7 +101,7 @@ trainer = pl.Trainer(
 当前覆盖：
 
 - `LightningLogMixin` 的 prefixed dict、媒体 logger 错误路径和 rank logging 策略。
-- `DebugCallback` 的环境变量门禁和异常定位路径。
+- `DebugCallback` 的异常定位路径和 Trainer 集成。
 - `ModelCheckpoint` 的原生接口兼容、异步复制、同步 opt-out 和删除排队。
 - callback 可直接传入 Lightning `Trainer`。
 

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import os
 import sys
 from dataclasses import dataclass
 from typing import Literal
 
 import torch
 from lightning import pytorch as pl
-
-_DEBUG_ENV = "ANYTRAIN_DEBUG"
-_DEBUG_ENV_VALUE = "True"
 
 
 @dataclass(frozen=True)
@@ -24,13 +20,6 @@ class _NonfiniteIssue:
 
 
 class DebugCallback(pl.Callback):
-    def __init__(self) -> None:
-        if os.environ.get(_DEBUG_ENV) != _DEBUG_ENV_VALUE:
-            raise RuntimeError(
-                f"{self.__class__.__name__} requires {_DEBUG_ENV}={_DEBUG_ENV_VALUE}. "
-                "Remove the callback or enable the debug environment variable explicitly."
-            )
-
     def on_after_backward(
         self,
         trainer: pl.Trainer,

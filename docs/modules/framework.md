@@ -13,9 +13,9 @@
 - `framework.flow_matching`：Facebook `flow_matching` 的可组合再封装。
 - `framework.gan`：adversarial training loss、feature matching、WGAN-GP 和 DAC discriminator preset。
 
-`framework.flow_matching` 的目标设计见 [`docs/flow-matching-design.md`](../flow-matching-design.md)。它应作为 Facebook `flow_matching` 的可组合再封装，提供 source、time sampler、objective 和 sampler 等积木，而不是完整任务框架。
+`framework.flow_matching` 的设计见 [`docs/flow-matching-design.md`](../flow-matching-design.md)。它作为 Facebook `flow_matching` 的可组合再封装，提供 source、time sampler、objective 和 sampler 等积木，而不是完整任务框架。
 
-`framework.gan` 的目标设计见 [`docs/gan-framework-design.md`](../gan-framework-design.md)。第一版不提供完整 manual optimization helper；音频只提供 DAC 风格 discriminator preset，不接管 codec 任务训练。
+`framework.gan` 的设计见 [`docs/gan-framework-design.md`](../gan-framework-design.md)。当前不提供完整 manual optimization helper；音频只提供 DAC 风格 discriminator preset，不接管 codec 任务训练。
 
 ## 当前结构
 

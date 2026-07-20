@@ -25,7 +25,6 @@ src/anytrain/loss/
   task/
     __init__.py
     codec.py
-  todo.md
 ```
 
 当前公开导出：
@@ -35,6 +34,7 @@ src/anytrain/loss/
 - `LossDetails`
 - `LossDetailValue`
 - `LossBalancerABC`
+- `LossTensorDict`
 - `MeanLossBalancer`
 - `FixedWeightLossBalancer`
 - `UncertaintyLossBalancer`
@@ -50,6 +50,8 @@ src/anytrain/loss/
 - `anytrain.loss.spectral.MelLoss`
 - `anytrain.loss.spectral.MultiScaleSTFTLoss`
 - `anytrain.loss.spectral.MultiScaleMelLoss`
+- `anytrain.loss.spectral.STFTTransform`
+- `anytrain.loss.spectral.MelSpectrogramTransform`
 - `anytrain.loss.task.CodecLoss`
 - `anytrain.loss.task.CodecLossPreset`
 
@@ -170,7 +172,9 @@ loss, details = loss_fn(reconstruction, target, lengths=batch.lengths)
 
 `lengths` 必须是一维整数 Tensor，或由 index-compatible integer 组成的 sequence；bool、浮点、
 复数和字符串会直接抛出 `TypeError`，不会通过 `int()` 截断或转换。dict、generator、bytes
-等非 sequence 或文本/二进制容器也不作为 batch lengths 接受。
+等非 sequence 或文本/二进制容器也不作为 batch lengths 接受。它必须为每个 batch item
+提供一个正数，且不能超过输入的 time 维。传入 `lengths` 时，`reconstruction` 和 `target`
+必须同 shape，并至少具有 `(batch, channels, time)` 三个维度。
 
 ## 当前限制
 

@@ -35,6 +35,7 @@ Python import 显式组合进去：
 ```python
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable
 from functools import partial
 
@@ -80,15 +81,22 @@ def train(data_module: pl.LightningDataModule) -> None:
         model=torch.nn.Linear(4, 1),
         optimizer=partial(torch.optim.AdamW, lr=0.0003),
     )
+    callbacks = []
+    if os.environ.get("ANYTRAIN_DEBUG") == "True":
+        callbacks.append(DebugCallback())
+
     trainer = pl.Trainer(
         max_epochs=10,
         accelerator="auto",
         devices="auto",
         default_root_dir="outputs/my_project/debug",
-        callbacks=[DebugCallback()],
+        callbacks=callbacks,
     )
     trainer.fit(module, datamodule=data_module)
 ```
+
+`DebugCallback` 只有在进程环境显式设置 `ANYTRAIN_DEBUG=True` 时才构造；未启用调试时应从
+callback 列表中移除，直接构造会明确报错。
 
 optimizer / scheduler 由下游 `pl_module.configure_optimizers()` 自己创建；多 optimizer、多
 模块参数组等复杂逻辑直接按 Lightning 原生写法返回。配置文件如果需要 YAML/JSON/Hydra
@@ -109,7 +117,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 | `anytrain.loss` | 通用 loss 接口、loss 组合器和 loss balancer。 |
 | `anytrain.evaluator` | 通用 evaluator 接口、组合器，以及 text/speech evaluator 子模块。 |
 | `anytrain.optim` | AdamW/Muon 参数分组、scheduler helper 和 LLM optimizer helper。 |
-| `anytrain.module` | task-agnostic `torch.nn.Module` 积木，例如 ADT、dynamic conv、quantizer 和 Qwen3 helper。 |
+| `anytrain.module` | task-agnostic `torch.nn.Module` 积木，例如 ADT、dynamic conv、FSQ/VQ/GVQ/RVQ/AGRVQ quantizer 和 Qwen3 helper。 |
 | `anytrain.idspace` | 多块 local/global token id 映射和 embedding 路由。 |
 | `anytrain.tokenizer` | 依赖 `tokenizer` extra 的 codec frame BPE。 |
 | `anytrain.codec` | 可选音频 codec wrapper。 |
@@ -126,7 +134,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 - 下游项目负责具体任务语义、`training_step`、batch 解释和模型组合。
 - 配置组合和对象实例化由下游选择，可以用普通 Python、Hydra、argparse、pydantic 或其它项目内约定。
 - `anytrain.lightning` 是核心依赖层；Lightning 不是 optional integration。
-- `loss`、`evaluator`、`optim`、`module`、`plotter`、`framework` 是下游训练模块可显式组合的组件，按 core/optional 子模块拆分依赖。
+- `loss`、`evaluator`、`optim`、`module`、`idspace`、`plotter`、`framework` 是下游训练模块可显式组合的组件，按 core/optional 子模块拆分依赖。
 
 明确不做：
 
@@ -140,8 +148,8 @@ PYTHONPATH=src python examples/tiny_regression.py
 常用检查：
 
 ```bash
-/Users/zhuyin/miniconda3/envs/py312/bin/python -m pytest
-/Users/zhuyin/miniconda3/envs/py312/bin/python -m ruff check .
+python -m pytest
+python -m ruff check .
 ```
 
 Lightning 边界见 `docs/lightning.md`，组件分层见 `docs/components.md`，总体架构见

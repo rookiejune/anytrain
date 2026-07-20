@@ -14,6 +14,15 @@ response = chat.Chat("deepseek")("summarize this training curve")
 
 `anytrain.chat` 导出 `Chat`、公共配置、provider 枚举和返回类型。环境变量名与 provider 默认参数仍是模块实现细节，不进入 `__all__`。
 
+当前 `__all__`：
+
+- `Chat`
+- `ChatConfig`
+- `ImageGeneration`
+- `ImageOutput`
+- `ModelType`
+- `config_from_env`
+
 同一个 `Chat` 实例会保留已成功请求的 user/assistant 消息，后续请求会把历史消息作为上下文继续发送。需要开启新上下文时，可以调用 `client.refresh()`，或在单次请求中传入 `refresh=True`：
 
 ```python
@@ -50,7 +59,7 @@ client("ignore previous context", refresh=True)
 provider 请求实现放在 `chat` extra 后面，不进入默认依赖：
 
 ```bash
-pip install anytrain[chat]
+python -m pip install "anytrain[chat]"
 ```
 
 当前 extra 依赖 `openai`、`requests` 和 `zai-sdk`。根包 `import anytrain` 不导入 chat backend，也不导出 `Chat`。

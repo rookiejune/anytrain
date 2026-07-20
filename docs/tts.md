@@ -4,6 +4,12 @@
 does not own datasets, waveform caches, manifest files, training steps, or a
 default CLI.
 
+Install the MOSS backend dependencies from the anytrain repository root:
+
+```bash
+python -m pip install -e ".[moss-tts]"
+```
+
 The stable public boundary is:
 
 ```python

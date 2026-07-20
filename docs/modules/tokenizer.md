@@ -13,7 +13,7 @@
 `tokenizer` 是 optional general 模块。安装依赖：
 
 ```bash
-pip install anytrain[tokenizer]
+python -m pip install "anytrain[tokenizer]"
 ```
 
 `import anytrain.tokenizer` 保持轻量；构造、加载或训练 `CodecBPE` 时才导入
@@ -90,8 +90,9 @@ tokenizer 参数暂不暴露，因为 `CodecBPE` 的每个 token 都必须能无
 `vocab_size`，因此最终 vocab 至少为单 codebook size。`show_progress=True` 时会明确提示跳过
 alphabet scan。超过私用区容量的单 codebook 会回退到 observed alphabet scan。多 codebook 仍会
 两遍扫描 corpus：第一遍收集完整 observed frame alphabet 并校验 frame，第二遍交给
-`BpeTrainer` 学习 merges。多 codebook 传入的 corpus 必须是 callable，并在每次调用时返回
-可重新遍历的 frame sequence iterable。
+`BpeTrainer` 学习 merges。所有 `train()` corpus 都必须是 callable，并在每次调用时返回新的
+frame sequence iterable；能直接构造完整 alphabet 的单 codebook 调用一次，超出 Unicode
+私用区容量的单 codebook fallback 和多 codebook 都调用两次。
 `evaluate()` 也支持 `show_progress`，用于评估大语料压缩率和 BPE token 使用分布时显示独立进度。
 它返回扁平的 `EvalStats`：压缩指标里 `original_frames` 是 codec frame 数，
 `encoded_tokens` 是 BPE token 数；同时包含 token 出现次数直方图、top-k token、实际使用

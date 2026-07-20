@@ -21,6 +21,7 @@ src/anytrain/optim/
   rules.py
   scheduler/
     __init__.py
+    _shape.py
     compose.py
     curve.py
     presets.py
@@ -47,7 +48,7 @@ src/anytrain/optim/
 - `anytrain.optim.adamw`: `create_adamw_optimizer`
 - `anytrain.optim.options`: `AdamWOptions`、`MuonOptions`、`MuonAdamWOptions`、`OptimizerOptions`、`MuonAdjustLRFn`
 - `anytrain.optim.muon`: `create_muon_adamw_optimizer`
-- `anytrain.optim.scheduler`: `CurveShape`、`Phase`、`Schedule`、`PhaseLike`、`make_scheduler_config`、`create_scheduler_from_config`
+- `anytrain.optim.scheduler`: `CurveShape`、`Phase`、`Schedule`、`PhaseLike`、`make_scheduler_config`、`make_named_scheduler_config`、`create_scheduler_from_config`
 - `anytrain.optim.llm`: `OptimizationConfig`、`create_optimizer_from_config`、`create_lightning_optimizers_from_config`
 
 `anytrain` 的最低依赖是 `torch>=2.8`，以支持 Python 3.9。Muon 是条件能力：

@@ -20,6 +20,17 @@ python -m pip install -U flash-attn --no-build-isolation
 环境。需要使用 Stable Codec 时，先在兼容环境里安装上游包；如果确认新版本放宽了
 torch pin，再把依赖加入 `pyproject.toml`。
 
+兼容环境不能通过普通 `pip install anytrain` 安装当前包，否则 resolver 会因 `torch>=2.8`
+再次升级或报冲突。先固定下面的 Stable Codec 依赖，再从 anytrain checkout 只暴露 wrapper
+源码：
+
+```bash
+export PYTHONPATH=/path/to/anytrain/src:$PYTHONPATH
+```
+
+这个桥接环境只用于 `anytrain.codec.stable_codec` 推理和离线生成 codes/latents；其它 anytrain
+模块仍以项目声明的 torch 2.8+ 环境为准。
+
 Stable Codec 官方 README 还说明当前模型依赖 FlashAttention，不建议 CPU 推理。
 
 在 `121` 上已验证 `stable-codec==0.1.2` 可以在独立 `py39` 环境安装并导入：

@@ -27,6 +27,7 @@ src/anytrain/lightning/
 - `LightningLogMixin`
 - `ModelCheckpoint`
 - `DebugCallback`
+- `RankLogMode`
 - `prefixed_log_dict`
 
 `anytrain.lightning` 不导出自定义 LightningModule 基类，也不通过继承改变训练行为。下游项目直接继承 `lightning.pytorch.LightningModule`。
@@ -55,21 +56,26 @@ src/anytrain/lightning/
 
 ## Callback
 
-`DebugCallback` 由 `ANYTRAIN_DEBUG=True` 显式启用。它在 `on_after_backward()` 检查参数和梯度是否 finite，遇到 NaN 或 Inf 时打印第一个异常参数或梯度的 name、index、value、shape、dtype、device，并直接抛错。
+`DebugCallback` 由 `ANYTRAIN_DEBUG=True` 显式启用。未设置该环境变量时构造 callback 会直接
+报错，避免误把训练调试开销带入正式运行。它在 `on_after_backward()` 检查参数和梯度是否 finite，
+遇到 NaN 或 Inf 时打印第一个异常参数或梯度的 name、index、value、shape、dtype、device，并直接抛错。
 
 `ModelCheckpoint` 继承 Lightning 原生 `ModelCheckpoint`。默认 `async_save=True`，rank 0 先保存到本机临时目录，再把复制和删除操作排进单线程后台队列。它用于目标 checkpoint 目录位于 NFS 等慢文件系统时，缩短训练主循环等待目标文件系统写入的时间；传入 `async_save=False` 时保持原版同步行为。
 
 Python 入口示例：
 
 ```python
+import os
+
 from lightning import pytorch as pl
 from anytrain.lightning import DebugCallback, ModelCheckpoint
 
+callbacks = [ModelCheckpoint(dirpath="outputs/checkpoints", async_save=True)]
+if os.environ.get("ANYTRAIN_DEBUG") == "True":
+    callbacks.append(DebugCallback())
+
 trainer = pl.Trainer(
-    callbacks=[
-        DebugCallback(),
-        ModelCheckpoint(dirpath="outputs/checkpoints", async_save=True),
-    ],
+    callbacks=callbacks,
 )
 ```
 

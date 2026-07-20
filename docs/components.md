@@ -43,7 +43,7 @@ loss = loss_fn(prediction, target)
 
 - `LossABC`：抽象基类，子类实现 `compute_loss()`，统一校验 scalar 主 loss 和可选 details。
 - `LossGroup`：用 mapping/`ModuleDict` 组合多个 loss，返回 `(total, details)`。
-- `LossBalancerABC`：把多个命名 scalar loss 合成为一个 scalar total，可选返回 details；默认实现是 `MeanLossBalancer`，core 也提供 `UncertaintyLossBalancer`。
+- `LossBalancerABC`：把多个命名 scalar loss 合成为一个 scalar total，可选返回 details；默认实现是 `MeanLossBalancer`，core 也提供 `FixedWeightLossBalancer` 和 `UncertaintyLossBalancer`。
 
 规划接口：
 
@@ -62,7 +62,7 @@ core evaluator 负责统一 metric 返回格式：
 metrics = evaluator(prediction, target)
 ```
 
-建议接口：
+当前接口：
 
 - `EvaluatorABC`：继承 `torch.nn.Module` 的无状态 evaluator 抽象基类，子类实现 `evaluate()`。
 - `EvaluatorGroup`：用 `nn.ModuleDict` 组合多个 evaluator，并处理 key 校验。
@@ -89,7 +89,7 @@ optim 负责 optimizer / scheduler 构造 helper，不接管训练流程。
 - AdamW 参数组 helper：按标准 AdamW 或 Muon-eligible policy 拆分 decay 和 no-decay。
 - Muon 参数组 helper：默认只把 hidden 2D weight 放入 Muon，其余参数走 AdamW；head 等特殊模块由用户显式传入排除。
 - `CompositeOptimizer`：把 Muon 和 AdamW 包成一个 optimizer，方便 Lightning 和 scheduler 使用。
-- LLM helper：按 `pretrain` / `cpt` / `sft` stage 生成 AdamW 或 Muon+AdamW optimizer，并提供 warmup cosine / linear scheduler。
+- LLM helper：按 `pretrain` / `cpt` / `sft` stage 生成 AdamW 或 Muon+AdamW optimizer，并提供 `constant` / `warmup_cosine` / `wsd` 命名 scheduler 和显式 phase DSL。
 
 optim 不提供魔法 LightningModule 基类。下游在自己的 `configure_optimizers()` 里显式调用 helper。
 
@@ -114,8 +114,11 @@ quantization 只依赖 core；Qwen3 builder 单独要求 `module` extra。
 
 - Adaptive Dirichlet Tempering，用于 MoE/router logits 的自适应温度缩放。
 - 1D Dynamic Conv / Dynamic Conv Transpose 和 2D Dynamic Conv，用于按样本或按分段组合 expert kernel；router 可注入，也可通过显式入口传入 expert 权重。
-- embedding、finite scalar、grouped 和 residual quantizer。
+- embedding、finite scalar、grouped、residual 和 auto-group residual quantizer。
 - 依赖 `module` extra 的 Qwen3 builder。
+
+`idspace` 也是 core 组件，但作为独立模块维护 local/global token id 映射和 block embedding
+路由，不把 tokenizer 或任务 special-token 语义塞进 `module`。
 
 ## Plotter
 

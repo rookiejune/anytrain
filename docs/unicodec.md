@@ -8,10 +8,10 @@
 UniCodec 源码维护在可安装 fork：
 
 ```bash
-python -m pip install -e ../UniCodec
+python -m pip install -e ../../UniCodec
 ```
 
-fork 推送后，下游可以直接安装 anytrain extra：
+`unicodec` extra 声明 fork 和 Hugging Face 依赖：
 
 ```bash
 python -m pip install -e ".[unicodec]"
@@ -21,6 +21,18 @@ python -m pip install -e ".[unicodec]"
 
 - `unicodec @ git+https://github.com/rookiejune/UniCodec.git`
 - `huggingface-hub`
+
+但 extra 不会替用户解开 UniCodec 的旧 `fairseq`/torch 构建链。当前真实 smoke 只在独立
+Python 3.9、pip 24、torch 2.4 环境通过；Python 3.12 + 新版 pip 下 `fairseq` 仍会在解析或
+构建阶段失败。这个环境不满足 `anytrain` 正常安装的 `torch>=2.8` 元数据约束，因此不要在
+主训练环境直接解析 `[unicodec]`。兼容环境先固定上游依赖，再从 checkout 暴露 thin wrapper：
+
+```bash
+export PYTHONPATH=/path/to/anytrain/src:$PYTHONPATH
+```
+
+该兼容路径只用于运行 `anytrain.codec.unicodec` 并离线生成 codes/features；不要把它当成
+完整 anytrain 环境。已验证版本和安装记录见 `docs/codec-envs.md`。
 
 ## 缓存路径
 

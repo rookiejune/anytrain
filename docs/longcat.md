@@ -69,8 +69,9 @@ audio_from_features = codec.decode_features(
 
 主离散接口遵循统一 codec 契约：`audio` 是 `[batch, channels, time]`，`codes` 是
 `[batch, frame, codebook]`。4-codebook decoder 的 `codebook_sizes` 是
-`(8192, 90, 90, 90)`；2-codebook decoder 是 `(8192, 90)`。LongCat wrapper 内部知道
-如何把这些 codebooks 传给上游 semantic/acoustic 分支，调用方不需要拆分。
+`(8192, 8100, 8100, 8100)`；2-codebook decoder 是 `(8192, 8100)`。上游每个 acoustic
+codebook 由两个 size-90 factor codebook 组成，wrapper 对外将其展平为 `90**2 == 8100` 个
+local id，并在调用上游 decoder 时还原。调用方不需要拆分 semantic/acoustic 或 factor ids。
 
 `codec.sample_rate` 是所选 decoder 的输出采样率。encoder 内部固定使用 16 kHz，
 `encode(audio, sample_rate)` 会把输入采样率交给上游预处理逻辑。

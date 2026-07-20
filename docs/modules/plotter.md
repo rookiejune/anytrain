@@ -13,9 +13,9 @@
 
 `plotter` 属于 optional general 组件，默认 import 不会加载 matplotlib、plotly 或 seaborn；只有调用具体 matplotlib-backed plotter 时才需要 `plot` extra。
 
-## 目标接口
+## 接口
 
-plotter 的目标调用形态：
+plotter 的调用形态：
 
 ```python
 figure = plotter(state)
@@ -30,7 +30,7 @@ figure = plotter(state)
 
 ## 依赖策略
 
-`plot` extra 当前规划依赖：
+`plot` extra 当前依赖：
 
 - `matplotlib`
 - `plotly`

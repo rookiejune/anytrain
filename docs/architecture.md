@@ -25,6 +25,7 @@
 - `anytrain.evaluator`：通用 evaluator 接口和组合器。
 - `anytrain.optim`：optimizer、scheduler 和 LLM/Muon helper。
 - `anytrain.module`：task-agnostic `torch.nn.Module` 积木。
+- `anytrain.idspace`：local/global token id 映射和 block embedding 路由。
 
 Lightning、Torch 和 einops 是 core 依赖。`module` 顶层的 ADT、dynamic conv 和
 quantization 默认可用；只有 Qwen3 builder 需要 `module` extra。Muon 是否可用取决于当前
@@ -45,12 +46,17 @@ PyTorch 是否提供 `torch.optim.Muon`，不影响其余 core API。
 
 ### Optional Domain
 
-这些组件由 `anytrain` 提供，但用户显式安装对应 extra：
+这些领域组件由 `anytrain` 提供，并从对应子模块显式导入。需要第三方 backend 的组件安装
+对应 extra；只依赖 core torch 的 temporal/spectral loss 不额外要求 audio extra：
 
-- audio：spectral loss、codec wrapper、speech evaluator、audio plotter。
-- text：文本生成/分类 evaluator。
-- speech：WER/CER/ASR 相关 evaluator。
-- TTS：公共协议保留轻量，具体 backend adapter 通过对应 extra 安装。
+- temporal/spectral audio loss：torch backend 使用 core；torchaudio backend 安装 `audio` extra。
+- codec wrapper：DAC、LongCat、UniCodec 分别使用 `dac`、`longcat`、`unicodec` backend
+  extra；`audio` extra 只提供 torchcodec/torchaudio，不会安装 codec 模型。Stable Codec 的
+  torch pin 与 core 冲突，按 `docs/stable-codec.md` 使用独立兼容环境。
+- text evaluator：安装 `text` extra 使用 sacreBLEU/jiwer backend；无 extra 时有显式 warning
+  的轻量 fallback。
+- speech evaluator：安装 `speech` extra 使用 Whisper、UTMOS 和 speech text metrics。
+- TTS：公共协议保留轻量，MOSS adapter 安装 `moss-tts` extra。
 
 ### Optional Framework
 
@@ -162,7 +168,8 @@ src/anytrain/
   example/
 ```
 
-`lightning`、`loss`、`evaluator`、`optim` 和 `module` 是核心体验；`chat`、`plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。
+`lightning`、`loss`、`evaluator`、`optim`、`module` 和 `idspace` 是核心体验；`chat`、
+`plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。
 
 ## 边界
 

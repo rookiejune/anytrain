@@ -1,5 +1,12 @@
 # Flow Matching Design
 
+## 当前状态
+
+第一版 source、time sampler、continuous/discrete runtime、objective、sampler、optional 依赖
+边界和 CPU 测试已经实现。稳定入口从 `anytrain.framework.flow_matching` 显式导入；
+`anytrain.framework` 根模块保持空导出。下文的“实现计划”保留为设计决策记录，不表示这些
+阶段仍未完成。
+
 ## 目标
 
 `anytrain.framework.flow_matching` 作为 Facebook `flow_matching` 的轻量再封装，提供可组合进下游 `LightningModule` 的训练目标和采样 helper。

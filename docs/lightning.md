@@ -25,7 +25,7 @@
 
 `anytrain` 可以提供训练组件，但按依赖层级拆分：
 
-- core：`lightning`、通用 loss/evaluator/optim/module 接口。
+- core：`lightning`、通用 loss/evaluator/optim/module 接口和 `idspace`。
 - optional general：plotter、通用 torchmetrics evaluator、第三方 logger backend。
 - optional domain：audio/text/speech 等领域 loss、evaluator、plotter。
 - optional framework：flow matching、MAE、GAN adversarial training 等研究框架。
@@ -162,7 +162,7 @@ pl_module:
   loss_fn:
     _target_: anytrain.loss.spectral.MultiScaleSTFTLoss
   evaluator:
-    _target_: anytrain.evaluator.audio.CodecEvaluator
+    _target_: anytrain.evaluator.speech.SpeechEvaluator
 ```
 
 这些领域组件属于 optional dependency，不应影响 core import。
@@ -252,10 +252,15 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 Python 入口示例：
 
 ```python
+import os
+
 from lightning import pytorch as pl
 from anytrain.lightning import DebugCallback
 
-trainer = pl.Trainer(callbacks=[DebugCallback()])
+callbacks = []
+if os.environ.get("ANYTRAIN_DEBUG") == "True":
+    callbacks.append(DebugCallback())
+trainer = pl.Trainer(callbacks=callbacks)
 ```
 
 固定单个 batch 训练属于 dataloader / data module 的采样策略，不放在 `anytrain.lightning` 里。

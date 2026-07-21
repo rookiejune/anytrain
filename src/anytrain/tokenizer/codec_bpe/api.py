@@ -8,7 +8,14 @@ from typing import TypedDict
 
 from anytrain._compat import Self
 
-from ._core import CoreBPE, base_text, private_use_capacity, private_use_tokens
+from ._core import (
+    CoreBPE,
+    base_text,
+    dynamic_progress,
+    private_use_capacity,
+    private_use_tokens,
+    write_progress,
+)
 from ._deps import bpe_class
 from ._eval import EvalStats
 from ._eval import evaluate as run_eval
@@ -177,7 +184,7 @@ def _encode_corpus(
 
     remaining = max_frames
     progress_bar = None
-    if show_progress and max_frames is not None:
+    if dynamic_progress(show_progress) and max_frames is not None:
         from tqdm.auto import tqdm
 
         progress_bar = tqdm(
@@ -209,14 +216,13 @@ def _encode_corpus(
         if progress_bar is not None:
             progress_bar.close()
 
-    if completed and progress_bar is not None:
-        from tqdm.auto import tqdm
-
+    if completed and show_progress and max_frames is not None:
         status = (
             "frame limit reached"
             if remaining is not None and remaining <= 0
             else "corpus exhausted"
         )
-        tqdm.write(
-            f"CodecBPE corpus: {num_frames:,} frames in {num_sequences:,} sequences; {status}"
+        write_progress(
+            f"CodecBPE corpus: {num_frames:,} frames in {num_sequences:,} sequences; {status}",
+            enabled=show_progress,
         )

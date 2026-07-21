@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
@@ -67,10 +68,10 @@ class CoreBPE:
         else:
             base_ids = set(base)
             num_training_sequences = None
-            if show_progress:
-                from tqdm.auto import tqdm
-
-                tqdm.write("CodecBPE alphabet: skipped for single codebook")
+            write_progress(
+                "CodecBPE alphabet: skipped for single codebook",
+                enabled=show_progress,
+            )
         base_tokens = private_use_tokens(base_ids)
         tokenizer = train_tokenizers_bpe(
             text_corpus(corpus, base_tokens),
@@ -125,13 +126,28 @@ def private_use_tokens(base_ids: Iterable[int]) -> dict[int, str]:
     }
 
 
+def dynamic_progress(enabled: bool) -> bool:
+    if not enabled:
+        return False
+    isatty = getattr(sys.stderr, "isatty", None)
+    return bool(isatty is not None and isatty())
+
+
+def write_progress(message: str, *, enabled: bool) -> None:
+    if not enabled:
+        return
+    from tqdm.auto import tqdm
+
+    tqdm.write(message)
+
+
 def progress(
     iterable: Iterable[_ProgressT],
     *,
     enabled: bool,
     desc: str,
 ) -> Iterable[_ProgressT]:
-    if not enabled:
+    if not dynamic_progress(enabled):
         return iterable
     from tqdm.auto import tqdm
 
@@ -198,17 +214,16 @@ def train_tokenizers_bpe(
     trainer = BpeTrainer(
         vocab_size=vocab_size,
         min_frequency=min_frequency,
-        show_progress=show_progress,
+        show_progress=dynamic_progress(show_progress),
         max_token_length=max_token_length,
         initial_alphabet=list(base_tokens.values()),
     )
-    if show_progress:
-        from tqdm.auto import tqdm
-
-        tqdm.write("CodecBPE trainer: started (corpus, pair counts, merges)")
+    write_progress(
+        "CodecBPE trainer: started (corpus, pair counts, merges)",
+        enabled=show_progress,
+    )
     tokenizer.train_from_iterator(corpus, trainer=trainer, length=length)
-    if show_progress:
-        tqdm.write("CodecBPE trainer: completed")
+    write_progress("CodecBPE trainer: completed", enabled=show_progress)
     return tokenizer
 
 

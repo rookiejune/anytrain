@@ -41,7 +41,8 @@ optional backend：
 - `training_flops_from_forward()`：把 forward FLOPs 转换为训练 step FLOPs，backward multiplier 必须显式可见。
 - `infer_peak_flops()`：根据 GPU 型号和 compute dtype 查内置硬件表；下游 job 可覆盖 `hardware_peak_flops`。
 - `model_flops_utilization()`：按 `model_flops_per_step / step_time / hardware_peak_flops` 计算 MFU。
-- `PerformanceCallback`：在 Lightning 训练中记录静态性能元数据、step time 和 MFU。
+- `PerformanceCallback`：在 Lightning 训练中记录性能元数据、optimizer step time 和 MFU；
+  支持固定 step FLOPs，以及由 `FlopsProvider` 提供的动态 train-batch FLOPs。
 
 `anytrain` 不内置任务的数据量语义。samples、tokens、frames、valid mask count 和详细 loss 由下游 `training_step` 按任务 schema 显式记录。
 

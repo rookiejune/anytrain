@@ -241,11 +241,15 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 `PerformanceCallback` 在调用方显式加入 callback 列表时启用。它记录：
 
 - `perf/model_params` 和 `perf/model_trainable_params`。
-- `perf/model_flops_per_step`，由下游传入或由下游用 `anytrain.perf` helper 估算后传入。
+- `perf/model_flops_per_step` 和窗口值；固定计算量由下游直接传入，变长 batch 通过
+  `FlopsProvider` 按 train batch 提供并在 optimizer step 边界聚合。
 - `perf/hardware_peak_flops`，默认按设备型号和 compute dtype 查表，必要时由 job 覆盖。
 - `perf/step_time`、`perf/step_time_window` 和 `perf/mfu`。
 
 代表性输入、训练 step FLOPs 口径，以及 samples/tokens/frames 等数据量日志属于下游任务语义，不由 callback 猜测。
+动态窗口按 `sum(flops) / sum(time) / peak_flops` 计算；梯度累积按 optimizer `global_step`
+形成 measurement。DDP provider 返回 local-rank FLOPs，callback 统一聚合 rank 工作量、最慢 rank
+时间和各 rank 峰值算力。完整输入协议和边界见 [`docs/modules/perf.md`](modules/perf.md)。
 
 如果参数或梯度中出现 NaN 或 Inf，它会打印第一个异常项的 name、index、value、shape、dtype、device 并直接抛错，避免继续写坏 checkpoint 或污染日志。
 

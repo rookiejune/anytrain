@@ -1,4 +1,5 @@
 import unittest
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -94,6 +95,40 @@ class _Module:
         self.log_dict_calls.append((values, kwargs))
 
 
+class _FlopsProvider:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *, trainer, pl_module, outputs, batch, batch_idx):
+        self.calls.append((trainer, pl_module, outputs, batch, batch_idx))
+        return batch["flops"]
+
+
+class _DistributedStrategy:
+    def reduce(self, tensor, *, reduce_op):
+        import torch
+
+        if reduce_op == "sum":
+            remote = tensor.new_tensor([300.0, 300.0, 400.0, 1.0, 1.0, 1.0])
+            return tensor + remote
+        if reduce_op == "max":
+            return torch.maximum(tensor, tensor.new_tensor([3.0, 3.0]))
+        raise AssertionError(f"Unexpected reduce operation: {reduce_op}")
+
+
+class _AlternatingSlowRankStrategy:
+    def reduce(self, tensor, *, reduce_op):
+        import torch
+
+        if reduce_op == "sum":
+            remote = tensor.new_tensor([100.0, 200.0, 200.0, 1.0, 1.0, 1.0])
+            return tensor + remote
+        if reduce_op == "max":
+            # Current elapsed, followed by the two window measurements.
+            return torch.maximum(tensor, tensor.new_tensor([5.0, 1.0, 5.0]))
+        raise AssertionError(f"Unexpected reduce operation: {reduce_op}")
+
+
 class PerformanceCallbackTest(unittest.TestCase):
     def test_callback_logs_static_metrics_and_mfu(self):
         from anytrain.lightning import PerformanceCallback
@@ -117,15 +152,411 @@ class PerformanceCallbackTest(unittest.TestCase):
         callback.on_train_start(trainer, module)
         self.assertEqual(module.log_dict_calls[0][0]["perf/model_flops_per_step"], 100.0)
         self.assertEqual(module.log_dict_calls[0][0]["perf/hardware_peak_flops"], 200.0)
+        self.assertEqual(
+            module.log_dict_calls[0][1],
+            {"on_step": False, "on_epoch": True, "logger": True},
+        )
         self.assertEqual(logger.hyperparams[0]["perf/hardware_peak_flops_source"], "override")
 
         with patch("time.perf_counter", side_effect=[1.0, 3.0]):
             callback.on_train_batch_start(trainer, module, batch=None, batch_idx=0)
+            trainer.global_step = 1
             callback.on_train_batch_end(trainer, module, outputs=None, batch=None, batch_idx=0)
 
         metrics = module.log_dict_calls[-1][0]
         self.assertEqual(metrics["perf/step_time"], 2.0)
+        self.assertEqual(metrics["perf/model_flops_per_step_window"], 100.0)
         self.assertEqual(metrics["perf/mfu"], 0.25)
+
+    def test_callback_uses_ratio_of_window_sums_for_dynamic_flops(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=1,
+        )
+        module = _Module()
+        provider = _FlopsProvider()
+        callback = PerformanceCallback(
+            model_flops_per_batch=provider,
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            measure_window_steps=2,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 2.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            trainer.global_step = 1
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs={"loss": 1.0},
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+        with patch("time.perf_counter", side_effect=[3.0, 6.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 900.0}, batch_idx=1)
+            trainer.global_step = 2
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs={"loss": 2.0},
+                batch={"flops": 900.0},
+                batch_idx=1,
+            )
+
+        metrics = module.log_dict_calls[-1][0]
+        self.assertEqual(metrics["perf/step_time"], 3.0)
+        self.assertEqual(metrics["perf/step_time_window"], 2.0)
+        self.assertEqual(metrics["perf/model_flops_per_step"], 900.0)
+        self.assertEqual(metrics["perf/model_flops_per_step_window"], 500.0)
+        self.assertEqual(metrics["perf/mfu"], 1.25)
+        self.assertEqual(provider.calls[-1][2:], ({"loss": 2.0}, {"flops": 900.0}, 1))
+
+    def test_callback_accumulates_microbatches_until_optimizer_step(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=1,
+        )
+        module = _Module()
+        provider = _FlopsProvider()
+        callback = PerformanceCallback(
+            model_flops_per_batch=provider,
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 2.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+        self.assertEqual(len(module.log_dict_calls), 1)
+
+        with patch("time.perf_counter", side_effect=[3.0, 6.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 300.0}, batch_idx=1)
+            trainer.global_step = 1
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 300.0},
+                batch_idx=1,
+            )
+
+        metrics = module.log_dict_calls[-1][0]
+        self.assertEqual(metrics["perf/step_time"], 4.0)
+        self.assertEqual(metrics["perf/model_flops_per_step"], 400.0)
+        self.assertEqual(metrics["perf/mfu"], 0.5)
+        self.assertEqual(len(provider.calls), 2)
+
+    def test_callback_aggregates_ddp_work_and_peak_before_computing_mfu(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=2,
+            strategy=_DistributedStrategy(),
+        )
+        module = _Module()
+        callback = PerformanceCallback(
+            model_flops_per_batch=_FlopsProvider(),
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 3.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            trainer.global_step = 1
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+
+        metrics, kwargs = module.log_dict_calls[-1]
+        self.assertEqual(metrics["perf/step_time"], 3.0)
+        self.assertEqual(metrics["perf/model_flops_per_step"], 200.0)
+        self.assertAlmostEqual(metrics["perf/mfu"], 400.0 / 3.0 / 600.0)
+        self.assertFalse(kwargs["sync_dist"])
+
+    def test_callback_sums_per_measurement_ddp_max_time(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=2,
+            strategy=_AlternatingSlowRankStrategy(),
+        )
+        module = _Module()
+        callback = PerformanceCallback(
+            model_flops_per_batch=_FlopsProvider(),
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=2,
+            measure_window_steps=2,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 5.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            trainer.global_step = 1
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+        with patch("time.perf_counter", side_effect=[6.0, 7.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=1)
+            trainer.global_step = 2
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=1,
+            )
+
+        metrics = module.log_dict_calls[-1][0]
+        self.assertEqual(metrics["perf/step_time"], 5.0)
+        self.assertEqual(metrics["perf/step_time_window"], 4.5)
+        self.assertEqual(metrics["perf/model_flops_per_step_window"], 100.0)
+        self.assertAlmostEqual(metrics["perf/mfu"], 400.0 / 9.0 / 400.0)
+
+    def test_callback_resets_pending_measurement_on_new_train_start(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=1,
+        )
+        module = _Module()
+        callback = PerformanceCallback(
+            model_flops_per_batch=_FlopsProvider(),
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 3.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+
+        trainer.global_step = 5
+        callback.on_train_start(trainer, module)
+        with patch("time.perf_counter", side_effect=[4.0, 5.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 20.0}, batch_idx=1)
+            trainer.global_step = 6
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 20.0},
+                batch_idx=1,
+            )
+
+        metrics = module.log_dict_calls[-1][0]
+        self.assertEqual(metrics["perf/step_time"], 1.0)
+        self.assertEqual(metrics["perf/model_flops_per_step"], 20.0)
+
+    def test_callback_discards_unstepped_epoch_tail(self):
+        from anytrain.lightning import PerformanceCallback
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=1,
+        )
+        module = _Module()
+        callback = PerformanceCallback(
+            model_flops_per_batch=_FlopsProvider(),
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 3.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 100.0}, batch_idx=0)
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 100.0},
+                batch_idx=0,
+            )
+        callback.on_train_epoch_end(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[4.0, 5.0]):
+            callback.on_train_batch_start(trainer, module, batch={"flops": 20.0}, batch_idx=0)
+            trainer.global_step = 1
+            callback.on_train_batch_end(
+                trainer,
+                module,
+                outputs=None,
+                batch={"flops": 20.0},
+                batch_idx=0,
+            )
+
+        metrics = module.log_dict_calls[-1][0]
+        self.assertEqual(metrics["perf/step_time"], 1.0)
+        self.assertEqual(metrics["perf/model_flops_per_step"], 20.0)
+
+    def test_callback_uses_real_lightning_optimizer_step_boundaries(self):
+        import torch
+        from lightning import pytorch as pl
+        from lightning.pytorch.loggers import CSVLogger
+        from torch.utils.data import DataLoader, TensorDataset
+
+        from anytrain.lightning import PerformanceCallback
+
+        class Module(pl.LightningModule):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(2, 1)
+                self.performance_logs = []
+
+            def training_step(self, batch, batch_idx):
+                del batch_idx
+                inputs, targets, _ = batch
+                return torch.nn.functional.mse_loss(self.linear(inputs), targets)
+
+            def configure_optimizers(self):
+                return torch.optim.SGD(self.parameters(), lr=0.01)
+
+            def log_dict(self, dictionary, *args, **kwargs):
+                if "perf/step_time" in dictionary:
+                    self.performance_logs.append(dict(dictionary))
+                return super().log_dict(dictionary, *args, **kwargs)
+
+        class Provider:
+            def __init__(self):
+                self.global_steps = []
+
+            def __call__(self, *, trainer, pl_module, outputs, batch, batch_idx):
+                del pl_module, outputs, batch_idx
+                self.global_steps.append(int(trainer.global_step))
+                return float(batch[2].sum())
+
+        dataset = TensorDataset(
+            torch.ones(4, 2),
+            torch.zeros(4, 1),
+            torch.tensor([10.0, 20.0, 30.0, 40.0]),
+        )
+        provider = Provider()
+        callback = PerformanceCallback(
+            model_flops_per_batch=provider,
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            measure_window_steps=2,
+            sync_cuda=False,
+        )
+        module = Module()
+        with TemporaryDirectory() as directory:
+            trainer = pl.Trainer(
+                accelerator="cpu",
+                devices=1,
+                max_steps=2,
+                accumulate_grad_batches=2,
+                callbacks=[callback],
+                logger=CSVLogger(directory),
+                log_every_n_steps=1,
+                enable_checkpointing=False,
+                enable_model_summary=False,
+                enable_progress_bar=False,
+            )
+            trainer.fit(module, train_dataloaders=DataLoader(dataset, batch_size=1))
+
+        self.assertEqual(provider.global_steps, [0, 1, 1, 2])
+        self.assertEqual(len(module.performance_logs), 2)
+        self.assertEqual(module.performance_logs[0]["perf/model_flops_per_step"], 30.0)
+        self.assertEqual(module.performance_logs[1]["perf/model_flops_per_step"], 70.0)
+
+    def test_callback_rejects_static_and_dynamic_flops_together(self):
+        from anytrain.lightning import PerformanceCallback
+
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            PerformanceCallback(
+                model_flops_per_step=100.0,
+                model_flops_per_batch=_FlopsProvider(),
+            )
+
+    def test_callback_rejects_invalid_dynamic_flops(self):
+        from anytrain.lightning import PerformanceCallback
+
+        class InvalidProvider:
+            def __call__(self, **kwargs):
+                del kwargs
+                return 0.0
+
+        trainer = SimpleNamespace(
+            precision="bf16-mixed",
+            loggers=[],
+            global_step=0,
+            world_size=1,
+        )
+        module = _Module()
+        callback = PerformanceCallback(
+            model_flops_per_batch=InvalidProvider(),
+            hardware_peak_flops=200.0,
+            warmup_steps=0,
+            log_every_n_steps=1,
+            sync_cuda=False,
+        )
+        callback.on_train_start(trainer, module)
+
+        with patch("time.perf_counter", side_effect=[1.0, 2.0]):
+            callback.on_train_batch_start(trainer, module, batch=None, batch_idx=0)
+            trainer.global_step = 1
+            with self.assertRaisesRegex(ValueError, "finite and positive"):
+                callback.on_train_batch_end(
+                    trainer,
+                    module,
+                    outputs=None,
+                    batch=None,
+                    batch_idx=0,
+                )
 
 
 if __name__ == "__main__":

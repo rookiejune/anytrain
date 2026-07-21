@@ -109,6 +109,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 | 模块 | 作用 |
 | --- | --- |
 | `anytrain.lightning` | Lightning logging mixin 和 task-agnostic debug callback。 |
+| `anytrain.stats` | 纯 tensor 统计 helper，例如按 time bucket 聚合 loss。 |
 | `anytrain.loss` | 通用 loss 接口、loss 组合器和 loss balancer。 |
 | `anytrain.evaluator` | 通用 evaluator 接口、组合器，以及 text/speech evaluator 子模块。 |
 | `anytrain.optim` | AdamW/Muon 参数分组、scheduler helper 和 LLM optimizer helper。 |

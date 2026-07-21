@@ -8,6 +8,34 @@ from torch import nn
 FLOW_MATCHING_AVAILABLE = util.find_spec("flow_matching") is not None
 
 
+class TensorStatsTest(unittest.TestCase):
+    def test_time_bucketed_mean_returns_ddp_friendly_sum_and_count(self):
+        from anytrain.stats import time_bucketed_mean
+
+        bucketed = time_bucketed_mean(
+            torch.tensor([1.0, 3.0, 5.0, 7.0]),
+            torch.tensor([0.0, 0.2, 0.6, 1.0]),
+            bucket_count=2,
+        )
+
+        torch.testing.assert_close(bucketed.total, torch.tensor([4.0, 12.0]))
+        torch.testing.assert_close(bucketed.count, torch.tensor([2.0, 2.0]))
+        torch.testing.assert_close(bucketed.mean, torch.tensor([2.0, 6.0]))
+        self.assertTrue(torch.equal(bucketed.populated, torch.tensor([True, True])))
+
+    def test_time_bucketed_mean_validates_public_inputs(self):
+        from anytrain.stats import time_bucketed_mean
+
+        with self.assertRaisesRegex(ValueError, "same shape"):
+            time_bucketed_mean(torch.ones(2), torch.ones(2, 1), bucket_count=2)
+        with self.assertRaisesRegex(ValueError, "within"):
+            time_bucketed_mean(
+                torch.ones(1),
+                torch.tensor([1.1]),
+                bucket_count=2,
+            )
+
+
 class FlowMatchingImportTest(unittest.TestCase):
     def test_framework_import_does_not_require_flow_matching_extra(self):
         framework = import_module("anytrain.framework")
@@ -25,6 +53,14 @@ class FlowMatchingImportTest(unittest.TestCase):
 
 @unittest.skipUnless(FLOW_MATCHING_AVAILABLE, "flow_matching extra is not installed")
 class FlowMatchingComponentTest(unittest.TestCase):
+    def test_flow_matching_does_not_export_tensor_stats(self):
+        flow_matching = import_module("anytrain.framework.flow_matching")
+
+        self.assertNotIn("time_bucketed_mean", flow_matching.__all__)
+        self.assertNotIn("TimeBucketedMean", flow_matching.__all__)
+        self.assertFalse(hasattr(flow_matching, "time_bucketed_mean"))
+        self.assertFalse(hasattr(flow_matching, "TimeBucketedMean"))
+
     def test_sources_and_time_sampler(self):
         from anytrain.framework.flow_matching import (
             GaussianSource,

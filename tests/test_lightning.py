@@ -65,6 +65,43 @@ class LightningTest(unittest.TestCase):
 
         self.assertIn("bad.weight", stderr.getvalue())
 
+    def test_debug_callback_checks_frozen_parameters_once_at_train_start(self):
+        import torch
+
+        from anytrain.lightning import DebugCallback
+
+        module = torch.nn.Linear(1, 1, bias=False)
+        module.weight.requires_grad_(False)
+        module.weight.fill_(float("nan"))
+        trainer = SimpleNamespace(current_epoch=0, global_step=0, global_rank=0)
+
+        with self.assertRaisesRegex(RuntimeError, "at train start"):
+            DebugCallback().on_train_start(trainer, module)
+
+    def test_debug_callback_uses_aggregate_fast_path_for_finite_tensors(self):
+        from unittest.mock import patch
+
+        import torch
+
+        from anytrain.lightning import DebugCallback
+
+        module = torch.nn.Sequential(*(torch.nn.Linear(2, 2, bias=False) for _ in range(8)))
+        for parameter in module.parameters():
+            parameter.grad = torch.ones_like(parameter)
+        trainer = SimpleNamespace(current_epoch=0, global_step=0, global_rank=0)
+
+        with (
+            patch(
+                "anytrain.lightning.callback.debug._all_finite",
+                return_value=True,
+            ) as aggregate,
+            patch("anytrain.lightning.callback.debug._find_nonfinite_tensor") as locate,
+        ):
+            DebugCallback().on_after_backward(trainer, module)
+
+        aggregate.assert_called_once()
+        locate.assert_not_called()
+
     def test_prefixed_log_dict(self):
         from anytrain.lightning import prefixed_log_dict
 

@@ -59,6 +59,7 @@ class PerformanceCallback(pl.Callback):
         warmup_steps: int = 20,
         measure_window_steps: int = 100,
         sync_cuda: bool = True,
+        sync_distributed: bool = True,
     ) -> None:
         _require_positive_int(log_every_n_steps, "log_every_n_steps")
         _require_non_negative_int(warmup_steps, "warmup_steps")
@@ -73,6 +74,12 @@ class PerformanceCallback(pl.Callback):
             )
         if hardware_peak_flops is not None:
             _require_positive(hardware_peak_flops, "hardware_peak_flops")
+        for name, value in (
+            ("sync_cuda", sync_cuda),
+            ("sync_distributed", sync_distributed),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a boolean.")
 
         self.model_flops_per_step = model_flops_per_step
         self.model_flops_per_batch = model_flops_per_batch
@@ -82,6 +89,7 @@ class PerformanceCallback(pl.Callback):
         self.warmup_steps = warmup_steps
         self.measure_window_steps = measure_window_steps
         self.sync_cuda = sync_cuda
+        self.sync_distributed = sync_distributed
         self.hardware: PeakFlops | None = None
         self._step_started_at: float | None = None
         self._last_global_step: int | None = None
@@ -122,6 +130,7 @@ class PerformanceCallback(pl.Callback):
             raise RuntimeError("A training batch started before the previous batch ended.")
         if self._last_global_step is None:
             self._last_global_step = int(trainer.global_step)
+        _sync_distributed(trainer, self.sync_distributed)
         _sync_cuda(self.sync_cuda)
         self._step_started_at = time.perf_counter()
 
@@ -351,6 +360,16 @@ def _device(pl_module: pl.LightningModule) -> torch.device | None:
 def _sync_cuda(sync_cuda: bool) -> None:
     if sync_cuda and torch.cuda.is_available():
         torch.cuda.synchronize()
+
+
+def _sync_distributed(trainer: pl.Trainer, enabled: bool) -> None:
+    if not enabled or int(getattr(trainer, "world_size", 1)) <= 1:
+        return
+    strategy = getattr(trainer, "strategy", None)
+    barrier = getattr(strategy, "barrier", None)
+    if not callable(barrier):
+        raise RuntimeError("distributed performance measurement requires strategy.barrier.")
+    barrier()
 
 
 def _metadata(hardware: PeakFlops | None) -> dict[str, str | float]:

@@ -105,6 +105,12 @@ class _FlopsProvider:
 
 
 class _DistributedStrategy:
+    def __init__(self):
+        self.barrier_count = 0
+
+    def barrier(self):
+        self.barrier_count += 1
+
     def reduce(self, tensor, *, reduce_op):
         import torch
 
@@ -117,6 +123,12 @@ class _DistributedStrategy:
 
 
 class _AlternatingSlowRankStrategy:
+    def __init__(self):
+        self.barrier_count = 0
+
+    def barrier(self):
+        self.barrier_count += 1
+
     def reduce(self, tensor, *, reduce_op):
         import torch
 
@@ -302,6 +314,7 @@ class PerformanceCallbackTest(unittest.TestCase):
         self.assertEqual(metrics["perf/model_flops_per_step"], 200.0)
         self.assertAlmostEqual(metrics["perf/mfu"], 400.0 / 3.0 / 600.0)
         self.assertFalse(kwargs["sync_dist"])
+        self.assertEqual(trainer.strategy.barrier_count, 1)
 
     def test_callback_sums_per_measurement_ddp_max_time(self):
         from anytrain.lightning import PerformanceCallback

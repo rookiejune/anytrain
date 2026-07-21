@@ -132,6 +132,12 @@ DDP window MFU = sum_step(sum_rank(FLOPs))
 直接求平均。窗口时间先逐 measurement 取最慢 rank，再求和；不能对每个 rank 的窗口总时间
 直接取最大值，因为窗口内的最慢 rank 可能随 optimizer update 改变。
 
+默认 `sync_distributed=True`：每个 train batch 的 timer 启动前调用 strategy barrier。这样上一
+batch 只在 rank zero 执行的 sample、媒体或 checkpoint callback 不会变成其他 rank 下一步的等待
+时间；barrier 发生在 timer 之外。当前 batch 是否包含其他 batch-end callback 的耗时取决于 callback
+顺序：要排除诊断，下游应把 `PerformanceCallback` 放在这些 callback 之前。当下游能保证 callback
+成本完全对称，或希望测量不含额外 barrier 的连续吞吐时，可显式设为 `False`。
+
 这个聚合契约面向同步 data-parallel，默认一个训练进程对应一个 accelerator。pipeline/model
 parallel 的 FLOPs 归属和设备峰值分母需要下游另行定义，callback 不猜测并行拓扑。
 

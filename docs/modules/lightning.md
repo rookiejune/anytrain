@@ -59,16 +59,18 @@ src/anytrain/lightning/
 
 ## Callback
 
-`DebugCallback` 在调用方显式加入 callback 列表时启用。它在 `on_after_backward()` 检查参数和梯度是否 finite，
-遇到 NaN 或 Inf 时打印第一个异常参数或梯度的 name、index、value、shape、dtype、device，并直接抛错。
-该检查会在每次 backward 后扫描参数和梯度，正式运行不需要时应从 callback 列表移除。
+`DebugCallback` 在调用方显式加入 callback 列表时启用。全部初始参数在 train start 检查一次；
+`on_after_backward()` 只重复检查可训练参数与已有梯度。正常路径在设备端聚合 finite 状态，只做少量主机
+同步；遇到 NaN 或 Inf 时才定位并打印第一个异常参数或梯度的 name、index、value、shape、dtype、
+device，然后直接抛错。正式运行不需要时仍可从 callback 列表移除。
 
 `ModelCheckpoint` 继承 Lightning 原生 `ModelCheckpoint`。默认 `async_save=True`，rank 0 先保存到本机临时目录，再把复制和删除操作排进单线程后台队列。它用于目标 checkpoint 目录位于 NFS 等慢文件系统时，缩短训练主循环等待目标文件系统写入的时间；传入 `async_save=False` 时保持原版同步行为。
 
 `PerformanceCallback` 记录参数量、optimizer step time、硬件峰值算力和 MFU。固定计算量使用
 `model_flops_per_step`；变长 batch 使用 `model_flops_per_batch: FlopsProvider`，callback 在
 梯度累积的 optimizer 边界汇总 microbatch FLOPs。动态输入、DDP 聚合和日志口径见
-[`perf` 设计](perf.md)。
+[`perf` 设计](perf.md)。DDP 默认在 timer 前 barrier 对齐 rank；`sync_distributed=False` 可显式
+关闭该行为。
 
 Python 入口示例：
 

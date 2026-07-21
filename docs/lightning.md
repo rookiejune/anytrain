@@ -236,7 +236,9 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 
 ## 调试能力
 
-`DebugCallback` 在调用方显式加入 callback 列表时启用，并在 backward 后检查参数和梯度是否 finite。
+`DebugCallback` 在调用方显式加入 callback 列表时启用。全部初始参数在 train start 检查一次；每次
+backward 后只重复检查可训练参数与现有梯度，因此冻结参数不会反复扫描。正常路径按 device/dtype 用 foreach norm 聚合后再做一次
+主机判定，只有发现异常时才逐 tensor 定位。
 
 `PerformanceCallback` 在调用方显式加入 callback 列表时启用。它记录：
 
@@ -249,7 +251,9 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 代表性输入、训练 step FLOPs 口径，以及 samples/tokens/frames 等数据量日志属于下游任务语义，不由 callback 猜测。
 动态窗口按 `sum(flops) / sum(time) / peak_flops` 计算；梯度累积按 optimizer `global_step`
 形成 measurement。DDP provider 返回 local-rank FLOPs，callback 统一聚合 rank 工作量、最慢 rank
-时间和各 rank 峰值算力。完整输入协议和边界见 [`docs/modules/perf.md`](modules/perf.md)。
+时间和各 rank 峰值算力。`sync_distributed=True` 时，每个 batch timer 启动前先 barrier，使上一
+batch 的 rank-local callback 工作不会错开下一步计时起点；barrier 自身不计入 step time。完整输入
+协议和边界见 [`docs/modules/perf.md`](modules/perf.md)。
 
 如果参数或梯度中出现 NaN 或 Inf，它会打印第一个异常项的 name、index、value、shape、dtype、device 并直接抛错，避免继续写坏 checkpoint 或污染日志。
 

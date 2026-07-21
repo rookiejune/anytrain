@@ -20,6 +20,7 @@ core 提供：
 
 - `LightningLogMixin`：prefixed dict、audio 和 figure logging helper。
 - `DebugCallback` 等训练调试 callback。
+- `PerformanceCallback`：记录参数量、step time、硬件峰值算力和 MFU。
 
 optional backend：
 
@@ -28,6 +29,21 @@ optional backend：
 - 其他第三方 logger。
 
 第三方 backend 是 optional；logger backend 由下游或 Lightning 原生配置负责创建。
+
+## Perf
+
+`perf` 是 core 组件，负责训练效率观测的通用定义和 task-agnostic 计算，不接管 batch schema。
+
+当前提供：
+
+- `count_parameters()`：统计参数量或 trainable 参数量。
+- `profile_forward_flops()`：用 PyTorch profiler 在代表性输入上估算 forward FLOPs。
+- `training_flops_from_forward()`：把 forward FLOPs 转换为训练 step FLOPs，backward multiplier 必须显式可见。
+- `infer_peak_flops()`：根据 GPU 型号和 compute dtype 查内置硬件表；下游 job 可覆盖 `hardware_peak_flops`。
+- `model_flops_utilization()`：按 `model_flops_per_step / step_time / hardware_peak_flops` 计算 MFU。
+- `PerformanceCallback`：在 Lightning 训练中记录静态性能元数据、step time 和 MFU。
+
+`anytrain` 不内置任务的数据量语义。samples、tokens、frames、valid mask count 和详细 loss 由下游 `training_step` 按任务 schema 显式记录。
 
 ## Loss
 

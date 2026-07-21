@@ -6,6 +6,7 @@
 
 - [`anytrain` package root](package-root.md)：轻量公开导出和 import 边界。
 - [`anytrain.lightning`](lightning.md)：LightningModule logging mixin 和调试 callback。
+- [`anytrain.perf`](perf.md)：参数量、FLOPs、硬件峰值算力和 MFU。
 - [`anytrain.loss`](loss.md)：通用 loss 组件和组合器。
 - [`anytrain.evaluator`](evaluator.md)：训练期 evaluator 接口和组合器边界。
 - [`anytrain.optim`](optim.md)：optimizer、scheduler 和 LLM/Muon helper。

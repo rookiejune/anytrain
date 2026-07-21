@@ -21,6 +21,7 @@
 默认安装必须可用：
 
 - `anytrain.lightning`：LightningModule logging mixin 和 debug callback。
+- `anytrain.perf`：训练效率观测 helper，包括参数量、FLOPs、硬件峰值算力和 MFU。
 - `anytrain.loss`：通用 loss 接口和组合器。
 - `anytrain.evaluator`：通用 evaluator 接口和组合器。
 - `anytrain.optim`：optimizer、scheduler 和 LLM/Muon helper。
@@ -107,6 +108,10 @@ class MyPLModule(pl.LightningModule):
 
 提供 LightningModule logging mixin 和 callback。logger backend 由下游或 Lightning 原生配置负责创建；第三方 logger backend 是 optional。
 
+### `perf`
+
+提供 task-agnostic 的训练效率观测能力。`anytrain` 可以统计参数量、估算代表性 forward FLOPs、查表推断硬件峰值算力，并通过 Lightning callback 记录 step time 和 MFU。下游项目仍负责提供代表性输入、训练 step FLOPs 估计口径，以及 tokens/frames 等任务数据量日志。
+
 ### `loss`
 
 提供训练 step 中可直接使用的 loss 组件。core 里保留通用组合器；audio/text/speech 等领域 loss 通过 optional 子模块提供。GAN adversarial training 属于 `framework.gan`，不放在 `loss` 下。
@@ -152,6 +157,7 @@ src/anytrain/
   lightning/
     callback/
     mixin/
+  perf/
   loss/
   evaluator/
   optim/
@@ -168,7 +174,7 @@ src/anytrain/
   example/
 ```
 
-`lightning`、`loss`、`evaluator`、`optim`、`module` 和 `idspace` 是核心体验；`chat`、
+`lightning`、`perf`、`loss`、`evaluator`、`optim`、`module` 和 `idspace` 是核心体验；`chat`、
 `plotter`、`framework` 和领域组件按依赖拆分为 optional 子模块。
 
 ## 边界

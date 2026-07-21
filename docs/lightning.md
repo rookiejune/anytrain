@@ -11,6 +11,7 @@
 - LightningModule 侧的轻量 logging helper。
 - non-finite loss 检查等训练调试 callback。
 - NFS 等慢文件系统场景下可选的异步 checkpoint 落盘 callback。
+- 训练效率观测 callback，记录参数量、step time、硬件峰值算力和 MFU。
 
 它不负责：
 
@@ -236,6 +237,15 @@ logger backend 不再由 `anytrain.lightning` 自动创建；需要自定义 log
 ## 调试能力
 
 `DebugCallback` 在调用方显式加入 callback 列表时启用，并在 backward 后检查参数和梯度是否 finite。
+
+`PerformanceCallback` 在调用方显式加入 callback 列表时启用。它记录：
+
+- `perf/model_params` 和 `perf/model_trainable_params`。
+- `perf/model_flops_per_step`，由下游传入或由下游用 `anytrain.perf` helper 估算后传入。
+- `perf/hardware_peak_flops`，默认按设备型号和 compute dtype 查表，必要时由 job 覆盖。
+- `perf/step_time`、`perf/step_time_window` 和 `perf/mfu`。
+
+代表性输入、训练 step FLOPs 口径，以及 samples/tokens/frames 等数据量日志属于下游任务语义，不由 callback 猜测。
 
 如果参数或梯度中出现 NaN 或 Inf，它会打印第一个异常项的 name、index、value、shape、dtype、device 并直接抛错，避免继续写坏 checkpoint 或污染日志。
 

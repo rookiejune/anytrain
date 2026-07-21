@@ -109,6 +109,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 | 模块 | 作用 |
 | --- | --- |
 | `anytrain.lightning` | Lightning logging mixin 和 task-agnostic debug callback。 |
+| `anytrain.perf` | 参数量、FLOPs、硬件峰值算力和 MFU 计算 helper。 |
 | `anytrain.stats` | 纯 tensor 统计 helper，例如按 time bucket 聚合 loss。 |
 | `anytrain.loss` | 通用 loss 接口、loss 组合器和 loss balancer。 |
 | `anytrain.evaluator` | 通用 evaluator 接口、组合器，以及 text/speech evaluator 子模块。 |
@@ -130,7 +131,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 - 下游项目负责具体任务语义、`training_step`、batch 解释和模型组合。
 - 配置组合和对象实例化由下游选择，可以用普通 Python、Hydra、argparse、pydantic 或其它项目内约定。
 - `anytrain.lightning` 是核心依赖层；Lightning 不是 optional integration。
-- `loss`、`evaluator`、`optim`、`module`、`idspace`、`plotter`、`framework` 是下游训练模块可显式组合的组件，按 core/optional 子模块拆分依赖。
+- `perf`、`loss`、`evaluator`、`optim`、`module`、`idspace`、`plotter`、`framework` 是下游训练模块可显式组合的组件，按 core/optional 子模块拆分依赖。
 
 明确不做：
 

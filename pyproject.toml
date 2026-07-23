@@ -18,6 +18,16 @@ dependencies = [
 
 [project.optional-dependencies]
 audio = ["torchcodec>=0.2", "torchaudio>=2.0"]
+bicodec = [
+    "einx>=0.3",
+    "huggingface-hub>=0.23",
+    "omegaconf>=2.3",
+    "safetensors>=0.5",
+    "soundfile>=0.12",
+    "soxr>=0.5",
+    "torchaudio>=2.5",
+    "transformers>=4.46",
+]
 chat = ["openai>=1.0", "requests>=2.31", "zai-sdk>=0.2.3"]
 dac = ["descript-audio-codec>=1.0"]
 data = []
@@ -40,6 +50,9 @@ longcat = [
     "longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git",
 ]
 moss-tts = ["torchaudio>=2.0", "transformers"]
+qwen-tts = [
+    "qwen3-tts @ git+https://github.com/QwenLM/Qwen3-TTS.git",
+]
 unicodec = [
     "huggingface-hub>=0.23",
     "unicodec @ git+https://github.com/rookiejune/UniCodec.git",

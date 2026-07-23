@@ -1,3 +1,9 @@
+from .bicodec import (
+    BiCodec,
+    BiCodecAssets,
+    BiCodecTokens,
+    ensure_bicodec_assets,
+)
 from .dac import DAC
 from .longcat import (
     DEFAULT_DECODER,
@@ -18,6 +24,9 @@ __all__ = [
     "DEFAULT_HF_HOME",
     "HF_HOME_ENV",
     "Codec",
+    "BiCodec",
+    "BiCodecAssets",
+    "BiCodecTokens",
     "DAC",
     "LongCatAssets",
     "LongCat",
@@ -25,5 +34,6 @@ __all__ = [
     "LongCatDecoderName",
     "StableCodec",
     "UniCodec",
+    "ensure_bicodec_assets",
     "ensure_longcat_assets",
 ]

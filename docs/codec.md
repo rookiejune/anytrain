@@ -32,12 +32,18 @@ class Codec(Protocol):
 LongCat decoder、UniCodec domain / bandwidth 和 DAC `n_quantizers` 在构造 codec 时固定，不进入公共
 `encode()` / `decode()` 参数。
 
+Spark-TTS BiCodec 使用“语义 token + 全局说话人 token”两个张量，不能无损映射到单个
+`[batch, frame, codebook]` Tensor，因此 `anytrain.codec.bicodec` 不实现上面的
+`Codec` protocol。它单独返回 `BiCodecTokens`，并用 `decode(tokens)` / `detokenize()`
+显式接收这两个 token 边界。
+
 连续 latent 并不是所有 codec 都共有的边界，因此不属于 `Codec` protocol。具体 wrapper
 可以继续提供 `encode_features()`、`codes_to_features()` 或 `decode_features()` 等扩展。
 
 具体 wrapper：
 
 - [Descript Audio Codec](dac.md)
+- [Spark-TTS BiCodec](bicodec.md)
 - [LongCat Audio Codec](longcat.md)
 - [Stable Codec](stable-codec.md)
 - [UniCodec](unicodec.md)

@@ -117,7 +117,7 @@ PYTHONPATH=src python examples/tiny_regression.py
 | `anytrain.module` | task-agnostic `torch.nn.Module` 积木，例如 ADT、dynamic conv、FSQ/VQ/GVQ/RVQ/AGRVQ quantizer 和 Qwen3 helper。 |
 | `anytrain.idspace` | 多块 local/global token id 映射和 embedding 路由。 |
 | `anytrain.tokenizer` | 依赖 `tokenizer` extra 的 codec frame BPE。 |
-| `anytrain.codec` | 可选音频 codec wrapper。 |
+| `anytrain.codec` | 可选音频 codec wrapper，包括普通离散 audio codec 和 Spark-TTS BiCodec token wrapper。 |
 | `anytrain.tts` | TTS 公共协议和可选 backend adapter。 |
 | `anytrain.plotter` | 延迟加载绘图库的训练期可视化对象生成器。 |
 | `anytrain.chat` | 可选 LLM provider 调用入口。 |

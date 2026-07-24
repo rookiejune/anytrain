@@ -6,6 +6,17 @@ from anytrain.module import DiT, DiTAttentionBackend, DiTConditionState, DiTCond
 
 
 class DiTModuleTest(unittest.TestCase):
+    def test_none_condition_rejects_condition_inputs(self):
+        model = DiT(input_dim=5, hidden_dim=8, layers=1, heads=2, ffn_ratio=2)
+        x_t = torch.randn(2, 3, 5)
+        t = torch.tensor([0.2, 0.4])
+
+        output = model(x_t, t)
+
+        self.assertEqual(output.shape, x_t.shape)
+        with self.assertRaisesRegex(ValueError, "does not accept"):
+            model.prepare_condition(torch.randn(2, 3, 4))
+
     def test_frame_film_condition_trains_and_masks_output(self):
         model = DiT(
             input_dim=5,

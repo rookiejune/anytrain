@@ -206,7 +206,11 @@ class SequenceAttention(nn.Module):
     ) -> Tensor:
         backend = self.backend
         if backend is DiTAttentionBackend.AUTO:
-            backend = DiTAttentionBackend.SDPA
+            backend = (
+                DiTAttentionBackend.SDPA
+                if hasattr(F, "scaled_dot_product_attention")
+                else DiTAttentionBackend.EAGER
+            )
         if backend is DiTAttentionBackend.SDPA:
             return F.scaled_dot_product_attention(
                 query,

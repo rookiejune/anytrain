@@ -13,7 +13,7 @@ AudioReference = Union[str, PathLike[str]]
 
 
 class TTSKwargs(TypedDict, total=False):
-    speaker: str | None
+    speaker: str | Sequence[str] | None
     language: str | None
     sample_rate: int | None
     max_new_tokens: int | None
@@ -28,7 +28,7 @@ _TTS_OPTION_KEYS = frozenset(TTSKwargs.__annotations__)
 
 @dataclass(init=False)
 class TTSOptions:
-    speaker: str | None = None
+    speaker: str | Sequence[str] | None = None
     language: str | None = None
     sample_rate: int | None = None
     max_new_tokens: int | None = None
@@ -58,6 +58,7 @@ class TTSOptions:
     def __post_init__(self) -> None:
         if self.sample_rate is not None:
             _validate_positive_int(self.sample_rate, "sample_rate")
+        _validate_speaker(self.speaker)
         if self.max_new_tokens is not None:
             _validate_positive_int(self.max_new_tokens, "max_new_tokens")
         if self.temperature is not None and self.temperature <= 0:
@@ -98,7 +99,7 @@ class TTSOptions:
     def _new(
         cls,
         *,
-        speaker: str | None,
+        speaker: str | Sequence[str] | None,
         language: str | None,
         sample_rate: int | None,
         max_new_tokens: int | None,
@@ -244,6 +245,27 @@ def _validate_positive_int(value: int, name: str) -> None:
         raise TypeError(f"{name} must be an integer.")
     if value <= 0:
         raise ValueError(f"{name} must be positive.")
+
+
+def _validate_speaker(value: str | Sequence[str] | None) -> None:
+    if value is None:
+        return
+    if isinstance(value, str):
+        _validate_speaker_id(value, "speaker")
+        return
+    if isinstance(value, bytes) or not isinstance(value, Sequence):
+        raise TypeError("speaker must be a string, a sequence of strings, or None.")
+    if len(value) == 0:
+        raise ValueError("speaker sequence must not be empty.")
+    for index, speaker in enumerate(value):
+        _validate_speaker_id(speaker, f"speaker[{index}]")
+
+
+def _validate_speaker_id(value: object, name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string.")
+    if not value:
+        raise ValueError(f"{name} must be non-empty.")
 
 
 def _validate_extra(extra: Mapping[str, object]) -> None:

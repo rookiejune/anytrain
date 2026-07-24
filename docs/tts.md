@@ -10,6 +10,13 @@ Install the MOSS backend dependencies from the anytrain repository root:
 python -m pip install -e ".[moss-tts]"
 ```
 
+Install the Qwen3-TTS CustomVoice backend when speaker-id based synthesis is
+needed:
+
+```bash
+python -m pip install -e ".[qwen-tts]"
+```
+
 The stable public boundary is:
 
 ```python
@@ -58,3 +65,22 @@ decode` compatibility paths.
 
 When merging `TTSOptions`, explicitly passed fields override defaults even when
 the value is `None`; omitted fields inherit the backend config.
+
+The Qwen adapter targets the CustomVoice checkpoint and uses speaker ids instead
+of prompt audio:
+
+```python
+from anytrain.tts import TTSOptions
+from anytrain.tts.qwen import QwenCustomVoiceTTS
+
+tts = QwenCustomVoiceTTS.from_pretrained(device="cuda")
+audio = tts.synthesize(
+    "hello",
+    TTSOptions(speaker="Vivian", language="English"),
+)
+batch_audio = tts.synthesize_custom_voice(
+    ["hello", "你好"],
+    speakers=["Vivian", "Ryan"],
+    languages=["English", "Chinese"],
+)
+```

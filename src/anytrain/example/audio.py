@@ -51,7 +51,7 @@ def load_example_audio(
     except Exception as torchaudio_error:
         raise RuntimeError(
             "Failed to read example audio with torchcodec and torchaudio. "
-            "Install audio dependencies with `pip install anytrain[audio]`. "
+            'Install audio dependencies with `python -m pip install "torchcodec>=0.2" "torchaudio>=2.0"`. '
             f"torchcodec error: {torchcodec_error}; torchaudio error: {torchaudio_error}"
         ) from torchaudio_error
 

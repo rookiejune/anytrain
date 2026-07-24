@@ -11,7 +11,7 @@ Spark-TTS 当前仓库没有标准 Python package metadata，不能仅靠 pip ex
 
     git clone https://github.com/SparkAudio/Spark-TTS.git /path/to/Spark-TTS
     export PYTHONPATH=/path/to/Spark-TTS:$PYTHONPATH
-    python -m pip install -e ".[bicodec]"
+    python -m pip install "einx>=0.3" "huggingface-hub>=0.23" "omegaconf>=2.3" "safetensors>=0.5" "soundfile>=0.12" "soxr>=0.5" "torchaudio>=2.5" "transformers>=4.46"
 
 `bicodec` extra 只声明 wrapper 需要的通用依赖，例如 `einx`、`huggingface-hub`、
 `transformers`、`torchaudio`、`safetensors` 和 `omegaconf`。如果 Spark-TTS 后续发布

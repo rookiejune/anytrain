@@ -13,6 +13,7 @@
 - `ADTConfig`
 - `AdaptiveDirichletTempering`
 - `ADT` 兼容别名
+- `DiT`
 - `DynamicConv1d`
 - `DynamicConv2d`
 - `DynamicConvTranspose1d`
@@ -27,6 +28,7 @@
 - `build_qwen3_decoder_layer`
 - `build_qwen3_model`
 - `require_qwen3_class`
+- `QwenMTPCodebookPredictor`
 - `DEFAULT_FSQ_LEVELS`
 - `default_fsq_levels`
 - `FSQConfig`
@@ -79,6 +81,33 @@ transformer block，也不要求下游维护一份庞大的项目级 config：
   `build_qwen3_model()`；普通 codec 组合应优先依赖更窄的 builder。
 - 缺少 `transformers` 或版本不含 Qwen3 时，builder 会抛出明确的 `ImportError`。
 
+`anytrain.module.qwen.mtp` 提供 `QwenMTPCodebookPredictor`，用于复用 Qwen3 组件组合
+“跨 frame temporal AR + frame 内 codebook MTP”的离散码本预测器：
+
+- 输入是外部上游已经准备好的 `[batch, frame, condition_dim]` condition，不负责语义/声学
+  codec、tokenizer 或完整任务网络。
+- temporal Qwen 根据上一 frame 的首个 codebook 和当前 condition 预测当前 frame 的首个
+  codebook；MTP Qwen 再在同一 frame 内依次预测剩余 codebook。
+- `forward()` 返回每个 codebook 一个 teacher-forced logits tensor；`generate()` 提供同一
+  预测顺序的自回归采样。
+- `top_p_filter()` 作为 `anytrain.module.qwen` 子模块工具公开给需要复用采样逻辑的下游。
+
+`anytrain.module.dit` 提供通用 `DiT` sequence backbone。它只负责把 noisy sequence、
+flow time 和单一外部条件模式组合成输出 sequence，不接管 flow matching、batch schema 或
+codec 逻辑：
+
+- `condition_type=FRAME_FILM` 处理和输入 sequence 等长的 `condition: [B, T, C]`，通过每层
+  FiLM/AdaLN 注入。
+- `condition_type=FILM` 处理 batch-level `condition: [B, C]`，投影后 broadcast 到 frame 轴。
+- `condition_type=CROSS_ATTN` 处理不等长 `condition: [B, S, C]` 和 `condition_mask: [B, S]`，
+  通过 cross-attention 注入。
+- `prepare_condition()` 将原始 condition 变成 `DiTConditionState`；cross-attention 会缓存
+  每层 condition K/V，供 flow matching ODE sampling 的多个 step 复用。
+- attention backend 支持 `EAGER` 和 PyTorch `SDPA`；`AUTO` 默认走 SDPA，由 PyTorch 在合适
+  CUDA/dtype 场景下选择 flash / memory-efficient kernel。
+- `forward_with_features()` 可返回指定中间层投影，供下游 REPA、蒸馏或诊断目标使用；具体
+  loss 仍由下游或 `anytrain.framework.flow_matching` 组合。
+
 Quantization 提供 task-agnostic 的 FSQ、embedding-table VQ、GVQ、RVQ 和 AGRVQ：
 
 - `FiniteScalarQuantizer` 使用 `levels` 描述每个 scalar code dimension 的 level 数；它和普通 VQ 一样是单 codebook 接口，`indices` shape 为 `(...)`，`codebook_vectors` shape 为 `(..., codebook_dim)`。
@@ -117,9 +146,9 @@ Quantization 提供 task-agnostic 的 FSQ、embedding-table VQ、GVQ、RVQ 和 A
 `anytrain.module` 后续如有额外三方依赖，使用 `module` extra 管理：
 
 ```bash
-python -m pip install "anytrain[module]"
+python -m pip install transformers
 ```
 
-当前 Qwen3 复用层需要 `module` extra 中的 `transformers`。ADT、Dynamic Conv 和
-quantization 不需要 optional 依赖；`import anytrain` 和 `import anytrain.module`
-不会主动导入 `transformers`。
+当前 Qwen3 复用层和 `QwenMTPCodebookPredictor` 需要 `module` extra 中的
+`transformers`。ADT、Dynamic Conv 和 quantization 不需要 optional 依赖；
+`import anytrain` 和 `import anytrain.module` 不会主动导入 `transformers`。

@@ -14,7 +14,9 @@ GLM_IMAGE_MODEL = "glm-image"
 GLM_IMAGE_SIZE = "1280x1280"
 GLM_IMAGE_TIMEOUT = 120.0
 GLM_IMAGE_GENERATIONS_PATH = "/images/generations"
-INSTALL_HINT = "Install chat dependencies with `pip install anytrain[chat]`."
+INSTALL_HINT = (
+    'Install chat dependencies with `python -m pip install "openai>=1.0" "requests>=2.31" "zai-sdk>=0.2.3"`.'
+)
 
 
 def create_client(model_type: ModelType, config: ChatConfig) -> object:

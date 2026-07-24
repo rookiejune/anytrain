@@ -253,5 +253,5 @@ def _merge_config_kwargs(config_overrides: Mapping[str, Any], **kwargs: Any) -> 
 def _missing_transformers_error() -> ImportError:
     return ImportError(
         "Qwen3 modules reuse Hugging Face transformers. Install `transformers` "
-        "or use `pip install anytrain[module]`."
+        "with `python -m pip install transformers`."
     )

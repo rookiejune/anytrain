@@ -77,9 +77,8 @@ def _default_config_path(name: str) -> Path:
         from unicodec import default_config_path
     except ImportError as exc:
         raise ImportError(
-            "UniCodec integration requires the installable UniCodec fork. Install "
-            "`anytrain[unicodec]` or install "
-            "`unicodec @ git+https://github.com/rookiejune/UniCodec.git`."
+            "UniCodec integration requires the installable UniCodec fork. Install it with "
+            '`python -m pip install "unicodec @ git+https://github.com/rookiejune/UniCodec.git"`.'
         ) from exc
 
     path = Path(default_config_path(name))
@@ -94,6 +93,6 @@ def _require_huggingface_hub():
     except ImportError as exc:
         raise ImportError(
             "UniCodec checkpoint download requires `huggingface-hub`. "
-            "Install `anytrain[unicodec]`."
+            'Install it with `python -m pip install "huggingface-hub>=0.23"`.'
         ) from exc
     return hf_hub_download

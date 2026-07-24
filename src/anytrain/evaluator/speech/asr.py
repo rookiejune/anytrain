@@ -111,7 +111,7 @@ class _OpenAIWhisperBackend:
         except ImportError as exc:
             raise ImportError(
                 "WhisperASREvaluator requires the `openai-whisper` package. "
-                "Install speech dependencies with `pip install anytrain[speech]`."
+                "Install it with `python -m pip install openai-whisper`."
             ) from exc
         return whisper
 

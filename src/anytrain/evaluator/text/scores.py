@@ -5,6 +5,10 @@ from warnings import warn
 
 from . import _fallback
 
+TEXT_INSTALL_HINT = (
+    'Install text dependencies with `python -m pip install "jiwer>=4.0" "sacrebleu>=2.0"`.'
+)
+
 
 def corpus_bleu_score(
     predictions: Sequence[str],
@@ -128,7 +132,7 @@ def _clip_percent(value: float) -> float:
 def _warn_fallback(metric: str, package: str, exc: ImportError) -> None:
     warn(
         f"Text {metric} is using the in-package fallback because {package!r} is not "
-        "installed. Install text dependencies with `pip install anytrain[text]`.",
+        f"installed. {TEXT_INSTALL_HINT}",
         RuntimeWarning,
         stacklevel=3,
     )

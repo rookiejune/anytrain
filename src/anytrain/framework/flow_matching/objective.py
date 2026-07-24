@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+
+import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
@@ -16,6 +19,32 @@ def mse_velocity_loss(
 ) -> Tensor:
     del extras
     return F.mse_loss(prediction, target)
+
+
+def masked_mse_velocity_loss(
+    prediction: Tensor,
+    target: Tensor,
+    extras: ModelExtras,
+) -> Tensor:
+    mask = extras.get("mask")
+    if mask is None:
+        return mse_velocity_loss(prediction, target, extras)
+    if not isinstance(mask, Tensor):
+        raise TypeError("mask must be a tensor.")
+    if mask.dtype != torch.bool:
+        raise TypeError("mask must be boolean.")
+    if prediction.shape != target.shape:
+        raise ValueError("prediction and target must have the same shape.")
+    if mask.ndim >= prediction.ndim or prediction.shape[: mask.ndim] != mask.shape:
+        raise ValueError("mask must align with a leading prefix of prediction and target.")
+    weights = mask.to(device=prediction.device, dtype=prediction.dtype)
+    for _ in range(prediction.ndim - mask.ndim):
+        weights = weights.unsqueeze(-1)
+    unmasked_width = math.prod(prediction.shape[mask.ndim:])
+    denominator = weights.sum() * unmasked_width
+    if not bool(denominator > 0):
+        raise ValueError("mask must contain at least one valid item.")
+    return ((prediction - target).square() * weights).sum() / denominator
 
 
 def _require_scalar_loss(loss: Tensor) -> Tensor:
@@ -76,5 +105,6 @@ class DiscreteGeneralizedKLObjective(nn.Module):
 __all__ = [
     "ContinuousVelocityObjective",
     "DiscreteGeneralizedKLObjective",
+    "masked_mse_velocity_loss",
     "mse_velocity_loss",
 ]

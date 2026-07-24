@@ -55,7 +55,7 @@ def resample_wave(wave: Tensor, sample_rate: int, target_sample_rate: int) -> Te
     except ImportError as exc:
         raise ImportError(
             "Resampling speech evaluator audio requires torchaudio. "
-            "Install speech dependencies with `pip install anytrain[speech]`."
+            'Install it with `python -m pip install "torchaudio>=2.0"`.'
         ) from exc
 
     return torchaudio.functional.resample(wave, sample_rate, target_sample_rate)
@@ -81,7 +81,7 @@ def _load_audio_file(path: Path) -> tuple[Tensor, int]:
     except Exception as soundfile_error:
         raise RuntimeError(
             "Failed to read speech evaluator audio file with torchaudio or soundfile. "
-            "Install speech dependencies with `pip install anytrain[speech]`. "
+            'Install audio file dependencies with `python -m pip install "torchaudio>=2.0" "soundfile>=0.12"`. '
             f"torchaudio error: {torchaudio_error}; soundfile error: {soundfile_error}"
         ) from soundfile_error
 

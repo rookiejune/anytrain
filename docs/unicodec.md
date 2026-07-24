@@ -14,7 +14,7 @@ python -m pip install -e ../../UniCodec
 `unicodec` extra 声明 fork 和 Hugging Face 依赖：
 
 ```bash
-python -m pip install -e ".[unicodec]"
+python -m pip install "unicodec @ git+https://github.com/rookiejune/UniCodec.git" "huggingface-hub>=0.23"
 ```
 
 `unicodec` extra 依赖：

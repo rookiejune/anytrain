@@ -7,7 +7,7 @@
 ## 安装
 
 ```bash
-python -m pip install -e ".[dac,audio]"
+python -m pip install "descript-audio-codec>=1.0" "torchcodec>=0.2" "torchaudio>=2.0"
 ```
 
 `dac` extra 提供上游模型，`audio` extra 提供输入采样率不一致时使用的 torchaudio

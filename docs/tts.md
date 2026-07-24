@@ -7,14 +7,14 @@ default CLI.
 Install the MOSS backend dependencies from the anytrain repository root:
 
 ```bash
-python -m pip install -e ".[moss-tts]"
+python -m pip install "torchaudio>=2.0" transformers
 ```
 
 Install the Qwen3-TTS CustomVoice backend when speaker-id based synthesis is
 needed:
 
 ```bash
-python -m pip install -e ".[qwen-tts]"
+python -m pip install git+https://github.com/QwenLM/Qwen3-TTS.git
 ```
 
 The stable public boundary is:

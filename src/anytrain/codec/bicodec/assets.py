@@ -65,6 +65,6 @@ def _require_huggingface_hub():
     except ImportError as exc:
         raise ImportError(
             "BiCodec checkpoint download requires huggingface-hub. "
-            "Install anytrain[bicodec]."
+            'Install it with `python -m pip install "huggingface-hub>=0.23"`.'
         ) from exc
     return snapshot_download

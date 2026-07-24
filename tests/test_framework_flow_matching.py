@@ -152,6 +152,7 @@ class FlowMatchingComponentTest(unittest.TestCase):
         from anytrain.framework.flow_matching import (
             ContinuousFlowRuntime,
             ContinuousVelocityObjective,
+            masked_mse_velocity_loss,
         )
 
         class ZeroVelocity(nn.Module):
@@ -159,16 +160,9 @@ class FlowMatchingComponentTest(unittest.TestCase):
                 del t, mask
                 return torch.zeros_like(x_t)
 
-        def masked_loss(prediction, target, extras):
-            mask = extras["mask"].to(device=prediction.device, dtype=prediction.dtype)
-            weights = mask.unsqueeze(-1)
-            return ((prediction - target).square() * weights).sum() / (
-                weights.sum() * prediction.size(-1)
-            )
-
         objective = ContinuousVelocityObjective(
             ContinuousFlowRuntime(),
-            loss_fn=masked_loss,
+            loss_fn=masked_mse_velocity_loss,
         )
         x_1 = torch.tensor(
             [

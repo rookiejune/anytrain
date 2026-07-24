@@ -166,7 +166,7 @@ class MossTTS:
             raise ImportError(
                 "`anytrain.tts.moss` requires `transformers` to load remote-code "
                 "MOSS-TTS v1.5 checkpoints and processors. Install Moss TTS "
-                "dependencies with `pip install anytrain[moss-tts]`."
+                'dependencies with `python -m pip install "torchaudio>=2.0" transformers`.'
             ) from exc
         try:
             loaded = auto_model_cls.from_pretrained(str(model), **pretrained_kwargs)
@@ -379,7 +379,7 @@ def _pretrained_source(
     except ImportError as exc:
         raise ImportError(
             "Resolving a cached MOSS-TTS repository requires `huggingface-hub`. "
-            "Install `anytrain[moss-tts]`."
+            'Install it with `python -m pip install "huggingface-hub>=0.23"`.'
         ) from exc
     return snapshot_download(
         repo_id=raw,

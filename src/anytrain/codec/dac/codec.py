@@ -167,7 +167,7 @@ def _load_dac_model() -> Any:
         import dac
     except ImportError as exc:
         raise ImportError(
-            "DAC requires the `descript-audio-codec` package. Install `anytrain[dac]`."
+            'DAC requires the `descript-audio-codec` package. Install it with `python -m pip install "descript-audio-codec>=1.0"`.'
         ) from exc
     return dac.DAC
 

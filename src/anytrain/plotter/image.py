@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 import torch
 
-INSTALL_HINT = "Install plot dependencies with `pip install anytrain[plot]`."
+INSTALL_HINT = 'Install plot dependencies with `python -m pip install "matplotlib>=3.7"`.'
 ChannelOrder = Literal["auto", "chw", "hwc"]
 
 

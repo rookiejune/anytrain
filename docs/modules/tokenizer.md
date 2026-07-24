@@ -13,7 +13,7 @@
 `tokenizer` 是 optional general 模块。安装依赖：
 
 ```bash
-python -m pip install "anytrain[tokenizer]"
+python -m pip install tokenizers
 ```
 
 `import anytrain.tokenizer` 保持轻量；构造、加载或训练 `CodecBPE` 时才导入

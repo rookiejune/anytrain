@@ -5,6 +5,7 @@ from .discrete import DiscreteFlowRuntime
 from .objective import (
     ContinuousVelocityObjective,
     DiscreteGeneralizedKLObjective,
+    masked_mse_velocity_loss,
     mse_velocity_loss,
 )
 from .sampler import DiscreteEulerSampler, ODESampler
@@ -43,5 +44,6 @@ __all__ = [
     "UniformTimeSampler",
     "UniformTokenSource",
     "default_call_model",
+    "masked_mse_velocity_loss",
     "mse_velocity_loss",
 ]

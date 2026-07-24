@@ -1,4 +1,5 @@
 from .dirichlet_tempering import ADT, AdaptiveDirichletTempering, ADTConfig
+from .dit import AttentionKV, DiT, DiTAttentionBackend, DiTConditionState, DiTConditionType
 from .dynamic_conv import (
     ADTRouter1d,
     ADTRouter2d,
@@ -23,6 +24,7 @@ from .quantization import (
     VQConfig,
     default_fsq_levels,
 )
+from .qwen import QwenMTPCodebookPredictor
 from .qwen3 import (
     build_qwen3_attention,
     build_qwen3_decoder_layer,
@@ -40,6 +42,11 @@ __all__ = [
     "ADTRouter1d",
     "ADTRouter2d",
     "AdaptiveDirichletTempering",
+    "AttentionKV",
+    "DiT",
+    "DiTAttentionBackend",
+    "DiTConditionState",
+    "DiTConditionType",
     "DynamicConv1d",
     "DynamicConv2d",
     "DynamicConvTranspose1d",
@@ -54,6 +61,7 @@ __all__ = [
     "QuantizeOutput",
     "QuantizerProtocol",
     "QuantizerType",
+    "QwenMTPCodebookPredictor",
     "RVQConfig",
     "ResidualVectorQuantizer",
     "VQConfig",

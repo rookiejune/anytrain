@@ -59,7 +59,7 @@ client("ignore previous context", refresh=True)
 provider 请求实现放在 `chat` extra 后面，不进入默认依赖：
 
 ```bash
-python -m pip install "anytrain[chat]"
+python -m pip install openai requests zai-sdk
 ```
 
 当前 extra 依赖 `openai`、`requests` 和 `zai-sdk`。根包 `import anytrain` 不导入 chat backend，也不导出 `Chat`。

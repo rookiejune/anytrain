@@ -14,13 +14,14 @@ Lightning 原生 `LightningModule`，自己实现 batch 解释、训练 step、o
 开发环境推荐在项目自己的虚拟环境中安装：
 
 ```bash
-python -m pip install -e ".[test]"
+python -m pip install -e .
+python -m pip install pytest ruff
 ```
 
 按需安装可选依赖：
 
 ```bash
-python -m pip install -e ".[logger,module,plot,tokenizer]"
+python -m pip install "wandb>=0.16" transformers "matplotlib>=3.7" "plotly>=5.0" "seaborn>=0.13" "tokenizers>=0.20"
 ```
 
 当前包要求 Python `>=3.9`，核心依赖包括 `torch>=2.8` 和 `lightning>=2.0`。Python 3.9

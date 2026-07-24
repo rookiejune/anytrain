@@ -185,8 +185,7 @@ def _load_unicodec_model() -> Any:
         from unicodec import Unicodec
     except ImportError as exc:
         raise ImportError(
-            "UniCodec requires the installable UniCodec fork. Install "
-            "`anytrain[unicodec]` or install "
-            "`unicodec @ git+https://github.com/rookiejune/UniCodec.git`."
+            "UniCodec requires the installable UniCodec fork. Install it with "
+            '`python -m pip install "unicodec @ git+https://github.com/rookiejune/UniCodec.git"`.'
         ) from exc
     return Unicodec

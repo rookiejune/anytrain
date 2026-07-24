@@ -180,9 +180,8 @@ def _read_default_config(stem: str) -> dict[str, object]:
         from longcat_audio_codec import default_config_path
     except ImportError as exc:
         raise ImportError(
-            "LongCat integration requires the installable fork. Install "
-            "`anytrain[longcat]` or install "
-            "`longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git`."
+            "LongCat integration requires the installable fork. Install it with "
+            '`python -m pip install "longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git"`.'
         ) from exc
 
     path = Path(default_config_path(stem))
@@ -207,7 +206,7 @@ def _require_huggingface_hub():
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
         raise ImportError(
-            "LongCat checkpoint download requires `huggingface-hub`. Install `anytrain[longcat]`."
+            'LongCat checkpoint download requires `huggingface-hub`. Install it with `python -m pip install "huggingface-hub>=0.23"`.'
         ) from exc
     return hf_hub_download
 
@@ -217,6 +216,6 @@ def _require_yaml():
         import yaml
     except ImportError as exc:
         raise ImportError(
-            "LongCat config writing requires PyYAML. Install `anytrain[longcat]`."
+            "LongCat config writing requires PyYAML. Install it with `python -m pip install PyYAML`."
         ) from exc
     return yaml

@@ -36,7 +36,7 @@ figure = plotter(state)
 - `plotly`
 - `seaborn`
 
-core import 不依赖这些库。缺少 plot extra 时，相关子模块应抛出明确错误，例如提示安装 `anytrain[plot]`。
+core import 不依赖这些库。缺少 plot extra 时，相关子模块应抛出明确错误，例如提示安装 `matplotlib`、`plotly` 和 `seaborn`（`python -m pip install matplotlib plotly seaborn`）。
 
 ## 边界
 

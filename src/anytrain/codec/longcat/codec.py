@@ -252,9 +252,8 @@ def _load_longcat_loaders():
         from longcat_audio_codec import load_decoder, load_encoder
     except ImportError as exc:
         raise ImportError(
-            "LongCat requires the installable LongCat fork. Install "
-            "`anytrain[longcat]` or install "
-            "`longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git`."
+            "LongCat requires the installable LongCat fork. Install it with "
+            '`python -m pip install "longcat-audio-codec @ git+https://github.com/rookiejune/LongCat-Audio-Codec.git"`.'
         ) from exc
     return load_encoder, load_decoder
 

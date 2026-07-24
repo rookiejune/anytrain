@@ -94,8 +94,9 @@ class QwenCustomVoiceTTS:
             from qwen_tts import Qwen3TTSModel  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
-                "anytrain.tts.qwen requires Qwen3-TTS. Install it with "
-                "pip install anytrain[qwen-tts]."
+                "anytrain.tts.qwen requires Qwen3-TTS. "
+                "Install Qwen3-TTS with "
+                "`python -m pip install git+https://github.com/QwenLM/Qwen3-TTS.git`."
             ) from exc
 
         runtime = dict(runtime_kwargs or {})

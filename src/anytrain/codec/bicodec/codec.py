@@ -16,6 +16,12 @@ from .assets import BiCodecAssets, ensure_bicodec_assets
 SAMPLE_RATE = 16_000
 NUM_CHANNELS = 1
 FEATURE_HIDDEN_STATE_INDEXES = (11, 14, 16)
+BICODEC_INSTALL_HINT = (
+    'Clone https://github.com/SparkAudio/Spark-TTS, add it to PYTHONPATH, and install '
+    'wrapper dependencies with `python -m pip install "einx>=0.3" "huggingface-hub>=0.23" '
+    '"omegaconf>=2.3" "safetensors>=0.5" "soundfile>=0.12" "soxr>=0.5" '
+    '"torchaudio>=2.5" "transformers>=4.46"`.'
+)
 
 
 @dataclass(frozen=True)
@@ -308,8 +314,7 @@ def _load_bicodec_model() -> Any:
     except ImportError as exc:
         raise ImportError(
             "BiCodec requires the Spark-TTS source package on PYTHONPATH and its "
-            "runtime dependencies. Install or clone https://github.com/SparkAudio/Spark-TTS "
-            "and install anytrain[bicodec] before using this wrapper."
+            f"runtime dependencies. {BICODEC_INSTALL_HINT}"
         ) from exc
     return UpstreamBiCodec
 
@@ -339,7 +344,7 @@ def _load_wav2vec2_classes() -> tuple[Any, Any]:
         from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Model
     except ImportError as exc:
         raise ImportError(
-            "BiCodec feature extraction requires transformers. Install anytrain[bicodec]."
+            'BiCodec feature extraction requires transformers. Install it with `python -m pip install "transformers>=4.46"`.'
         ) from exc
     return Wav2Vec2FeatureExtractor, Wav2Vec2Model
 

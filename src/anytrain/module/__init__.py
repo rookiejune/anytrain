@@ -25,7 +25,7 @@ from .quantization import (
     default_fsq_levels,
 )
 from .qwen import QwenMTPCodebookPredictor
-from .qwen3 import (
+from .qwen.qwen3 import (
     build_qwen3_attention,
     build_qwen3_decoder_layer,
     build_qwen3_mlp,

@@ -6,7 +6,7 @@ from typing import cast
 import torch
 from torch import Tensor, nn
 
-from anytrain.module.qwen3 import build_qwen3_model
+from anytrain.module.qwen.qwen3 import build_qwen3_model
 
 
 class QwenMTPCodebookPredictor(nn.Module):
